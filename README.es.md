@@ -59,7 +59,7 @@ Simula una sesión con tres agentes en paralelo. Aparece como proyecto `demo-kev
 - Todo se queda en `~/.kevmind/`. No hay telemetría.
 - Antes de guardar, se ocultan claves API, tokens de GitHub/AWS/Slack, JWT, llaves privadas y variables tipo `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - El servidor solo escucha en `127.0.0.1`.
-- Si el panel está apagado, los hooks guardan los eventos en `spool.jsonl` sin enmascarar hasta que el siguiente arranque los procesa.
+- Si el panel está apagado, el hook enmascara los eventos antes de guardarlos en `spool.jsonl`.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).
 

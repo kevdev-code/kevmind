@@ -69,7 +69,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 - Everything stays in `~/.kevmind/`. No telemetry.
 - Before storing, it masks API keys, GitHub/AWS/Slack tokens, JWTs, private keys and variables like `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - The server only listens on `127.0.0.1`.
-- Events spooled while the dashboard is down sit unmasked in `spool.jsonl` until the next start ingests them.
+- Events spooled while the dashboard is down are masked by the hook before they touch disk.
 
 ## Configuration
 

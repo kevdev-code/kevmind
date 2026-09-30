@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // KevMind hook: reads the JSON Claude Code sends on stdin and forwards it to the local server.
 // Never blocks or breaks Claude Code: it always exits 0. When the server can't take the event
-// (down, slow, error), the event is spooled to <KEVMIND_HOME>/spool.jsonl for the server's next start.
+// (down, slow, error), the event is masked and spooled to <KEVMIND_HOME>/spool.jsonl for the server's next start.
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,16 +42,17 @@ setTimeout(() => finish(false), TIMEOUT_MS + 200).unref();
 function finish(delivered) {
   if (done) return;
   done = true;
-  if (!delivered) spool();
-  process.exit(0);
+  if (delivered) process.exit(0);
+  spool().finally(() => process.exit(0));
 }
 
-// Stored as sent (unredacted); the server redacts it when it ingests the spool.
-function spool() {
+// Masked before it touches disk. redact.js is loaded only on this path, so the normal path stays fast.
+async function spool() {
   let payload;
   try { payload = JSON.parse(raw); } catch { return; }
   try {
+    const { redact } = await import('./redact.js');
     fs.mkdirSync(path.dirname(SPOOL_FILE), { recursive: true });
-    fs.appendFileSync(SPOOL_FILE, JSON.stringify({ ts, e: payload }) + '\n');
+    fs.appendFileSync(SPOOL_FILE, JSON.stringify({ ts, e: redact(payload) }) + '\n');
   } catch { /* never block Claude Code */ }
 }

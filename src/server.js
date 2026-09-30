@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { State, baseName } from './state.js';
-import { redact } from './redact.js';
+import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');

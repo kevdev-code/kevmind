@@ -7,8 +7,12 @@ import { HOOK_EVENTS, MATCHER_EVENTS } from './events.js';
 import { DATA_DIR } from './server.js';
 
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
-const HOOK_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'send.js');
+const HOOK_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks');
+const HOOK_SRC = path.join(HOOK_DIR, 'send.js');
 const HOOK_DST = path.join(DATA_DIR, 'send.mjs');
+// send.mjs imports ./redact.js when it spools, so the redactor must live next to it.
+const REDACT_SRC = path.join(HOOK_DIR, 'redact.js');
+const REDACT_DST = path.join(DATA_DIR, 'redact.js');
 const TAG = 'kevmind';
 
 function readSettings() {
@@ -42,6 +46,7 @@ function strip(settings) {
 export function install() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.copyFileSync(HOOK_SRC, HOOK_DST);
+  fs.copyFileSync(REDACT_SRC, REDACT_DST);
   const settings = strip(readSettings());
   settings.hooks ||= {};
   const command = `node "${HOOK_DST.replace(/\\/g, '/')}"`;
