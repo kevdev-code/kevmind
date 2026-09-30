@@ -25,6 +25,8 @@ It's lightweight: plain HTML and CSS, no 3D, no GPU. Zero dependencies; just Nod
 
 ### Option A: as a Claude Code plugin (recommended)
 
+KevMind is a plugin for Claude Code only; it has nothing to do on claude.ai or in Cowork, which also refuse plugins that ship a top-level `bin/` folder. KevMind keeps its `bin/`, so `kevmind` is on the Bash tool's PATH while the plugin is enabled.
+
 The repository is its own plugin marketplace. In a Claude Code session, add it once and install the plugin from it:
 
 ```text

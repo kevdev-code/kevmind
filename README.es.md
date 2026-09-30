@@ -25,6 +25,8 @@ Es ligero: HTML y CSS normales, sin 3D ni GPU. Sin dependencias; solo Node 18 o 
 
 ### Opción A: como plugin de Claude Code (recomendado)
 
+KevMind es un plugin solo para Claude Code; no tiene nada que hacer en claude.ai ni en Cowork, que además rechazan plugins con una carpeta `bin/` en la raíz. KevMind conserva su `bin/`, así `kevmind` queda en el PATH de la herramienta Bash mientras el plugin está activo.
+
 El repositorio es su propio marketplace de plugins. En una sesión de Claude Code, agrégalo una vez e instala el plugin desde ahí:
 
 ```text
