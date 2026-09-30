@@ -1,4 +1,4 @@
-// Instala/desinstala los hooks de KevMind en ~/.claude/settings.json (para quien no use el plugin).
+// Installs/uninstalls KevMind hooks in ~/.claude/settings.json (for users not using the plugin).
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -15,7 +15,7 @@ function readSettings() {
   if (!fs.existsSync(SETTINGS)) return {};
   const txt = fs.readFileSync(SETTINGS, 'utf8');
   try { return JSON.parse(txt); } catch {
-    throw new Error(`No pude leer ${SETTINGS} (JSON inválido). Revísalo antes de instalar.`);
+    throw new Error(`Could not parse ${SETTINGS} (invalid JSON). Fix it before installing.`);
   }
 }
 

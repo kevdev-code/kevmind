@@ -5,34 +5,34 @@ const [cmd = 'start', ...args] = process.argv.slice(2);
 const port = Number(process.env.KEVMIND_PORT) || 4777;
 
 const HELP = `
-KevMind · mira en vivo cómo trabaja Claude Code
+KevMind · watch Claude Code work in real time
 
-  kevmind              Inicia el panel en http://localhost:${port}
-  kevmind install      Agrega los hooks a ~/.claude/settings.json
-  kevmind uninstall    Quita los hooks de KevMind
-  kevmind demo         Inicia el panel y simula una sesión de prueba
+  kevmind              Start the dashboard at http://localhost:${port}
+  kevmind install      Add the hooks to ~/.claude/settings.json
+  kevmind uninstall    Remove KevMind's hooks
+  kevmind demo         Start the dashboard and simulate a sample session
 
-  Variables: KEVMIND_PORT (puerto, 4777), KEVMIND_HOME (datos, ~/.kevmind)
+  Env: KEVMIND_PORT (port, 4777), KEVMIND_HOME (data dir, ~/.kevmind)
 `;
 
 switch (cmd) {
   case 'start': {
     startServer({ port }).on('listening', () => {
-      console.log(`\n  KevMind corriendo en http://localhost:${port}\n  (Ctrl+C para salir)\n`);
-    }).on('error', (e) => fail(e.code === 'EADDRINUSE' ? `El puerto ${port} ya está en uso. ¿KevMind ya está abierto?` : e.message));
+      console.log(`\n  KevMind running at http://localhost:${port}\n  (Ctrl+C to quit)\n`);
+    }).on('error', (e) => fail(e.code === 'EADDRINUSE' ? `Port ${port} is already in use. Is KevMind already running?` : e.message));
     break;
   }
   case 'install': {
     const { install } = await import('../src/install.js');
     try {
       const r = install();
-      console.log(`\n  ✓ Hooks instalados en ${r.settings}\n  (respaldo en settings.json.kevmind-backup)\n\n  Ahora corre "kevmind" y abre una sesión nueva de Claude Code.\n`);
+      console.log(`\n  ✓ Hooks installed in ${r.settings}\n  (backup at settings.json.kevmind-backup)\n\n  Now run "kevmind" and start a new Claude Code session.\n`);
     } catch (e) { fail(e.message); }
     break;
   }
   case 'uninstall': {
     const { uninstall } = await import('../src/install.js');
-    try { uninstall(); console.log('\n  ✓ Hooks de KevMind eliminados.\n'); } catch (e) { fail(e.message); }
+    try { uninstall(); console.log('\n  ✓ KevMind hooks removed.\n'); } catch (e) { fail(e.message); }
     break;
   }
   case 'demo': {
@@ -40,10 +40,10 @@ switch (cmd) {
     const server = startServer({ port });
     server.on('error', (e) => fail(e.message));
     server.on('listening', async () => {
-      console.log(`\n  KevMind (demo) en http://localhost:${port}\n  Simulando una sesión en 3 s...\n`);
+      console.log(`\n  KevMind (demo) at http://localhost:${port}\n  Simulating a session in 3 s...\n`);
       await new Promise((r) => setTimeout(r, 3000));
       await runDemo(port, Number(args[0]) || 1);
-      console.log('  ✓ Demo terminada. El panel sigue abierto (Ctrl+C para salir).');
+      console.log('  ✓ Demo finished. The dashboard stays open (Ctrl+C to quit).');
     });
     break;
   }

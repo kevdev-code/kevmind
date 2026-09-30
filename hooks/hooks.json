@@ -1,5 +1,5 @@
 {
-  "description": "KevMind: manda la actividad de Claude Code al panel local",
+  "description": "KevMind: forwards Claude Code activity to the local dashboard",
   "hooks": {
     "SessionStart": [
       {

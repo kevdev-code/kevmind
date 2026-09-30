@@ -1,90 +1,98 @@
 # KevMind
 
-Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralelo, qué archivos toca y dónde falla. Todo corre en tu computadora; nada sale a internet.
+Watch Claude Code work in real time: what it's doing, which agents it runs in parallel, which files it touches and where it fails. Everything runs on your machine; nothing leaves it.
 
-> Estado: **MVP (v0.1)**. Funciona el panel en vivo. El grafo de memoria y la vista "cerebro" vienen después (ver hoja de ruta).
+**English** · [Español](README.es.md)
 
-## Qué muestra
+> Status: **MVP (v0.1)**. The live dashboard works. The memory graph and "brain" view come later (see roadmap).
 
-- **Sesiones** de las últimas 24 h, por proyecto, con su estado (trabajando, en espera, espera tu OK).
-- **Agentes en paralelo**: línea de tiempo de Claude y cada subagente que lanza, con cuántas acciones hizo cada uno.
-- **Actividad en vivo**: cada lectura, edición, comando, búsqueda y llamada MCP al instante.
-- **Archivos más tocados**: cuántas veces se leyó y editó cada uno.
-- **Herramientas**: usos, errores y tiempo promedio.
-- **Alertas de conflicto**: cuando dos agentes editan el mismo archivo con menos de 5 minutos de diferencia.
+## What it shows
 
-Es ligero: HTML y CSS normales, sin 3D ni GPU. Sin dependencias; solo Node 18 o superior.
+- **Sessions** from the last 24 h, per project, with their status (working, idle, needs your OK).
+- **Parallel agents**: a timeline of Claude and every subagent it launches, with each one's action count.
+- **Live activity**: every read, edit, command, search and MCP call as it happens.
+- **Most-touched files**: how often each file was read and edited.
+- **Tools**: uses, errors and average duration.
+- **Conflict alerts**: when two agents edit the same file less than 5 minutes apart.
 
-## Instalación
+The dashboard is available in English and Spanish (toggle in the top-right corner).
 
-### Opción A: como plugin de Claude Code (recomendado)
+It's lightweight: plain HTML and CSS, no 3D, no GPU. Zero dependencies; just Node 18+.
+
+## Install
+
+### Option A: as a Claude Code plugin (recommended)
 
 ```bash
-/plugin install <ruta-o-repo-de-kevmind>
+/plugin install <path-or-repo-of-kevmind>
 ```
 
-El plugin registra los hooks solo. Después abre el panel:
+The plugin registers the hooks for you. Then open the dashboard:
 
 ```bash
 npx kevmind
 ```
 
-### Opción B: hooks manuales
+### Option B: manual hooks
 
 ```bash
-npx kevmind install    # agrega los hooks a ~/.claude/settings.json (con respaldo)
-npx kevmind            # abre el panel en http://localhost:4777
+npx kevmind install    # adds the hooks to ~/.claude/settings.json (with a backup)
+npx kevmind            # opens the dashboard at http://localhost:4777
 ```
 
-Para quitarlos: `npx kevmind uninstall`.
+To remove them: `npx kevmind uninstall`.
 
-### Probar sin Claude Code
+### Try it without Claude Code
 
 ```bash
 npx kevmind demo
 ```
 
-Simula una sesión con tres agentes en paralelo. Aparece como proyecto `demo-kevmind` para que no se confunda con datos reales.
+Simulates a session with three parallel agents. It shows up as project `demo-kevmind` so it's never confused with real data.
 
-## Cómo funciona
+## How it works
 
 ```
-Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ servidor local :4777 ──SSE──▶ panel web
+Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ local server :4777 ──SSE──▶ web dashboard
                                                                 │
                                                                 └─▶ ~/.kevmind/events.jsonl
 ```
 
-1. Claude Code dispara hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, etc.).
-2. `send.js` reenvía el evento al servidor local. Si el servidor no está abierto, sale en silencio: **nunca bloquea a Claude**.
-3. El servidor tapa secretos (tokens, claves, líneas `.env`), guarda el evento y lo manda al navegador.
+1. Claude Code fires hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, etc.).
+2. `send.js` forwards the event to the local server. If the server isn't running, it exits silently: **it never blocks Claude**.
+3. The server masks secrets (tokens, keys, `.env` lines), stores the event and streams it to the browser.
 
-## Privacidad
+## Privacy
 
-- Todo se queda en `~/.kevmind/`. No hay telemetría.
-- Antes de guardar, se ocultan claves API, tokens de GitHub/AWS/Slack, JWT, llaves privadas y variables tipo `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
-- El servidor solo escucha en `127.0.0.1`.
+- Everything stays in `~/.kevmind/`. No telemetry.
+- Before storing, it masks API keys, GitHub/AWS/Slack tokens, JWTs, private keys and variables like `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
+- The server only listens on `127.0.0.1`.
 
-## Configuración
+## Configuration
 
-| Variable       | Por defecto   | Qué hace                  |
-| -------------- | ------------- | ------------------------- |
-| `KEVMIND_PORT` | `4777`        | Puerto del panel          |
-| `KEVMIND_HOME` | `~/.kevmind`  | Dónde se guardan los datos |
+| Variable       | Default       | What it does       |
+| -------------- | ------------- | ------------------ |
+| `KEVMIND_PORT` | `4777`        | Dashboard port     |
+| `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
 
-## Limitaciones conocidas
+## Known limitations
 
-- Para saber qué subagente hizo cada acción, KevMind usa el campo `agent_id` del hook si Claude Code lo envía. Si tu versión no lo manda, las acciones de los subagentes se atribuyen a "Claude", aunque la línea de tiempo de cuándo empieza y termina cada subagente sigue funcionando.
-- Cada hook arranca un proceso de Node (unos 50 ms). No se nota en el uso normal.
+- To know which subagent performed each action, KevMind uses the hook's `agent_id` field when Claude Code sends it. If your version doesn't, subagent actions are attributed to "Claude", although the timeline of when each subagent starts and ends still works.
+- Each hook starts a Node process (~50 ms). Not noticeable in normal use.
 
-## Hoja de ruta
+## Adding a language
 
-- [ ] Tokens y costo por sesión y por agente (leyendo los transcripts).
-- [ ] Repetir una sesión pasada paso a paso.
-- [ ] Grafo de memoria: `CLAUDE.md` y notas, con detección de notas viejas, duplicadas o con enlaces rotos.
-- [ ] Servidor MCP para que Claude consulte su propia memoria antes de trabajar.
-- [ ] Sugerencias para `CLAUDE.md` según lo que Claude lee una y otra vez.
-- [ ] Vista "cerebro" en 3D, opcional.
+UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, translate it and add a button in `public/index.html`.
 
-## Licencia
+## Roadmap
+
+- [ ] Tokens and cost per session and per agent (from transcripts).
+- [ ] Replay a past session step by step.
+- [ ] Memory graph: `CLAUDE.md` and notes, flagging stale, duplicate or broken-link notes.
+- [ ] MCP server so Claude can query its own memory before working.
+- [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
+- [ ] Optional 3D "brain" view.
+
+## License
 
 MIT

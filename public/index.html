@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -13,14 +13,20 @@
       <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="var(--accent)"/><circle cx="11" cy="13" r="3" fill="#fff"/><circle cx="21" cy="13" r="3" fill="#fff"/><circle cx="16" cy="21" r="3" fill="#fff"/><path d="M11 13L21 13L16 21Z" stroke="#fff" stroke-width="1.2" fill="none"/></svg>
       <span>KevMind</span>
     </div>
-    <div class="conn" id="conn"><span class="dot"></span><span id="connText">conectando…</span></div>
+    <div class="top-right">
+      <div class="conn" id="conn"><span class="dot"></span><span id="connText" data-i18n="connecting"></span></div>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="es">ES</button>
+      </div>
+    </div>
   </header>
 
   <main class="layout">
     <aside class="panel sessions">
-      <h2>Sesiones <small>últimas 24 h</small></h2>
+      <h2><span data-i18n="sessions"></span> <small data-i18n="last24h"></small></h2>
       <ul id="sessionList"></ul>
-      <p class="empty" id="noSessions">Todavía no hay actividad. Abre una sesión de Claude Code con los hooks instalados, o corre <code>kevmind demo</code>.</p>
+      <p class="empty" id="noSessions" data-i18n-html="noSessions"></p>
     </aside>
 
     <section class="center">
@@ -33,44 +39,45 @@
           <span class="status" id="nowStatus">—</span>
         </div>
         <div class="stats">
-          <div><b id="stAgents">0</b><span>agentes activos</span></div>
-          <div><b id="stActions">0</b><span>acciones</span></div>
-          <div><b id="stPrompts">0</b><span>mensajes</span></div>
-          <div><b id="stTime">0 min</b><span>duración</span></div>
+          <div><b id="stAgents">0</b><span data-i18n="activeAgents"></span></div>
+          <div><b id="stActions">0</b><span data-i18n="actions"></span></div>
+          <div><b id="stPrompts">0</b><span data-i18n="messages"></span></div>
+          <div><b id="stTime">0 min</b><span data-i18n="duration"></span></div>
         </div>
       </div>
 
       <div class="panel">
-        <h2>Agentes <small>en paralelo, últimos 15 min</small></h2>
+        <h2><span data-i18n="agents"></span> <small data-i18n="agentsSub"></small></h2>
         <div id="gantt" class="gantt"></div>
       </div>
 
       <div class="panel feed-panel">
-        <h2>Actividad <small>en vivo</small></h2>
+        <h2><span data-i18n="activity"></span> <small data-i18n="live"></small></h2>
         <ol id="feed" class="feed"></ol>
       </div>
     </section>
 
     <aside class="right">
       <div class="panel">
-        <h2>Alertas</h2>
+        <h2 data-i18n="alerts"></h2>
         <ul id="alerts" class="alerts"></ul>
-        <p class="empty small" id="noAlerts">Sin alertas.</p>
+        <p class="empty small" id="noAlerts" data-i18n="noAlerts"></p>
       </div>
       <div class="panel">
-        <h2>Archivos <small>más tocados</small></h2>
+        <h2><span data-i18n="files"></span> <small data-i18n="mostTouched"></small></h2>
         <ul id="files" class="files"></ul>
       </div>
       <div class="panel">
-        <h2>Herramientas</h2>
+        <h2 data-i18n="tools"></h2>
         <table class="tools">
-          <thead><tr><th>Herramienta</th><th>Usos</th><th>Errores</th><th>Promedio</th></tr></thead>
+          <thead><tr><th data-i18n="tool"></th><th data-i18n="uses"></th><th data-i18n="errors"></th><th data-i18n="avg"></th></tr></thead>
           <tbody id="tools"></tbody>
         </table>
       </div>
     </aside>
   </main>
 
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// KevMind hook: lee el JSON que Claude Code manda por stdin y lo reenvía al servidor local.
-// Nunca bloquea ni rompe a Claude Code: si el servidor no está corriendo, sale en silencio.
+// KevMind hook: reads the JSON Claude Code sends on stdin and forwards it to the local server.
+// Never blocks or breaks Claude Code: if the server isn't running, it exits silently.
 import http from 'node:http';
 
 const PORT = Number(process.env.KEVMIND_PORT) || 4777;

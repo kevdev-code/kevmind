@@ -46,6 +46,10 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
   position: sticky; top: 0; z-index: 2;
 }
 .brand { display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 16px; }
+.top-right { display: flex; align-items: center; gap: 14px; }
+.lang { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.lang button { background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; padding: 4px 9px; cursor: pointer; }
+.lang button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .conn { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .conn.on .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
@@ -115,7 +119,7 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .feed-panel { flex: 1; }
 .feed { max-height: 460px; overflow-y: auto; }
 .feed li {
-  display: grid; grid-template-columns: 58px 90px 1fr; gap: 10px;
+  display: grid; grid-template-columns: 64px 96px 1fr; gap: 10px;
   padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; align-items: baseline;
 }
 .feed li:last-child { border-bottom: 0; }
@@ -123,12 +127,12 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .feed .k { font-weight: 600; font-size: 12px; }
 .feed .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed .who { color: var(--muted); font-size: 12px; margin-right: 6px; }
-.k.lee { color: var(--info); }
-.k.edita { color: var(--warn); }
-.k.comando { color: var(--accent); }
-.k.agente, .k.listo { color: var(--ok); }
+.k.read { color: var(--info); }
+.k.edit { color: var(--warn); }
+.k.command { color: var(--accent); }
+.k.agent_start, .k.agent_done, .k.stop { color: var(--ok); }
 .k.error { color: var(--err); }
-.k.espera { color: var(--warn); }
+.k.waiting { color: var(--warn); }
 .k.prompt { color: var(--text); }
 .feed li.new { animation: flash 1s ease-out; }
 @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }

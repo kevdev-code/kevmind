@@ -1,16 +1,49 @@
-// Panel de KevMind: escucha /stream (SSE) y pinta la sesión seleccionada.
+// KevMind dashboard: listens to /stream (SSE) and renders the selected session.
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const STATUS = { working: 'trabajando', idle: 'en espera', waiting: 'espera tu OK', ended: 'cerrada' };
-const AGENT_STATUS = { running: 'trabajando', working: 'trabajando', idle: 'en espera', done: 'terminó', error: 'con error' };
 const WINDOW_MS = 15 * 60 * 1000;
+const LANG_KEY = 'kevmind.lang';
 
 let sessions = [];
-let current = null;      // resumen completo de la sesión seleccionada
+let current = null;      // full summary of the selected session
 let selectedId = null;
-let pinned = false;      // si el usuario eligió una sesión a mano
+let pinned = false;      // true when the user picked a session manually
 let lastEventCount = 0;
+let connected = null;
 
+// ---------- i18n ----------
+let lang = pickLang();
+let T = I18N[lang];
+
+function pickLang() {
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved && I18N[saved]) return saved;
+  } catch { /* storage unavailable */ }
+  return (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en';
+}
+
+function setLang(next) {
+  if (!I18N[next]) return;
+  lang = next;
+  T = I18N[lang];
+  try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
+  applyStatic();
+  renderSessions();
+  renderSession();
+}
+
+function applyStatic() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = T[el.dataset.i18n]; });
+  document.querySelectorAll('[data-i18n-html]').forEach((el) => { el.innerHTML = T[el.dataset.i18nHtml]; });
+  document.querySelectorAll('[data-lang]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  if (connected !== null) setConn(connected);
+}
+
+document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+
+// ---------- data ----------
 function connect() {
   const es = new EventSource('/stream');
   es.onopen = () => setConn(true);
@@ -33,8 +66,9 @@ function connect() {
 }
 
 function setConn(on) {
+  connected = on;
   $('conn').className = 'conn ' + (on ? 'on' : 'off');
-  $('connText').textContent = on ? 'conectado' : 'sin conexión, reintentando…';
+  $('connText').textContent = on ? T.connected : T.disconnected;
 }
 
 async function select(id, byUser = true) {
@@ -47,13 +81,10 @@ async function select(id, byUser = true) {
   renderSession();
 }
 
-function ago(ts) {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return `hace ${s} s`;
-  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
-  return `hace ${Math.round(s / 3600)} h`;
-}
-const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+// ---------- rendering ----------
+const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
+const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
 function renderSessions() {
   $('noSessions').hidden = sessions.length > 0;
@@ -61,7 +92,7 @@ function renderSessions() {
     <li data-id="${esc(s.id)}" class="${s.id === selectedId ? 'sel' : ''}" title="${esc(s.cwd)}">
       <span class="sdot ${esc(s.status)}"></span>
       <span class="sname">${esc(s.project)}</span>
-      <span class="smeta">${STATUS[s.status] || s.status} · ${ago(s.lastAt)}</span>
+      <span class="smeta">${esc(T.status[s.status] || s.status)} · ${T.ago(secondsSince(s.lastAt))}</span>
     </li>`).join('');
 }
 $('sessionList').addEventListener('click', (e) => {
@@ -74,10 +105,9 @@ function renderSession() {
   if (!s) return;
   $('nowProject').textContent = s.project;
   $('nowCwd').textContent = s.cwd;
-  $('nowStatus').textContent = STATUS[s.status] || s.status;
+  $('nowStatus').textContent = T.status[s.status] || s.status;
   $('nowStatus').className = 'status ' + s.status;
-  const active = s.agents.filter((a) => a.status === 'running' || a.status === 'working').length;
-  $('stAgents').textContent = active;
+  $('stAgents').textContent = s.agents.filter((a) => a.status === 'running' || a.status === 'working').length;
   $('stActions').textContent = s.agents.reduce((n, a) => n + a.actions, 0);
   $('stPrompts').textContent = s.prompts;
   renderGantt();
@@ -100,7 +130,7 @@ function renderGantt() {
       const left = ((start - from) / span) * 100;
       const width = Math.max(0.5, ((end - start) / span) * 100);
       const cls = a.id === 'main' ? s.status : a.status;
-      const sub = a.id === 'main' ? (STATUS[s.status] || '') : `${AGENT_STATUS[a.status] || a.status} · ${a.actions} acciones`;
+      const sub = a.id === 'main' ? (T.status[s.status] || '') : T.agentStats(T.agentStatus[a.status] || a.status, a.actions);
       return `<div class="grow">
         <div class="glabel" title="${esc(a.description || '')}">${a.id === 'main' ? '<b>Claude</b>' : '↳ ' + esc(a.label)}<small>${esc(sub)}</small></div>
         <div class="gtrack"><div class="gbar ${esc(cls)}" style="left:${left}%;width:${Math.min(width, 100 - left)}%" title="${esc(a.description || a.label)}"></div></div>
@@ -108,38 +138,47 @@ function renderGantt() {
     });
   const mins = Math.round(span / 60000);
   $('gantt').innerHTML = rows.join('') +
-    `<div class="gaxis"><div></div><div><span>${mins > 0 ? `hace ${mins} min` : 'inicio'}</span><span>ahora</span></div></div>`;
+    `<div class="gaxis"><div></div><div><span>${mins > 0 ? T.minAgo(mins) : T.start}</span><span>${T.now}</span></div></div>`;
 }
 
 function renderFeed(s) {
   const byId = Object.fromEntries(s.agents.map((a) => [a.id, a]));
-  const who = (id) => (id === 'user' ? 'Tú' : id === 'main' ? 'Claude' : byId[id]?.label || id);
+  const who = (id) => (id === 'user' ? T.you : id === 'main' ? 'Claude' : byId[id]?.label || id);
+  const text = (e) => {
+    const fn = T.text[e.kind];
+    if (e.kind === 'agent_start') return fn(who(e.target), e.detail);
+    if (e.kind === 'agent_done') return fn(who(e.actor));
+    return fn ? fn(e.detail, e.actor, e.tool) : e.detail;
+  };
   const events = s.events.slice().reverse();
   const fresh = Math.max(0, s.events.length - lastEventCount);
   lastEventCount = s.events.length;
-  $('feed').innerHTML = events.slice(0, 150).map((e, i) => `
-    <li class="${i < fresh && fresh < 20 ? 'new' : ''}">
+  $('feed').innerHTML = events.slice(0, 150).map((e, i) => {
+    const label = e.tool && !['read', 'edit', 'error'].includes(e.kind) ? e.tool : T.kind[e.kind] || e.kind;
+    const showWho = e.kind !== 'agent_done';
+    return `<li class="${i < fresh && fresh < 20 ? 'new' : ''}">
       <span class="t">${hhmm(e.ts)}</span>
-      <span class="k ${esc(e.kind)}">${esc(e.tool && !['lee', 'edita'].includes(e.kind) ? e.tool : e.kind)}</span>
-      <span class="x"><span class="who">${esc(who(e.actor))}</span>${esc(e.text)}</span>
-    </li>`).join('');
+      <span class="k ${esc(e.kind)}">${esc(label)}</span>
+      <span class="x">${showWho ? `<span class="who">${esc(who(e.actor))}</span>` : ''}${esc(text(e))}</span>
+    </li>`;
+  }).join('');
 }
 
 function renderSide(s) {
+  const byId = Object.fromEntries(s.agents.map((a) => [a.id, a]));
+  const name = (id) => (id === 'main' ? 'Claude' : byId[id]?.label || id);
   const alerts = s.alerts.slice().reverse();
   $('noAlerts').hidden = alerts.length > 0;
-  $('alerts').innerHTML = alerts.map((a) => `<li><b>${esc(a.kind)}</b>${esc(a.text)}</li>`).join('');
+  $('alerts').innerHTML = alerts.map((a) =>
+    `<li><b>${esc(T.alertKind[a.kind] || a.kind)}</b>${esc(T.conflict(name(a.a), name(a.b), a.file))}</li>`).join('');
 
   const files = s.files.slice().sort((a, b) => (b.edits * 3 + b.reads) - (a.edits * 3 + a.reads)).slice(0, 8);
   const max = Math.max(1, ...files.map((f) => f.reads + f.edits));
-  $('files').innerHTML = files.map((f) => {
-    const name = f.path.split(/[\\/]/).pop();
-    return `<li title="${esc(f.path)}">
-      <span class="fname">${esc(name)}</span>
-      <span class="fnum">${f.reads} lee · ${f.edits} edita</span>
+  $('files').innerHTML = files.map((f) => `<li title="${esc(f.path)}">
+      <span class="fname">${esc(f.path.split(/[\\/]/).pop())}</span>
+      <span class="fnum">${T.fileStats(f.reads, f.edits)}</span>
       <span class="fbar"><i class="r" style="width:${(f.reads / max) * 100}%"></i><i class="e" style="width:${(f.edits / max) * 100}%"></i></span>
-    </li>`;
-  }).join('') || '<li class="empty">Nada todavía.</li>';
+    </li>`).join('') || `<li class="empty">${T.nothingYet}</li>`;
 
   const tools = s.tools.slice().sort((a, b) => b.count - a.count).slice(0, 10);
   $('tools').innerHTML = tools.map((t) => `<tr>
@@ -147,8 +186,8 @@ function renderSide(s) {
       <td class="${t.errors ? 'err' : ''}">${t.errors}</td>
       <td>${t.timed ? fmtMs(t.totalMs / t.timed) : '—'}</td></tr>`).join('');
 }
-const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
-// Refresca barras y tiempos relativos cada segundo sin esperar eventos.
+// Refresh bars and relative times every second without waiting for events.
 setInterval(() => { renderGantt(); renderSessions(); }, 1000);
+applyStatic();
 connect();

@@ -58,15 +58,15 @@ export function startServer({ port = 4777, host = '127.0.0.1' } = {}) {
 
     if (url.pathname.startsWith('/api/sessions/')) {
       const s = state.sessions.get(decodeURIComponent(url.pathname.slice('/api/sessions/'.length)));
-      return s ? json(res, state.summary(s)) : json(res, { error: 'no existe' }, 404);
+      return s ? json(res, state.summary(s)) : json(res, { error: 'not found' }, 404);
     }
 
-    // Archivos estáticos del panel
+    // Static dashboard files
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     const file = path.normalize(path.join(PUBLIC_DIR, rel));
     if (!file.startsWith(PUBLIC_DIR)) return res.writeHead(403).end();
     fs.readFile(file, (err, buf) => {
-      if (err) return res.writeHead(404).end('No encontrado');
+      if (err) return res.writeHead(404).end('Not found');
       res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' }).end(buf);
     });
   });
@@ -79,7 +79,7 @@ function json(res, obj, code = 200) {
   res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));
 }
 
-// Reconstruye el estado con los eventos de las últimas 24 h al arrancar.
+// Rebuilds state from the last 24 h of events on startup.
 function replay(state) {
   if (!fs.existsSync(LOG_FILE)) return;
   const since = Date.now() - REPLAY_MS;
@@ -89,6 +89,6 @@ function replay(state) {
     try {
       const { ts, e } = JSON.parse(line);
       if (ts >= since) state.apply(e, ts);
-    } catch { /* línea corrupta: se ignora */ }
+    } catch { /* skip corrupt line */ }
   }
 }

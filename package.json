@@ -1,7 +1,7 @@
 {
   "name": "kevmind",
   "version": "0.1.0",
-  "description": "Mira en vivo cómo trabaja Claude Code: sesiones, agentes en paralelo, herramientas y archivos. Todo local.",
+  "description": "Watch Claude Code work in real time: parallel agents, tool calls, files and errors. Local-only, zero dependencies.",
   "type": "module",
   "bin": {
     "kevmind": "bin/kevmind.js"

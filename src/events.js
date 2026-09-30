@@ -1,4 +1,4 @@
-// Lista de eventos de Claude Code que KevMind escucha.
+// Claude Code hook events KevMind listens to.
 export const HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
@@ -13,5 +13,5 @@ export const HOOK_EVENTS = [
   'SessionEnd',
 ];
 
-// Eventos que aceptan "matcher" (filtro por herramienta).
+// Events that accept a "matcher" (tool filter).
 export const MATCHER_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);

@@ -1,5 +1,5 @@
-// Modo demo: simula una sesión con agentes en paralelo para probar el panel sin Claude Code.
-// Todo lo que genera se marca como proyecto "demo-kevmind" para no confundirlo con datos reales.
+// Demo mode: simulates a session with parallel agents to try the dashboard without Claude Code.
+// Everything it generates is tagged as project "demo-kevmind" so it's never mistaken for real data.
 import http from 'node:http';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -21,21 +21,22 @@ export async function runDemo(port = 4777, speed = 1) {
   const wait = (ms) => sleep(ms / speed);
   let n = 0;
   const id = () => `toolu_demo_${++n}`;
+  const SERVICE = 'src/appointments/service.ts';
 
   await send({ hook_event_name: 'SessionStart', source: 'startup' });
-  await send({ hook_event_name: 'UserPromptSubmit', prompt: '[DEMO] Revisa el módulo de citas y agrega pruebas' });
+  await send({ hook_event_name: 'UserPromptSubmit', prompt: '[DEMO] Review the appointments module and add tests' });
   await wait(600);
 
   const r1 = id();
-  await send({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: r1, tool_input: { file_path: `${cwd}/src/citas/service.ts` } });
+  await send({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: r1, tool_input: { file_path: `${cwd}/${SERVICE}` } });
   await wait(400);
   await send({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: r1, tool_response: {} });
 
-  // Lanza 3 subagentes en paralelo
+  // Launch 3 subagents in parallel
   const agents = [
-    { t: id(), type: 'Explore', desc: 'Buscar usos de CitaService', files: ['src/citas/controller.ts', 'src/agenda/calendar.ts'] },
-    { t: id(), type: 'general-purpose', desc: 'Escribir pruebas unitarias', files: ['test/citas.test.ts'] },
-    { t: id(), type: 'general-purpose', desc: 'Revisar validaciones', files: ['src/citas/service.ts'] },
+    { t: id(), type: 'Explore', desc: 'Find usages of AppointmentService', files: ['src/appointments/controller.ts', 'src/calendar/calendar.ts'] },
+    { t: id(), type: 'general-purpose', desc: 'Write unit tests', files: ['test/appointments.test.ts'] },
+    { t: id(), type: 'general-purpose', desc: 'Review validations', files: [SERVICE] },
   ];
   for (const a of agents) {
     await send({ hook_event_name: 'PreToolUse', tool_name: 'Task', tool_use_id: a.t, tool_input: { subagent_type: a.type, description: a.desc, prompt: '...' } });
@@ -47,7 +48,7 @@ export async function runDemo(port = 4777, speed = 1) {
       const agent_id = `demo-agent-${i + 1}`;
       const file = `${cwd}/${a.files[step % a.files.length]}`;
       const tool = step === 0 ? 'Read' : i === 0 ? 'Grep' : step === 2 && i === 1 ? 'Bash' : 'Edit';
-      const input = tool === 'Grep' ? { pattern: 'CitaService' } : tool === 'Bash' ? { command: 'npm test', description: 'Correr pruebas' } : { file_path: file };
+      const input = tool === 'Grep' ? { pattern: 'AppointmentService' } : tool === 'Bash' ? { command: 'npm test', description: 'Run tests' } : { file_path: file };
       const t = id();
       await send({ hook_event_name: 'PreToolUse', agent_id, agent_type: a.type, tool_name: tool, tool_use_id: t, tool_input: input });
       await wait(300);
@@ -56,16 +57,16 @@ export async function runDemo(port = 4777, speed = 1) {
     await wait(700);
   }
 
-  // Conflicto: el agente principal edita el mismo archivo que el agente 3
+  // Conflict: the main agent edits the same file as agent 3
   const e1 = id();
-  await send({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: e1, tool_input: { file_path: `${cwd}/src/citas/service.ts` } });
+  await send({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: e1, tool_input: { file_path: `${cwd}/${SERVICE}` } });
   await send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: e1, tool_response: {} });
 
   for (const a of agents) {
     await wait(700);
     await send({ hook_event_name: 'PostToolUse', tool_name: 'Task', tool_use_id: a.t, tool_response: {} });
   }
-  await send({ hook_event_name: 'Notification', message: '[DEMO] Claude necesita tu permiso para usar Bash' });
+  await send({ hook_event_name: 'Notification', message: '[DEMO] Claude needs your permission to use Bash' });
   await wait(1200);
   await send({ hook_event_name: 'Stop' });
   return session_id;

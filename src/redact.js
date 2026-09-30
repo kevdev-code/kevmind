@@ -1,13 +1,13 @@
-// Tapa secretos antes de guardar o mostrar nada.
+// Masks secrets before anything is stored or displayed.
 const SECRET_KEY = /(pass(word)?|secret|token|api[_-]?key|auth(orization)?|cookie|private[_-]?key|credential)/i;
 const SECRET_VALUE = [
-  /sk-[A-Za-z0-9_-]{16,}/g,               // claves estilo OpenAI/Anthropic
-  /gh[pousr]_[A-Za-z0-9]{20,}/g,          // tokens de GitHub
+  /sk-[A-Za-z0-9_-]{16,}/g,               // OpenAI/Anthropic-style keys
+  /gh[pousr]_[A-Za-z0-9]{20,}/g,          // GitHub tokens
   /AKIA[0-9A-Z]{16}/g,                    // AWS access key
   /xox[abprs]-[A-Za-z0-9-]{10,}/g,        // Slack
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /((?:^|\n)\s*[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|KEY)[A-Z0-9_]*\s*=\s*)[^\n]+/g, // líneas .env
+  /((?:^|\n)\s*[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|KEY)[A-Z0-9_]*\s*=\s*)[^\n]+/g, // .env lines
 ];
 
 const MAX_STRING = 2000;
