@@ -18,6 +18,9 @@ const watch = process.platform === 'linux' ? ['--watch'] : ['--watch-path=src', 
 const child = spawn(process.execPath, [...watch, BIN, 'start', '--dev', ...args], {
   cwd: ROOT,
   stdio: 'inherit',
+  // Detached, this process has no console, and Windows would give the watcher a new visible one
+  // (closing it kills the dashboard). Hidden, the watcher's console is inherited by the server it spawns.
+  windowsHide: process.env.KEVMIND_DETACHED === '1',
   env: { ...process.env, KEVMIND_WATCHED: '1' }, // lets the server take the watcher down with it on shutdown
 });
 child.on('exit', (code) => process.exit(code ?? 0));
