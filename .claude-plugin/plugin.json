@@ -5,6 +5,8 @@
   "author": {
     "name": "Kevin"
   },
+  "homepage": "https://github.com/kevdev-code/kevmind",
+  "repository": "https://github.com/kevdev-code/kevmind",
   "license": "MIT",
   "keywords": [
     "observability",

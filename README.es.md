@@ -25,8 +25,18 @@ Es ligero: HTML y CSS normales, sin 3D ni GPU. Sin dependencias; solo Node 18 o 
 
 ### Opción A: como plugin de Claude Code (recomendado)
 
+El repositorio es su propio marketplace de plugins. En una sesión de Claude Code, agrégalo una vez e instala el plugin desde ahí:
+
+```text
+/plugin marketplace add kevdev-code/kevmind
+/plugin install kevmind@kevmind
+```
+
+El segundo comando abre los detalles del plugin, donde eliges el alcance y confirmas. En Claude Code 2.1.275 o superior, un solo comando hace los dos pasos: `/plugin install kevmind --marketplace kevdev-code/kevmind`. Desde una terminal en vez de una sesión:
+
 ```bash
-/plugin install <ruta-o-repo-de-kevmind>
+claude plugin marketplace add kevdev-code/kevmind
+claude plugin install kevmind@kevmind
 ```
 
 El plugin registra los hooks solo. Después abre el panel:
@@ -34,6 +44,8 @@ El plugin registra los hooks solo. Después abre el panel:
 ```bash
 npx kevmind
 ```
+
+Para actualizar más adelante: `/plugin marketplace update kevmind` y luego `/plugin update kevmind@kevmind`.
 
 ### Opción B: hooks manuales
 
