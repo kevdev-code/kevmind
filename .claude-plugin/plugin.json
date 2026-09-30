@@ -1,0 +1,8 @@
+{
+  "name": "kevmind",
+  "version": "0.1.0",
+  "description": "Mira en vivo cómo trabaja Claude Code: sesiones, agentes en paralelo, herramientas y archivos. Todo local.",
+  "author": { "name": "Kevin" },
+  "license": "MIT",
+  "keywords": ["observability", "agents", "dashboard"]
+}

@@ -1,0 +1,34 @@
+{
+  "name": "kevmind",
+  "version": "0.1.0",
+  "description": "Mira en vivo cómo trabaja Claude Code: sesiones, agentes en paralelo, herramientas y archivos. Todo local.",
+  "type": "module",
+  "bin": {
+    "kevmind": "bin/kevmind.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "hooks",
+    "public",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/kevmind.js",
+    "demo": "node bin/kevmind.js demo"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "agents",
+    "observability",
+    "dashboard"
+  ],
+  "author": "Kevin",
+  "license": "MIT"
+}
