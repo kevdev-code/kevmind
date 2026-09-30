@@ -1,5 +1,6 @@
 // Local server: receives hook events, stores them and streams them live to the browser (SSE).
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -17,15 +18,33 @@ export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const DEDUPE_MS = 3000;
+
+// With two hook sources (the plugin plus hooks from `kevmind install`) every event arrives twice.
+// Returns a filter that keeps the first of any exact repeat within a few seconds, keyed on
+// session + event + tool_use_id, or a hash of the whole payload when there is no tool_use_id.
+export function makeDedupe(windowMs = DEDUPE_MS) {
+  const recent = new Map();
+  return (payload, ts) => {
+    const id = payload.tool_use_id || crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex');
+    const key = `${payload.session_id}|${payload.hook_event_name}|${id}`;
+    const last = recent.get(key);
+    if (last !== undefined && ts - last < windowMs) return true;
+    recent.set(key, ts);
+    if (recent.size > 5000) for (const [k, t] of recent) if (ts - t >= windowMs) recent.delete(k);
+    return false;
+  };
+}
 
 export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env.KEVMIND_DEV === '1' } = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const state = new State();
-  replay(state);
+  const isDuplicate = makeDedupe();
+  replay(state, isDuplicate);
 
   const clients = new Set();
   const log = fs.createWriteStream(LOG_FILE, { flags: 'a' });
-  ingestSpool(state, log);
+  ingestSpool(state, log, isDuplicate);
   // New on every start; the page reloads when a reconnect hands it a different one.
   const bootId = Math.random().toString(36).slice(2);
   const detached = process.env.KEVMIND_DETACHED === '1';
@@ -63,8 +82,9 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
         res.writeHead(204).end();
         let payload;
         try { payload = JSON.parse(body); } catch { return; }
-        const clean = redact(payload);
         const ts = Date.now();
+        if (isDuplicate(payload, ts)) return;
+        const clean = redact(payload);
         log.write(JSON.stringify({ ts, e: clean }) + '\n');
         const s = state.apply(clean, ts);
         if (s) broadcast({ type: 'session', session: state.summary(s), sessions: state.list() });
@@ -154,8 +174,9 @@ function json(res, obj, code = 200) {
   res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));
 }
 
-// Rebuilds state from the last 24 h of events on startup.
-function replay(state) {
+// Rebuilds state from the last 24 h of events on startup. Logs written before the duplicate filter
+// existed may hold repeats, so the filter applies here too.
+function replay(state, isDuplicate) {
   if (!fs.existsSync(LOG_FILE)) return;
   const since = Date.now() - REPLAY_MS;
   const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
@@ -163,14 +184,14 @@ function replay(state) {
     if (!line) continue;
     try {
       const { ts, e } = JSON.parse(line);
-      if (ts >= since) state.apply(e, ts);
+      if (ts >= since && !isDuplicate(e, ts)) state.apply(e, ts);
     } catch { /* skip corrupt line */ }
   }
 }
 
 // Events the hook spooled while the server was down: redact, persist and apply them with the hook's own timestamps.
 // ponytail: a hook that appends between the read and the unlink loses its event; the window is milliseconds at startup.
-function ingestSpool(state, log) {
+function ingestSpool(state, log, isDuplicate) {
   if (!fs.existsSync(SPOOL_FILE)) return;
   const items = [];
   for (const line of fs.readFileSync(SPOOL_FILE, 'utf8').split('\n')) {
@@ -181,6 +202,7 @@ function ingestSpool(state, log) {
   items.sort((a, b) => a.ts - b.ts);
   const since = Date.now() - REPLAY_MS;
   for (const { ts, e } of items) {
+    if (isDuplicate(e, ts)) continue;
     const clean = redact(e);
     log.write(JSON.stringify({ ts, e: clean }) + '\n');
     if (ts >= since) state.apply(clean, ts);

@@ -26,7 +26,7 @@ KevMind · watch Claude Code work in real time
   kevmind restart              Stop it if running, then start it again the same way
   kevmind clear                Delete demo sessions from the stored events
   kevmind clear --all          Delete all stored data (asks first; --yes skips the question)
-  kevmind install              Add the hooks to ~/.claude/settings.json
+  kevmind install [--force]    Add the hooks to ~/.claude/settings.json (refuses when the plugin is installed)
   kevmind uninstall            Remove KevMind's hooks
   kevmind demo                 Start the dashboard and simulate a sample session
 
@@ -67,7 +67,7 @@ switch (cmd) {
   case 'install': {
     const { install } = await import('../src/install.js');
     try {
-      const r = install();
+      const r = install({ force: flags.has('--force') });
       console.log(`\n  ✓ Hooks installed in ${r.settings}\n  (backup at settings.json.kevmind-backup)\n\n  Now run "kevmind" and start a new Claude Code session.\n`);
     } catch (e) { fail(e.message); }
     break;

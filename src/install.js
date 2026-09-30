@@ -43,7 +43,29 @@ function strip(settings) {
   return settings;
 }
 
-export function install() {
+// The plugin registers the same hooks; with both, every event arrives twice. Claude Code records
+// installed plugins in enabledPlugins (user, project and local settings) and in installed_plugins.json.
+export function pluginInstalled(cwd = process.cwd()) {
+  const found = [];
+  const settingsFiles = [SETTINGS, path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json')];
+  for (const file of settingsFiles) {
+    let s;
+    try { s = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    for (const [id, on] of Object.entries(s.enabledPlugins || {})) if (on && id.startsWith('kevmind@')) found.push(`${id} enabled in ${file}`);
+  }
+  const pluginsDir = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR || path.join(os.homedir(), '.claude', 'plugins');
+  try {
+    const rec = JSON.parse(fs.readFileSync(path.join(pluginsDir, 'installed_plugins.json'), 'utf8'));
+    for (const id of Object.keys(rec.plugins || {})) if (id.startsWith('kevmind@')) found.push(`${id} in installed_plugins.json`);
+  } catch { /* nothing installed */ }
+  return found;
+}
+
+export function install({ force = false } = {}) {
+  const found = force ? [] : pluginInstalled();
+  if (found.length) {
+    throw new Error(`The KevMind plugin already provides these hooks (${found[0]}).\n    Installing them again would report every event twice. Use --force to install anyway.`);
+  }
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.copyFileSync(HOOK_SRC, HOOK_DST);
   fs.copyFileSync(REDACT_SRC, REDACT_DST);
