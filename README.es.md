@@ -2,6 +2,8 @@
 
 Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralelo, qué archivos toca y dónde falla. Todo corre en tu computadora; nada sale de ella.
 
+![Demo del panel de KevMind](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/kevmind-demo.gif)
+
 [English](README.md) · **Español**
 
 > Estado: **MVP (v0.1)**. El panel en vivo funciona. El grafo de memoria y la vista "cerebro" vienen después (ver hoja de ruta).

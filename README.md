@@ -2,6 +2,8 @@
 
 Watch Claude Code work in real time: what it's doing, which agents it runs in parallel, which files it touches and where it fails. Everything runs on your machine; nothing leaves it.
 
+![KevMind dashboard demo](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/kevmind-demo.gif)
+
 **English** · [Español](README.es.md)
 
 > Status: **MVP (v0.1)**. The live dashboard works. The memory graph and "brain" view come later (see roadmap).
