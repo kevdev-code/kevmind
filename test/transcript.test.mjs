@@ -81,6 +81,24 @@ test('a partial last line waits, and a task notification ends the background age
   assert.ok(s.events.some((e) => e.kind === 'agent_done' && e.actor === 'agent-1'));
 });
 
+test('a big transcript is caught up in chunks between event-loop turns, with the loading flag set meanwhile', async () => {
+  const { main, st, s, tailer } = setup();
+  // Pad the file past one 1 MB chunk with a few thousand extra API calls.
+  const u = usage(1, 1, 0, 0, 0);
+  let extra = '';
+  for (let i = 0; i < 2500; i++) extra += assistant('msg_big_' + i, { type: 'text', text: 'line ' + i + ' ' + 'x'.repeat(400) }, u, '2026-09-30T20:01:00.000Z');
+  fs.appendFileSync(main, extra);
+  assert.ok(fs.statSync(main).size > 1 << 20, 'fixture spans more than one chunk');
+  tailer.tick();
+  assert.equal(s.loading, true, 'still catching up after the first chunk');
+  assert.ok(s.agents.main.tokens.output < 25 + 2500, 'only part of the file is counted so far');
+  for (let i = 0; i < 20 && s.loading; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(s.loading, false, 'catch-up finished on its own');
+  assert.equal(s.agents.main.tokens.output, 25 + 2500, 'every API call counted once');
+  assert.equal(tailer.tick(), true, 'the tick after the catch-up reports the change');
+  assert.equal(tailer.tick(), false);
+});
+
 test('events land in time order even when the transcript is read after later hook events', () => {
   const { st, s, tailer } = setup();
   st.apply({ session_id: 'sess', cwd: '/p/Proj', hook_event_name: 'Stop' }, Date.parse('2026-09-30T20:00:10.000Z'));

@@ -138,6 +138,7 @@ function renderSession() {
   $('nowCwd').textContent = s.cwd;
   $('nowModel').textContent = s.model || '';
   $('nowModel').hidden = !s.model;
+  $('nowLoading').hidden = !s.loading;
   $('stActions').textContent = s.agents.reduce((n, a) => n + a.actions, 0);
   $('stPrompts').textContent = s.prompts;
   const t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };

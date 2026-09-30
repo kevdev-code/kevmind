@@ -17,6 +17,7 @@ window.I18N = {
     tokensInOut: 'tokens in / out',
     cacheRW: 'cache read / write',
     showThinks: 'show thinking',
+    loadingHistory: 'loading history…',
     silentThought: (n) => `thought silently · ${n} tokens`,
     agents: 'Agents',
     agentsSub: 'in parallel, last 15 min',
@@ -51,7 +52,7 @@ window.I18N = {
     text: {
       agent_start: (target, d) => `launched ${target}${d ? ': ' + d : ''}`,
       agent_done: (who) => `${who} finished`,
-      thinks: (d, _, __, e) => d || I18N.en.silentThought(e.tokens),
+      thinks: (d, _, __, e) => d || I18N.en.silentThought(e?.tokens ?? 0),
       error: (_, __, tool) => `${toolName(tool)} failed`,
       waiting: (d) => d || 'Waiting for your answer',
       compact: (d) => `Compacting context (${d})`,
@@ -77,6 +78,7 @@ window.I18N = {
     tokensInOut: 'tokens entrada / salida',
     cacheRW: 'caché lectura / escritura',
     showThinks: 'mostrar pensamientos',
+    loadingHistory: 'cargando historial…',
     silentThought: (n) => `pensó en silencio · ${n} tokens`,
     agents: 'Agentes',
     agentsSub: 'en paralelo, últimos 15 min',
@@ -111,7 +113,7 @@ window.I18N = {
     text: {
       agent_start: (target, d) => `lanzó ${target}${d ? ': ' + d : ''}`,
       agent_done: (who) => `${who} terminó`,
-      thinks: (d, _, __, e) => d || I18N.es.silentThought(e.tokens),
+      thinks: (d, _, __, e) => d || I18N.es.silentThought(e?.tokens ?? 0),
       error: (_, __, tool) => `${toolName(tool)} falló`,
       waiting: (d) => d || 'Esperando tu respuesta',
       compact: (d) => `Compactando contexto (${d})`,

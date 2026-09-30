@@ -21,17 +21,19 @@ export class Tailer {
   }
 
   attach(file, actor) {
-    this.files.set(file, { file, actor, offset: 0, rest: '', dec: new StringDecoder('utf8'), seen: new Set(), cur: null });
+    this.files.set(file, { file, actor, offset: 0, rest: '', dec: new StringDecoder('utf8'), seen: new Set(), cur: null, busy: false });
   }
 
-  // Reads whatever is new. Returns true when the session model changed.
+  // Reads whatever is new. Returns true when the session model changed since the last tick.
   // Known files first: the parent's Agent tool_use line must create a row (with the launch time) before the
-  // subagent's own file binds to it; then the files found in this tick.
+  // subagent's own file binds to it; then the files found in this tick. Files still catching up are left
+  // to their own setImmediate chain.
   tick() {
-    this.changed = false;
-    for (const f of this.files.values()) this.read(f);
+    for (const f of this.files.values()) if (!f.busy) this.read(f);
     for (const f of this.scanAgents()) this.read(f);
-    return this.changed;
+    const changed = this.changed; // includes chunks the catch-up chain processed between ticks
+    this.changed = false;
+    return changed;
   }
 
   // New agent-<id>.jsonl files: bind the agent from its meta.json and tail it too. The folder may never exist.
@@ -58,25 +60,31 @@ export class Tailer {
     return added;
   }
 
+  // Reads one chunk. When more is waiting (a big file on first attach), the rest follows on setImmediate,
+  // one chunk per turn of the event loop, so hooks and SSE keep being served while the history loads.
   read(f) {
     let size;
     try { size = fs.statSync(f.file).size; } catch { return; }
-    if (size < f.offset) { f.offset = 0; f.rest = ''; } // rewritten from scratch
-    if (size === f.offset) return;
-    const fd = fs.openSync(f.file, 'r');
-    try {
-      const buf = Buffer.allocUnsafe(Math.min(CHUNK, size - f.offset));
-      while (f.offset < size) {
-        const n = fs.readSync(fd, buf, 0, Math.min(buf.length, size - f.offset), f.offset);
-        if (n <= 0) break;
-        f.offset += n;
-        const lines = (f.rest + f.dec.write(buf.subarray(0, n))).split('\n');
-        f.rest = lines.pop(); // a partial last line waits for the rest
-        for (const line of lines) this.line(f, line);
+    if (size < f.offset) { f.offset = 0; f.rest = ''; f.dec = new StringDecoder('utf8'); } // rewritten from scratch
+    if (size > f.offset) {
+      const fd = fs.openSync(f.file, 'r');
+      try {
+        const buf = Buffer.allocUnsafe(Math.min(CHUNK, size - f.offset));
+        const n = fs.readSync(fd, buf, 0, buf.length, f.offset);
+        if (n > 0) {
+          f.offset += n;
+          const lines = (f.rest + f.dec.write(buf.subarray(0, n))).split('\n');
+          f.rest = lines.pop(); // a partial last line waits for the rest
+          for (const line of lines) this.line(f, line);
+        }
+      } finally {
+        fs.closeSync(fd);
       }
-    } finally {
-      fs.closeSync(fd);
     }
+    f.busy = f.offset < size;
+    if (f.busy) setImmediate(() => this.read(f));
+    const loading = [...this.files.values()].some((x) => x.busy);
+    if (loading !== !!this.s.loading) { this.s.loading = loading; this.changed = true; }
   }
 
   line(f, raw) {
