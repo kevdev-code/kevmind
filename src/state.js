@@ -240,7 +240,7 @@ function isStale(s, now) {
 }
 
 // Last path segment, accepting both / and \ so Windows paths work on any host.
-function baseName(p) {
+export function baseName(p) {
   return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
 }
 

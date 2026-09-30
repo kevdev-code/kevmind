@@ -42,7 +42,9 @@ npx kevmind            # abre el panel en http://localhost:4777
 
 Para quitarlos: `npx kevmind uninstall`.
 
-`npx kevmind stop` cierra el panel en ejecución; `npx kevmind restart` lo cierra si está corriendo y lo vuelve a abrir.
+`npx kevmind start --background` lo abre separado de la terminal, así sigue corriendo cuando la cierras (salida en `~/.kevmind/server.log`). `npx kevmind stop` cierra el panel en ejecución; `npx kevmind restart` lo cierra si está corriendo y lo vuelve a abrir tal como estaba.
+
+`npx kevmind clear` borra las sesiones de demo de los datos guardados; `npx kevmind clear --all` borra todo (pregunta antes; `--yes` omite la pregunta).
 
 ### Probar sin Claude Code
 
@@ -57,6 +59,7 @@ Simula una sesión con tres agentes en paralelo. Aparece como proyecto `demo-kev
 - Todo se queda en `~/.kevmind/`. No hay telemetría.
 - Antes de guardar, se ocultan claves API, tokens de GitHub/AWS/Slack, JWT, llaves privadas y variables tipo `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - El servidor solo escucha en `127.0.0.1`.
+- Si el panel está apagado, los hooks guardan los eventos en `spool.jsonl` sin enmascarar hasta que el siguiente arranque los procesa.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).
 

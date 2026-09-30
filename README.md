@@ -42,7 +42,7 @@ npx kevmind            # opens the dashboard at http://localhost:4777
 
 To remove them: `npx kevmind uninstall`.
 
-`npx kevmind stop` closes the running dashboard; `npx kevmind restart` closes it if it's running and starts it again.
+`npx kevmind start --background` starts it detached, so it keeps running after you close the terminal (output in `~/.kevmind/server.log`). `npx kevmind stop` closes the running dashboard; `npx kevmind restart` closes it if it's running and starts it again the same way it was started.
 
 ### Try it without Claude Code
 
@@ -61,7 +61,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 ```
 
 1. Claude Code fires hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, etc.).
-2. `send.js` forwards the event to the local server. If the server isn't running, it exits silently: **it never blocks Claude**.
+2. `send.js` forwards the event to the local server. If the server isn't running, it spools the event to `~/.kevmind/spool.jsonl` and exits: **it never blocks Claude**. The server ingests the spool at its next start, so nothing is lost while the dashboard is down.
 3. The server masks secrets (tokens, keys, `.env` lines), stores the event and streams it to the browser.
 
 ## Privacy
@@ -69,6 +69,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 - Everything stays in `~/.kevmind/`. No telemetry.
 - Before storing, it masks API keys, GitHub/AWS/Slack tokens, JWTs, private keys and variables like `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - The server only listens on `127.0.0.1`.
+- Events spooled while the dashboard is down sit unmasked in `spool.jsonl` until the next start ingests them.
 
 ## Configuration
 
@@ -78,13 +79,23 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 | `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
 | `KEVMIND_DEV`  | unset         | `1` reloads the open page when a file in `public/` changes (set by `npm run dev`) |
 
+## Clearing data
+
+```bash
+npx kevmind clear          # removes demo sessions from ~/.kevmind/events.jsonl
+npx kevmind clear --all    # wipes everything (asks first; --yes skips the question)
+```
+
+If the dashboard is running, it is stopped and started again so it reflects the change.
+
 ## Development
 
 ```bash
-npm run dev
+npm run dev                   # in this terminal
+npm run dev -- --background   # detached: keeps running after the terminal closes
 ```
 
-Restarts the server whenever something under `src/` or `bin/` changes, and the open dashboard reloads itself after a restart or when a file under `public/` changes. No build step, no dependencies.
+Restarts the server whenever something under `src/` or `bin/` changes, and the open dashboard reloads itself after a restart or when a file under `public/` changes. No build step, no dependencies. Detached, the output goes to `~/.kevmind/server.log` and the server's PID to `~/.kevmind/server.pid`.
 
 ## Known limitations
 
