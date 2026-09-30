@@ -1,3 +1,6 @@
+// "mcp__server__tool" → "server › tool"; other names unchanged. Shared by the feed and the tools table.
+window.toolName = (n) => (String(n || '').startsWith('mcp__') ? n.slice(5).split('__').join(' › ') : n);
+
 // UI translations. To add a language, copy the `en` block, translate it and add a button in index.html.
 window.I18N = {
   en: {
@@ -26,6 +29,7 @@ window.I18N = {
     avg: 'Avg',
     nothingYet: 'Nothing yet.',
     you: 'You',
+    system: 'System',
     start: 'start',
     now: 'now',
     minAgo: (n) => `${n} min ago`,
@@ -36,13 +40,13 @@ window.I18N = {
     agentStatus: { running: 'working', working: 'working', idle: 'idle', done: 'done', error: 'failed' },
     kind: {
       read: 'read', edit: 'edit', command: 'command', web: 'web', mcp: 'mcp', tool: 'tool',
-      agent_start: 'agent', agent_done: 'done', error: 'error', prompt: 'prompt', waiting: 'waiting',
+      agent_start: 'agent', agent_done: 'done', error: 'error', prompt: 'prompt', system: 'system', waiting: 'waiting',
       compact: 'compact', stop: 'done', session_start: 'session', session_end: 'session',
     },
     text: {
       agent_start: (target, d) => `launched ${target}${d ? ': ' + d : ''}`,
       agent_done: (who) => `${who} finished`,
-      error: (_, __, tool) => `${tool} failed`,
+      error: (_, __, tool) => `${toolName(tool)} failed`,
       waiting: (d) => d || 'Waiting for your answer',
       compact: (d) => `Compacting context (${d})`,
       stop: () => 'Finished responding',
@@ -79,6 +83,7 @@ window.I18N = {
     avg: 'Promedio',
     nothingYet: 'Nada todavía.',
     you: 'Tú',
+    system: 'Sistema',
     start: 'inicio',
     now: 'ahora',
     minAgo: (n) => `hace ${n} min`,
@@ -89,13 +94,13 @@ window.I18N = {
     agentStatus: { running: 'trabajando', working: 'trabajando', idle: 'en espera', done: 'terminó', error: 'con error' },
     kind: {
       read: 'lee', edit: 'edita', command: 'comando', web: 'web', mcp: 'mcp', tool: 'herramienta',
-      agent_start: 'agente', agent_done: 'listo', error: 'error', prompt: 'mensaje', waiting: 'espera',
+      agent_start: 'agente', agent_done: 'listo', error: 'error', prompt: 'mensaje', system: 'sistema', waiting: 'espera',
       compact: 'compacta', stop: 'listo', session_start: 'sesión', session_end: 'sesión',
     },
     text: {
       agent_start: (target, d) => `lanzó ${target}${d ? ': ' + d : ''}`,
       agent_done: (who) => `${who} terminó`,
-      error: (_, __, tool) => `${tool} falló`,
+      error: (_, __, tool) => `${toolName(tool)} falló`,
       waiting: (d) => d || 'Esperando tu respuesta',
       compact: (d) => `Compactando contexto (${d})`,
       stop: () => 'Terminó de responder',

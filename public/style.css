@@ -139,6 +139,7 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .k.error { color: var(--err); }
 .k.waiting { color: var(--warn); }
 .k.prompt { color: var(--text); }
+.k.system { color: var(--muted); }
 .feed li.new { animation: flash 1s ease-out; }
 @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
 
@@ -152,10 +153,11 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .files .fbar .r { background: var(--info); }
 .files .fbar .e { background: var(--warn); }
 .files .fnum { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.tools { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tools th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding-bottom: 6px; }
+.tools { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.tools th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding-bottom: 6px; width: 15%; }
+.tools th:first-child { width: 55%; }
 .tools td { padding: 4px 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
-.tools td:first-child { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tools td:first-child { padding-right: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tools td.err { color: var(--err); }
 
 @media (max-width: 1100px) {

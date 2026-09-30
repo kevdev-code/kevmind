@@ -90,8 +90,6 @@ const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFix
 const isStale = (s) => (s.status === 'working' || s.status === 'waiting') && Date.now() - s.lastAt > STALE_MS;
 const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
 const agentStatus = (a, s) => (isStale(s) && (a.status === 'running' || a.status === 'working') ? 'idle' : a.status);
-// "mcp__server__tool" → "server › tool"; other names unchanged.
-const toolName = (n) => (n.startsWith('mcp__') ? n.slice(5).split('__').join(' › ') : n);
 
 function renderSessions() {
   $('noSessions').hidden = sessions.length > 0;
@@ -160,7 +158,7 @@ function renderGantt() {
 
 function renderFeed(s) {
   const byId = Object.fromEntries(s.agents.map((a) => [a.id, a]));
-  const who = (id) => (id === 'user' ? T.you : id === 'main' ? 'Claude' : byId[id]?.label || id);
+  const who = (id) => (id === 'user' ? T.you : id === 'system' ? T.system : id === 'main' ? 'Claude' : byId[id]?.label || id);
   const text = (e) => {
     const fn = T.text[e.kind];
     if (e.kind === 'agent_start') return fn(who(e.target), e.detail);

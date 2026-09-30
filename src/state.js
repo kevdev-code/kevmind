@@ -7,6 +7,9 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const MAX_EVENTS = 300;
 const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
+// Claude Code injects its own messages through UserPromptSubmit wrapped in one of these tags.
+const SYSTEM_TAGS = ['task-notification', 'bash-notification', 'bash-stdout', 'bash-stderr', 'system-reminder', 'command-message', 'local-command-stdout'];
+const SYSTEM_RE = new RegExp(`^<(${SYSTEM_TAGS.join('|')})[\\s>]`, 'i');
 
 export class State {
   constructor() {
@@ -95,12 +98,15 @@ export class State {
         this.push(s, { ts, kind: 'session_start', actor: 'main', detail: p.source || '' });
         break;
 
-      case 'UserPromptSubmit':
-        s.prompts++;
+      case 'UserPromptSubmit': {
         s.status = 'working';
         s.agents.main.status = 'working';
+        const sys = systemDetail(p.prompt);
+        if (sys) { this.push(s, { ts, kind: 'system', actor: 'system', detail: sys }); break; }
+        s.prompts++;
         this.push(s, { ts, kind: 'prompt', actor: 'user', detail: cleanPrompt(p.prompt) });
         break;
+      }
 
       case 'PreToolUse': {
         const actor = this.actor(s, p, ts);
@@ -240,6 +246,15 @@ function baseName(p) {
 
 function projectName(cwd) {
   return baseName(cwd) || cwd;
+}
+
+// Short label for a system-injected prompt (its <summary>, else <status>, else the tag name), or null for a real user prompt.
+function systemDetail(text) {
+  const t = String(text || '').trim();
+  const m = SYSTEM_RE.exec(t);
+  if (!m) return null;
+  const inner = (tag) => new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i').exec(t)?.[1].trim();
+  return (inner('summary') || inner('status') || m[1]).slice(0, 140);
 }
 
 // Strip Claude Code's internal tags (e.g. <pasted_content id="x">) from the prompt text.
