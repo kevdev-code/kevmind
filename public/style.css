@@ -90,10 +90,13 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .status { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--track); color: var(--muted); white-space: nowrap; }
 .status.working { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .status.waiting { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin-top: 14px; }
 .stats div { display: flex; flex-direction: column; }
-.stats b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.stats b { font-size: 22px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .stats span { color: var(--muted); font-size: 12px; }
+.model { margin-left: 8px; }
+h2 .toggle { float: right; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
+h2 .toggle input { margin: 0; accent-color: var(--accent); }
 
 /* Gantt */
 .gantt { display: flex; flex-direction: column; gap: 6px; }
@@ -106,9 +109,9 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
   border-left: 1px solid var(--muted); border-bottom: 1px solid var(--muted); border-radius: 0 0 0 2px;
 }
 .gtrack { position: relative; height: 18px; background: var(--track); border-radius: 5px; overflow: hidden; }
-.gbar { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: var(--accent); min-width: 3px; }
+.gbar { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: var(--accent); min-width: 6px; }
 .gbar.running, .gbar.working { background: var(--ok); }
-.gbar.running::after, .gbar.working::after {
+.gbar.pulse.running::after, .gbar.pulse.working::after {
   content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 18px;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.55));
   animation: pulse 1.2s ease-in-out infinite;
@@ -140,6 +143,9 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .k.waiting { color: var(--warn); }
 .k.prompt { color: var(--text); }
 .k.system { color: var(--muted); }
+.k.says { color: var(--accent); }
+.k.thinks { color: var(--muted); }
+.feed li.thinks .x { font-style: italic; color: var(--muted); }
 .feed li.new { animation: flash 1s ease-out; }
 @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
 

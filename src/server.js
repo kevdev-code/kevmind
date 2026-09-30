@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { State, baseName } from './state.js';
+import { Tailer } from './transcript.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -33,6 +34,24 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     const data = `data: ${JSON.stringify(msg)}\n\n`;
     for (const res of clients) res.write(data);
   }
+
+  // Transcript tailers for the sessions active in the last 24 h; a new one stream-parses its file on attach.
+  const tailers = new Map();
+  function tailTranscripts() {
+    const now = Date.now();
+    for (const s of state.sessions.values()) {
+      const live = s.transcript && now - s.lastAt < REPLAY_MS;
+      if (live && !tailers.has(s.id)) tailers.set(s.id, new Tailer(state, s));
+      if (!live) tailers.delete(s.id);
+    }
+    for (const [id, t] of tailers) {
+      let changed = false;
+      try { changed = t.tick(); } catch { /* a file mid-write; next tick */ }
+      if (changed && clients.size) broadcast({ type: 'session', session: state.summary(state.sessions.get(id)), sessions: state.list() });
+    }
+  }
+  tailTranscripts();
+  const tailTimer = setInterval(tailTranscripts, 1000);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -95,6 +114,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
 
   function shutdown() {
     watcher?.close();
+    clearInterval(tailTimer);
     for (const res of clients) res.end();
     log.end();
     try { fs.unlinkSync(PID_FILE); } catch { /* never written */ }

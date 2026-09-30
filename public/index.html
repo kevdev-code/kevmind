@@ -34,7 +34,7 @@
         <div class="now-head">
           <div>
             <div class="project" id="nowProject">—</div>
-            <div class="muted" id="nowCwd"></div>
+            <div class="muted"><span id="nowCwd"></span><code class="model" id="nowModel" hidden></code></div>
           </div>
           <span class="status" id="nowStatus">—</span>
         </div>
@@ -43,6 +43,8 @@
           <div><b id="stActions">0</b><span data-i18n="actions"></span></div>
           <div><b id="stPrompts">0</b><span data-i18n="messages"></span></div>
           <div><b id="stTime">0 min</b><span data-i18n="duration"></span></div>
+          <div><b id="stTokens">—</b><span data-i18n="tokensInOut"></span></div>
+          <div><b id="stCache">—</b><span data-i18n="cacheRW"></span></div>
         </div>
       </div>
 
@@ -52,7 +54,9 @@
       </div>
 
       <div class="panel feed-panel">
-        <h2><span data-i18n="activity"></span> <small data-i18n="live"></small></h2>
+        <h2><span data-i18n="activity"></span> <small data-i18n="live"></small>
+          <label class="toggle"><input type="checkbox" id="showThinks" checked /> <span data-i18n="showThinks"></span></label>
+        </h2>
         <ol id="feed" class="feed"></ol>
       </div>
     </section>

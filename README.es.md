@@ -14,6 +14,8 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 - **Archivos más tocados**: cuántas veces se leyó y editó cada uno.
 - **Herramientas**: usos, errores y tiempo promedio.
 - **Alertas de conflicto**: cuando dos agentes editan el mismo archivo con menos de 5 minutos de diferencia.
+- **Qué dice y qué piensa Claude**: extractos cortos de sus respuestas y de sus resúmenes de razonamiento legibles, leídos de la transcripción de la sesión, con un botón para ocultar los pensamientos. Si razonó pero no devolvió nada legible, el panel lo dice con la cantidad de tokens.
+- **Tokens**: entrada, salida y caché (lectura/escritura) por sesión y por agente, contados una vez por llamada. Sin estimaciones de costo: los precios cambian.
 
 El panel está en inglés y español (botón arriba a la derecha).
 
@@ -60,6 +62,7 @@ Simula una sesión con tres agentes en paralelo. Aparece como proyecto `demo-kev
 - Antes de guardar, se ocultan claves API, tokens de GitHub/AWS/Slack, JWT, llaves privadas y variables tipo `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - El servidor solo escucha en `127.0.0.1`.
 - Si el panel está apagado, el hook enmascara los eventos antes de guardarlos en `spool.jsonl`.
+- De las transcripciones solo se guardan extractos de hasta 200 caracteres, enmascarados como todo lo demás. Las firmas del razonamiento nunca se leen y la transcripción nunca se copia.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).
 

@@ -14,6 +14,8 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **Most-touched files**: how often each file was read and edited.
 - **Tools**: uses, errors and average duration.
 - **Conflict alerts**: when two agents edit the same file less than 5 minutes apart.
+- **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
+- **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 
 The dashboard is available in English and Spanish (toggle in the top-right corner).
 
@@ -70,6 +72,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 - Before storing, it masks API keys, GitHub/AWS/Slack tokens, JWTs, private keys and variables like `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
 - The server only listens on `127.0.0.1`.
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
+- From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
 
 ## Configuration
 
@@ -96,6 +99,8 @@ npm run dev -- --background   # detached: keeps running after the terminal close
 ```
 
 Restarts the server whenever something under `src/` or `bin/` changes, and the open dashboard reloads itself after a restart or when a file under `public/` changes. No build step, no dependencies. Detached, the output goes to `~/.kevmind/server.log` and the server's PID to `~/.kevmind/server.pid`.
+
+`npm test` runs the regression tests (Node's built-in runner), including a replay of a real session with three parallel subagents.
 
 ## Known limitations
 

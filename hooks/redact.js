@@ -28,7 +28,8 @@ export function redact(value, depth = 0) {
   if (value && typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      out[k] = SECRET_KEY.test(k) && typeof v !== 'object' ? '•••' : redact(v, depth + 1);
+      // A secret is a string; a number under a key like "input_tokens" is a count, not a credential.
+      out[k] = SECRET_KEY.test(k) && typeof v === 'string' ? '•••' : redact(v, depth + 1);
     }
     return out;
   }

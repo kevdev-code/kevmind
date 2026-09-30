@@ -1,6 +1,6 @@
 # KevMind
 
-Local dashboard that watches Claude Code work in real time. Hooks POST events to a Node server, which streams them to a plain HTML/CSS/JS page over SSE.
+Local dashboard that watches Claude Code work in real time. Hooks POST events to a Node server, which streams them to a plain HTML/CSS/JS page over SSE. The server also tails each active session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, and the exact identity of subagents; the hook payloads are the fallback when no transcript is available.
 
 ## Rules
 
@@ -8,6 +8,8 @@ Local dashboard that watches Claude Code work in real time. Hooks POST events to
 - Zero runtime dependencies. Node 18+. Reach for `node:` built-ins before writing anything.
 - Never break Claude Code: `hooks/send.js` must always exit 0 and stay fast, whether or not the server is running.
 - On Windows, stage files by name (`git add <file>`), never `git add -A`. The repo has `core.filemode=true`, so `-A` silently drops the executable bit on `bin/kevmind.js` and `hooks/send.js`.
+- `npm test` runs the regression tests with Node's built-in runner. When you fix a tracking bug, add a replay of the sequence that exposed it (redacted) to `test/`.
+- Transcript data is sensitive: keep only short redacted excerpts, never read thinking signatures or redacted thinking, never copy a transcript into KevMind's data, and never invent cost figures from token counts.
 
 ## The live dashboard
 

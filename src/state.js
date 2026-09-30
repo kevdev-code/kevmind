@@ -1,4 +1,4 @@
-// Turns raw hook payloads into a model: sessions → agents → actions.
+// Turns raw hook payloads (and transcript lines, see transcript.js) into a model: sessions → agents → actions.
 // Events are stored as language-neutral codes; the UI translates them.
 
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
@@ -10,6 +10,8 @@ const STALE_MS = 5 * 60 * 1000;
 // Claude Code injects its own messages through UserPromptSubmit wrapped in one of these tags.
 const SYSTEM_TAGS = ['task-notification', 'bash-notification', 'bash-stdout', 'bash-stderr', 'system-reminder', 'command-message', 'local-command-stdout'];
 const SYSTEM_RE = new RegExp(`^<(${SYSTEM_TAGS.join('|')})[\\s>]`, 'i');
+
+const zeroTokens = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
 export class State {
   constructor() {
@@ -24,13 +26,16 @@ export class State {
         id,
         cwd: p.cwd || '',
         project: p.cwd ? projectName(p.cwd) : 'unknown',
+        transcript: null, // path of the session transcript, tailed by transcript.js
+        model: null,
+        tokens: zeroTokens(),
         startedAt: ts,
         lastAt: ts,
         status: 'idle', // idle | working | waiting | ended
         prompts: 0,
         compactions: 0,
         agents: {
-          main: { id: 'main', label: 'Claude', type: 'main', startedAt: ts, endedAt: null, status: 'idle', actions: 0 },
+          main: { id: 'main', label: 'Claude', type: 'main', startedAt: ts, endedAt: null, status: 'idle', actions: 0, tokens: zeroTokens() },
         },
         pending: {},
         events: [],
@@ -45,33 +50,108 @@ export class State {
       s.cwd = p.cwd;
       s.project = projectName(p.cwd);
     }
+    if (p.transcript_path && !s.transcript) s.transcript = p.transcript_path;
     s.lastAt = ts;
     return s;
   }
 
-  // Who performed the action: a subagent (when Claude Code sends agent_id) or the main agent.
+  // ---- agents -------------------------------------------------------------
+  // A subagent has a row from the moment its Task/Agent call is seen (toolUseId) and gets its real id
+  // (agent_id in hook payloads, agent-<id>.jsonl in the transcript) when the two can be linked.
+
+  // The row for a Task/Agent tool_use id, created on first sight.
+  launchAgent(s, { toolUseId, type, description, parent, ts }) {
+    let a = toolUseId ? this.byToolUse(s, toolUseId) : null;
+    if (a) return a;
+    const seq = ++s.agentSeq;
+    a = s.agents[`agent-${seq}`] = {
+      id: `agent-${seq}`, seq, realId: null, toolUseId: toolUseId || null, parent: parent || 'main',
+      type: type || 'subagent', description: String(description || '').slice(0, 120), launch: null,
+      startedAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
+    };
+    a.label = labelOf(a);
+    this.push(s, { ts, kind: 'agent_start', actor: a.parent, target: a.id, detail: a.description });
+    return a;
+  }
+
+  // An explicit link between a real agent id and its launch (from tool_response.agentId, the transcript's
+  // async_launched result, or the subagent's meta.json). Wins over any earlier heuristic guess.
+  bindAgent(s, { agentId, toolUseId, type, description, launch, ts }) {
+    let a = toolUseId ? this.byToolUse(s, toolUseId) : null;
+    const holder = s.agents[agentId];
+    if (a && holder && holder !== a) {
+      // ponytail: the guess attributed a second or two of actions to the wrong row; move the counts, keep the events.
+      a.actions += holder.actions;
+      addTokens(a.tokens, holder.tokens);
+      holder.actions = 0;
+      holder.tokens = zeroTokens();
+      holder.realId = null;
+    }
+    if (!a) a = holder || this.launchAgent(s, { toolUseId, type, description, parent: 'main', ts });
+    a.realId = agentId;
+    s.agents[agentId] = a;
+    if (toolUseId && !a.toolUseId) a.toolUseId = toolUseId;
+    if (type) a.type = type;
+    if (description) a.description = String(description).slice(0, 120);
+    if (launch) a.launch = launch;
+    a.label = labelOf(a);
+    return a;
+  }
+
+  // Who performed a hook event: the main agent, a known subagent, or a launched row bound by best guess.
+  // Guess order: same agent_type without a real id yet, else any row without one, else a new row. Never by status.
   actor(s, p, ts) {
     const aid = p.agent_id;
     if (!aid) return s.agents.main;
-    if (!s.agents[aid]) {
-      // Try to bind it to a launched subagent that has no real id yet.
-      const orphan = Object.values(s.agents).find((a) => a.id !== 'main' && !a.realId && a.status === 'running');
-      if (orphan) {
-        orphan.realId = aid;
-        s.agents[aid] = orphan;
-      } else {
-        s.agents[aid] = {
-          id: aid, label: p.agent_type || 'subagent', type: p.agent_type || 'subagent',
-          startedAt: ts, endedAt: null, status: 'running', actions: 0, parent: 'main',
-        };
-      }
+    if (s.agents[aid]) return s.agents[aid];
+    const unbound = Object.values(s.agents).filter((a) => a.id !== 'main' && !a.realId).sort((x, y) => x.startedAt - y.startedAt);
+    const pick = (p.agent_type && unbound.find((a) => a.type === p.agent_type)) || unbound[0];
+    if (pick) {
+      pick.realId = aid;
+      s.agents[aid] = pick;
+      if (p.agent_type) pick.type = p.agent_type;
+      pick.label = labelOf(pick);
+      return pick;
     }
-    return s.agents[aid];
+    const seq = ++s.agentSeq;
+    const a = s.agents[aid] = {
+      id: aid, seq, realId: aid, toolUseId: null, parent: 'main', type: p.agent_type || 'subagent', description: '', launch: null,
+      startedAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
+    };
+    a.label = labelOf(a);
+    return a;
   }
 
+  endAgent(s, agentId, ts, status = 'done') {
+    const a = s.agents[agentId];
+    if (!a || a.id === 'main') return;
+    if (a.endedAt && status !== 'error') return; // already ended; only a failure can still change the outcome
+    if (!a.endedAt) this.push(s, { ts, kind: 'agent_done', actor: a.id, detail: '' });
+    a.status = status;
+    a.endedAt = ts;
+  }
+
+  byToolUse(s, toolUseId) {
+    return Object.values(s.agents).find((a) => a.toolUseId === toolUseId) || null;
+  }
+
+  // One API call's usage, counted by the caller exactly once per message id.
+  addUsage(s, actorId, u) {
+    if (!u) return;
+    const n = (v) => Number(v) || 0;
+    const t = { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheWrite: n(u.cache_creation_input_tokens) };
+    addTokens(s.tokens, t);
+    const a = s.agents[actorId];
+    if (a) addTokens(a.tokens, t);
+  }
+
+  // Keeps events in time order: transcript lines can arrive later than the hook events of the same moment.
   push(s, ev) {
-    s.events.push(ev);
-    if (s.events.length > MAX_EVENTS) s.events.splice(0, s.events.length - MAX_EVENTS);
+    const evs = s.events;
+    let i = evs.length;
+    while (i > 0 && evs[i - 1].ts > ev.ts) i--;
+    if (i === evs.length) evs.push(ev); else evs.splice(i, 0, ev);
+    if (evs.length > MAX_EVENTS) evs.splice(0, evs.length - MAX_EVENTS);
   }
 
   touchFile(s, file, kind, actor, ts) {
@@ -111,8 +191,9 @@ export class State {
       case 'PreToolUse': {
         const actor = this.actor(s, p, ts);
         actor.actions++;
+        actor.endedAt = null; // an action after an end means the end was wrong (or the agent resumed)
+        actor.status = actor.id === 'main' ? 'working' : 'running';
         s.status = 'working';
-        if (actor.status !== 'running') actor.status = 'working';
         const tool = p.tool_name || '?';
         const key = p.tool_use_id || `${tool}:${ts}:${Math.random()}`;
         s.pending[key] = { ts, tool, actor: actor.id };
@@ -121,16 +202,8 @@ export class State {
         const input = p.tool_input || {};
 
         if (AGENT_TOOLS.has(tool)) {
-          const id = `agent-${++s.agentSeq}`;
-          s.agents[id] = {
-            id, toolUseId: p.tool_use_id || null, parent: actor.id,
-            label: `${input.subagent_type || 'subagent'} #${s.agentSeq}`,
-            type: input.subagent_type || 'general',
-            description: String(input.description || '').slice(0, 120),
-            startedAt: ts, endedAt: null, status: 'running', actions: 0,
-          };
-          s.pending[key].agentId = id;
-          this.push(s, { ts, kind: 'agent_start', actor: actor.id, target: id, detail: s.agents[id].description });
+          const a = this.launchAgent(s, { toolUseId: p.tool_use_id, type: input.subagent_type, description: input.description, parent: actor.id, ts });
+          s.pending[key].agentId = a.id;
           break;
         }
 
@@ -158,25 +231,25 @@ export class State {
           this.push(s, { ts, kind: 'error', actor: actor.id, tool, detail: '' });
         }
         if (AGENT_TOOLS.has(tool)) {
-          const agent = pend?.agentId ? s.agents[pend.agentId] : Object.values(s.agents).find((a) => a.status === 'running');
-          if (agent) {
-            agent.status = failed ? 'error' : 'done';
-            agent.endedAt = ts;
-            this.push(s, { ts, kind: 'agent_done', actor: agent.id, detail: '' });
-          }
+          const r = p.tool_response && typeof p.tool_response === 'object' ? p.tool_response : {};
+          const background = r.isAsync === true || r.status === 'async_launched' || p.tool_input?.run_in_background === true;
+          let agent = pend?.agentId ? s.agents[pend.agentId] : (p.tool_use_id ? this.byToolUse(s, p.tool_use_id) : null);
+          if (r.agentId) agent = this.bindAgent(s, { agentId: r.agentId, toolUseId: p.tool_use_id || agent?.toolUseId, description: r.description, launch: background ? 'background' : 'foreground', ts });
+          if (!agent) break;
+          // A background launch returns at once; the agent ends on its SubagentStop or task notification.
+          if (background) agent.launch = 'background';
+          else this.endAgent(s, agent.id, ts, failed ? 'error' : 'done');
         }
         break;
       }
 
       case 'SubagentStart':
-        if (p.agent_id) this.actor(s, p, ts);
+        if (p.agent_id) this.actor(s, p, ts).status = 'running';
         break;
 
-      case 'SubagentStop': {
-        const a = p.agent_id ? s.agents[p.agent_id] : null;
-        if (a && a.status === 'running') { a.status = 'done'; a.endedAt = ts; }
+      case 'SubagentStop':
+        if (p.agent_id) this.endAgent(s, p.agent_id, ts, 'done');
         break;
-      }
 
       case 'Notification':
         s.status = 'waiting';
@@ -207,7 +280,7 @@ export class State {
   }
 
   summary(s, now = Date.now()) {
-    const { pending, agentSeq, ...rest } = s;
+    const { pending, agentSeq, transcript, ...rest } = s;
     const stale = isStale(s, now);
     // Drop duplicate agent aliases (same object registered under its real id).
     const seen = new Set();
@@ -231,6 +304,14 @@ export class State {
         lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts,
       }));
   }
+}
+
+function labelOf(a) {
+  return a.description ? `${a.type} · ${a.description}` : `${a.type} #${a.seq}`;
+}
+
+function addTokens(into, t) {
+  into.input += t.input; into.output += t.output; into.cacheRead += t.cacheRead; into.cacheWrite += t.cacheWrite;
 }
 
 // A session that never got Stop/SessionEnd stays "working" in storage; report it idle once it goes quiet.

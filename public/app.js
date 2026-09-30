@@ -4,6 +4,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const WINDOW_MS = 15 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
 const LANG_KEY = 'kevmind.lang';
+const THINKS_KEY = 'kevmind.thinks';
 
 let sessions = [];
 let current = null;      // full summary of the selected session
@@ -12,6 +13,14 @@ let pinned = false;      // true when the user picked a session manually
 let lastEventCount = 0;
 let connected = null;
 let bootId = null;       // server boot id from the first "hello"; a different one means the server restarted
+let showThinks = true;   // feed toggle for "thinks" events
+try { showThinks = localStorage.getItem(THINKS_KEY) !== '0'; } catch { /* storage unavailable */ }
+$('showThinks').checked = showThinks;
+$('showThinks').addEventListener('change', (e) => {
+  showThinks = e.target.checked;
+  try { localStorage.setItem(THINKS_KEY, showThinks ? '1' : '0'); } catch { /* ignore */ }
+  if (current) renderFeed(current);
+});
 
 // ---------- i18n ----------
 let lang = pickLang();
@@ -92,6 +101,14 @@ async function select(id, byUser = true) {
 const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
 const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
+const tokensTip = (t) => `${T.tokensInOut}: ${t.input} / ${t.output} · ${T.cacheRW}: ${t.cacheRead} / ${t.cacheWrite}`;
+// Agents by their row id and by their real id, since events may carry either.
+const agentMap = (s) => {
+  const m = {};
+  for (const a of s.agents) { m[a.id] = a; if (a.realId) m[a.realId] = a; }
+  return m;
+};
 // Mirrors the server's stale rule so the dots go idle on the 1 s tick, without waiting for a new event.
 const isStale = (s) => (s.status === 'working' || s.status === 'waiting') && Date.now() - s.lastAt > STALE_MS;
 const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
@@ -119,8 +136,15 @@ function renderSession() {
   if (!s) return;
   $('nowProject').textContent = s.project;
   $('nowCwd').textContent = s.cwd;
+  $('nowModel').textContent = s.model || '';
+  $('nowModel').hidden = !s.model;
   $('stActions').textContent = s.agents.reduce((n, a) => n + a.actions, 0);
   $('stPrompts').textContent = s.prompts;
+  const t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  $('stTokens').textContent = `${fmtK(t.input)} / ${fmtK(t.output)}`;
+  $('stTokens').title = tokensTip(t);
+  $('stCache').textContent = `${fmtK(t.cacheRead)} / ${fmtK(t.cacheWrite)}`;
+  $('stCache').title = tokensTip(t);
   renderStatus(s);
   renderGantt();
   renderFeed(s);
@@ -139,45 +163,55 @@ function renderGantt() {
   if (!s) return;
   const now = Date.now();
   $('stTime').textContent = `${Math.max(0, Math.round((now - s.startedAt) / 60000))} min`;
-  const from = Math.max(s.startedAt, now - WINDOW_MS);
+  const st = sessionStatus(s);
+  const live = (a) => (a.id === 'main' ? st === 'working' || st === 'waiting' : ['running', 'working'].includes(agentStatus(a, s)));
+  const endOf = (a) => (live(a) ? now : a.endedAt || now); // a live bar reaches "now" whatever endedAt says
+  // Zoom to the subagents: from their earliest start (the session start if there are none) with 10 % padding,
+  // never more than 15 min back, never narrower than 60 s.
+  const subs = s.agents.filter((a) => a.id !== 'main');
+  const first = subs.length ? Math.min(...subs.map((a) => a.startedAt)) : s.startedAt;
+  const from = Math.min(Math.max(first - (now - first) * 0.1, now - WINDOW_MS), now - 60_000);
   const span = Math.max(1, now - from);
   const rows = s.agents
-    .filter((a) => a.id === 'main' || (a.endedAt || now) >= from)
+    .filter((a) => a.id === 'main' || endOf(a) >= from)
     .map((a) => {
       const start = Math.max(a.startedAt, from);
-      const end = a.endedAt || now;
+      const end = Math.max(start, endOf(a));
       const left = ((start - from) / span) * 100;
-      const width = Math.max(0.5, ((end - start) / span) * 100);
-      const st = sessionStatus(s);
-      const ast = agentStatus(a, s);
-      const cls = a.id === 'main' ? st : ast;
-      const sub = a.id === 'main' ? (T.status[st] || '') : T.agentStats(T.agentStatus[ast] || ast, a.actions);
+      const width = ((end - start) / span) * 100;
+      const ast = a.id === 'main' ? st : agentStatus(a, s);
+      const hasTokens = a.tokens && (a.tokens.input || a.tokens.output || a.tokens.cacheRead || a.tokens.cacheWrite);
+      const tk = hasTokens ? `${fmtK(a.tokens.input + a.tokens.cacheRead + a.tokens.cacheWrite)}/${fmtK(a.tokens.output)}` : '';
+      const sub = T.agentStats((a.id === 'main' ? T.status[ast] : T.agentStatus[ast]) || ast, a.actions, tk);
+      const tip = (a.description || a.label) + (a.tokens ? '\n' + tokensTip(a.tokens) : '');
       return `<div class="grow">
-        <div class="glabel" title="${esc(a.description || '')}">${a.id === 'main' ? '<b>Claude</b>' : '<span class="branch"></span>' + esc(a.label)}<small>${esc(sub)}</small></div>
-        <div class="gtrack"><div class="gbar ${esc(cls)}" style="left:${left}%;width:${Math.min(width, 100 - left)}%" title="${esc(a.description || a.label)}"></div></div>
+        <div class="glabel" title="${esc(tip)}">${a.id === 'main' ? '<b>Claude</b>' : '<span class="branch"></span>' + esc(a.label)}<small>${esc(sub)}</small></div>
+        <div class="gtrack"><div class="gbar ${esc(ast)}" style="left:${left}%;width:${Math.min(width, 100 - left)}%" title="${esc(tip)}"></div></div>
       </div>`;
     });
   const mins = Math.round(span / 60000);
   $('gantt').innerHTML = rows.join('') +
     `<div class="gaxis"><div></div><div><span>${mins > 0 ? T.minAgo(mins) : T.start}</span><span>${T.now}</span></div></div>`;
+  // The pulse needs room: only bars wider than 24 px get it.
+  for (const bar of $('gantt').querySelectorAll('.gbar')) if (bar.getBoundingClientRect().width > 24) bar.classList.add('pulse');
 }
 
 function renderFeed(s) {
-  const byId = Object.fromEntries(s.agents.map((a) => [a.id, a]));
+  const byId = agentMap(s);
   const who = (id) => (id === 'user' ? T.you : id === 'system' ? T.system : id === 'main' ? 'Claude' : byId[id]?.label || id);
   const text = (e) => {
     const fn = T.text[e.kind];
     if (e.kind === 'agent_start') return fn(who(e.target), e.detail);
     if (e.kind === 'agent_done') return fn(who(e.actor));
-    return fn ? fn(e.detail, e.actor, e.tool) : e.detail;
+    return fn ? fn(e.detail, e.actor, e.tool, e) : e.detail;
   };
-  const events = s.events.slice().reverse();
+  const events = s.events.filter((e) => showThinks || e.kind !== 'thinks').reverse();
   const fresh = Math.max(0, s.events.length - lastEventCount);
   lastEventCount = s.events.length;
   $('feed').innerHTML = events.slice(0, 150).map((e, i) => {
     const label = e.tool && !['read', 'edit', 'error', 'mcp'].includes(e.kind) ? e.tool : T.kind[e.kind] || e.kind;
     const showWho = e.kind !== 'agent_done';
-    return `<li class="${i < fresh && fresh < 20 ? 'new' : ''}">
+    return `<li class="${esc(e.kind)}${i < fresh && fresh < 20 ? ' new' : ''}">
       <span class="t">${hhmm(e.ts)}</span>
       <span class="k ${esc(e.kind)}">${esc(label)}</span>
       <span class="x">${showWho ? `<span class="who">${esc(who(e.actor))}</span>` : ''}${esc(text(e))}</span>
@@ -186,7 +220,7 @@ function renderFeed(s) {
 }
 
 function renderSide(s) {
-  const byId = Object.fromEntries(s.agents.map((a) => [a.id, a]));
+  const byId = agentMap(s);
   const name = (id) => (id === 'main' ? 'Claude' : byId[id]?.label || id);
   const alerts = s.alerts.slice().reverse();
   $('noAlerts').hidden = alerts.length > 0;
