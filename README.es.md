@@ -42,6 +42,8 @@ npx kevmind            # abre el panel en http://localhost:4777
 
 Para quitarlos: `npx kevmind uninstall`.
 
+`npx kevmind stop` cierra el panel en ejecución; `npx kevmind restart` lo cierra si está corriendo y lo vuelve a abrir.
+
 ### Probar sin Claude Code
 
 ```bash

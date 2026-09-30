@@ -1,4 +1,4 @@
-// Servidor local: recibe eventos de los hooks, los guarda y los manda en vivo al navegador (SSE).
+// Local server: receives hook events, stores them and streams them live to the browser (SSE).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,6 +12,8 @@ export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.ke
 const LOG_FILE = path.join(DATA_DIR, 'events.jsonl');
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const DEV = process.env.KEVMIND_DEV === '1';
+const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 export function startServer({ port = 4777, host = '127.0.0.1' } = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -20,6 +22,8 @@ export function startServer({ port = 4777, host = '127.0.0.1' } = {}) {
 
   const clients = new Set();
   const log = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+  // New on every start; the page reloads when a reconnect hands it a different one.
+  const bootId = Math.random().toString(36).slice(2);
 
   function broadcast(msg) {
     const data = `data: ${JSON.stringify(msg)}\n\n`;
@@ -45,9 +49,16 @@ export function startServer({ port = 4777, host = '127.0.0.1' } = {}) {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/shutdown') {
+      if (!LOCAL.has(req.socket.remoteAddress)) return res.writeHead(403).end();
+      res.writeHead(204).end();
+      shutdown();
+      return;
+    }
+
     if (url.pathname === '/stream') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-      res.write(`data: ${JSON.stringify({ type: 'hello', sessions: state.list() })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'hello', bootId, sessions: state.list() })}\n\n`);
       clients.add(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 20000);
       req.on('close', () => { clearInterval(ping); clients.delete(res); });
@@ -70,6 +81,21 @@ export function startServer({ port = 4777, host = '127.0.0.1' } = {}) {
       res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' }).end(buf);
     });
   });
+
+  // Dev only: reload the open page when a dashboard file changes (debounced, editors fire several events per save).
+  let reloadTimer;
+  const watcher = DEV ? fs.watch(PUBLIC_DIR, () => {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => broadcast({ type: 'reload' }), 100);
+  }) : null;
+
+  function shutdown() {
+    watcher?.close();
+    for (const res of clients) res.end();
+    log.end();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1000).unref(); // idle keep-alive sockets must not hold the process open
+  }
 
   server.listen(port, host);
   return server;

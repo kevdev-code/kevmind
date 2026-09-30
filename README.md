@@ -42,6 +42,8 @@ npx kevmind            # opens the dashboard at http://localhost:4777
 
 To remove them: `npx kevmind uninstall`.
 
+`npx kevmind stop` closes the running dashboard; `npx kevmind restart` closes it if it's running and starts it again.
+
 ### Try it without Claude Code
 
 ```bash
@@ -74,6 +76,15 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 | -------------- | ------------- | ------------------ |
 | `KEVMIND_PORT` | `4777`        | Dashboard port     |
 | `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
+| `KEVMIND_DEV`  | unset         | `1` reloads the open page when a file in `public/` changes (set by `npm run dev`) |
+
+## Development
+
+```bash
+npm run dev
+```
+
+Restarts the server whenever something under `src/` or `bin/` changes, and the open dashboard reloads itself after a restart or when a file under `public/` changes. No build step, no dependencies.
 
 ## Known limitations
 

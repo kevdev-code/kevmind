@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "start": "node bin/kevmind.js",
+    "dev": "node --watch-path=src --watch-path=bin bin/kevmind.js --dev",
     "demo": "node bin/kevmind.js demo"
   },
   "engines": {

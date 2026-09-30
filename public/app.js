@@ -11,6 +11,7 @@ let selectedId = null;
 let pinned = false;      // true when the user picked a session manually
 let lastEventCount = 0;
 let connected = null;
+let bootId = null;       // server boot id from the first "hello"; a different one means the server restarted
 
 // ---------- i18n ----------
 let lang = pickLang();
@@ -51,6 +52,11 @@ function connect() {
   es.onerror = () => setConn(false);
   es.onmessage = (m) => {
     const msg = JSON.parse(m.data);
+    if (msg.type === 'reload') return location.reload();
+    if (msg.type === 'hello') {
+      if (bootId && msg.bootId !== bootId) return location.reload();
+      bootId = msg.bootId;
+    }
     sessions = msg.sessions || sessions;
     if (msg.type === 'session') {
       const s = msg.session;
