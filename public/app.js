@@ -85,6 +85,8 @@ async function select(id, byUser = true) {
 const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
 const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+// "mcp__server__tool" → "server › tool"; other names unchanged.
+const toolName = (n) => (n.startsWith('mcp__') ? n.slice(5).split('__').join(' › ') : n);
 
 function renderSessions() {
   $('noSessions').hidden = sessions.length > 0;
@@ -154,7 +156,7 @@ function renderFeed(s) {
   const fresh = Math.max(0, s.events.length - lastEventCount);
   lastEventCount = s.events.length;
   $('feed').innerHTML = events.slice(0, 150).map((e, i) => {
-    const label = e.tool && !['read', 'edit', 'error'].includes(e.kind) ? e.tool : T.kind[e.kind] || e.kind;
+    const label = e.tool && !['read', 'edit', 'error', 'mcp'].includes(e.kind) ? e.tool : T.kind[e.kind] || e.kind;
     const showWho = e.kind !== 'agent_done';
     return `<li class="${i < fresh && fresh < 20 ? 'new' : ''}">
       <span class="t">${hhmm(e.ts)}</span>
@@ -182,7 +184,7 @@ function renderSide(s) {
 
   const tools = s.tools.slice().sort((a, b) => b.count - a.count).slice(0, 10);
   $('tools').innerHTML = tools.map((t) => `<tr>
-      <td title="${esc(t.name)}">${esc(t.name)}</td><td>${t.count}</td>
+      <td title="${esc(t.name)}">${esc(toolName(t.name))}</td><td>${t.count}</td>
       <td class="${t.errors ? 'err' : ''}">${t.errors}</td>
       <td>${t.timed ? fmtMs(t.totalMs / t.timed) : '—'}</td></tr>`).join('');
 }

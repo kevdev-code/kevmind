@@ -124,12 +124,12 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 }
 .feed li:last-child { border-bottom: 0; }
 .feed .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.feed .k { font-weight: 600; font-size: 12px; }
+.feed .k { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed .who { color: var(--muted); font-size: 12px; margin-right: 6px; }
 .k.read { color: var(--info); }
 .k.edit { color: var(--warn); }
-.k.command { color: var(--accent); }
+.k.command, .k.mcp { color: var(--accent); }
 .k.agent_start, .k.agent_done, .k.stop { color: var(--ok); }
 .k.error { color: var(--err); }
 .k.waiting { color: var(--warn); }

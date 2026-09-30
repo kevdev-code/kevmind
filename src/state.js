@@ -1,6 +1,5 @@
 // Turns raw hook payloads into a model: sessions → agents → actions.
 // Events are stored as language-neutral codes; the UI translates them.
-import path from 'node:path';
 
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
@@ -77,7 +76,7 @@ export class State {
     if (kind === 'read') f.reads++;
     if (kind === 'edit') {
       if (f.lastEditBy && f.lastEditBy !== actor.id && ts - f.lastEditAt < CONFLICT_WINDOW_MS) {
-        s.alerts.push({ ts, kind: 'conflict', a: actor.id, b: f.lastEditBy, file: path.basename(file) });
+        s.alerts.push({ ts, kind: 'conflict', a: actor.id, b: f.lastEditBy, file: baseName(file) });
       }
       f.edits++;
       f.lastEditBy = actor.id;
@@ -99,7 +98,7 @@ export class State {
         s.prompts++;
         s.status = 'working';
         s.agents.main.status = 'working';
-        this.push(s, { ts, kind: 'prompt', actor: 'user', detail: String(p.prompt || '').replace(/\s+/g, ' ').slice(0, 140) });
+        this.push(s, { ts, kind: 'prompt', actor: 'user', detail: cleanPrompt(p.prompt) });
         break;
 
       case 'PreToolUse': {
@@ -220,8 +219,22 @@ export class State {
   }
 }
 
+// Last path segment, accepting both / and \ so Windows paths work on any host.
+function baseName(p) {
+  return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+}
+
 function projectName(cwd) {
-  return path.basename(cwd.replace(/[\\/]+$/, '')) || cwd;
+  return baseName(cwd) || cwd;
+}
+
+// Strip Claude Code's internal tags (e.g. <pasted_content id="x">) from the prompt text.
+function cleanPrompt(text) {
+  return String(text || '')
+    .replace(/<\/?[a-z_][\w-]*(\s[^>]*)?>/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
 }
 
 function isError(r) {
@@ -239,7 +252,7 @@ function kindOf(tool) {
 }
 
 function describe(tool, input) {
-  const base = (f) => (f ? path.basename(String(f)) : '');
+  const base = (f) => (f ? baseName(f) : '');
   switch (tool) {
     case 'Read': case 'Edit': case 'MultiEdit': case 'Write': return base(input.file_path);
     case 'NotebookEdit': return base(input.notebook_path);
