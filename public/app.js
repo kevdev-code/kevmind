@@ -2,6 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const WINDOW_MS = 15 * 60 * 1000;
+const STALE_MS = 5 * 60 * 1000;
 const LANG_KEY = 'kevmind.lang';
 
 let sessions = [];
@@ -85,17 +86,24 @@ async function select(id, byUser = true) {
 const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
 const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+// Mirrors the server's stale rule so the dots go idle on the 1 s tick, without waiting for a new event.
+const isStale = (s) => (s.status === 'working' || s.status === 'waiting') && Date.now() - s.lastAt > STALE_MS;
+const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
+const agentStatus = (a, s) => (isStale(s) && (a.status === 'running' || a.status === 'working') ? 'idle' : a.status);
 // "mcp__server__tool" → "server › tool"; other names unchanged.
 const toolName = (n) => (n.startsWith('mcp__') ? n.slice(5).split('__').join(' › ') : n);
 
 function renderSessions() {
   $('noSessions').hidden = sessions.length > 0;
-  $('sessionList').innerHTML = sessions.map((s) => `
+  $('sessionList').innerHTML = sessions.map((s) => {
+    const st = sessionStatus(s);
+    return `
     <li data-id="${esc(s.id)}" class="${s.id === selectedId ? 'sel' : ''}" title="${esc(s.cwd)}">
-      <span class="sdot ${esc(s.status)}"></span>
+      <span class="sdot ${esc(st)}"></span>
       <span class="sname">${esc(s.project)}</span>
-      <span class="smeta">${esc(T.status[s.status] || s.status)} · ${T.ago(secondsSince(s.lastAt))}</span>
-    </li>`).join('');
+      <span class="smeta">${esc(T.status[st] || st)} · ${T.ago(secondsSince(s.lastAt))}</span>
+    </li>`;
+  }).join('');
 }
 $('sessionList').addEventListener('click', (e) => {
   const li = e.target.closest('li[data-id]');
@@ -107,14 +115,19 @@ function renderSession() {
   if (!s) return;
   $('nowProject').textContent = s.project;
   $('nowCwd').textContent = s.cwd;
-  $('nowStatus').textContent = T.status[s.status] || s.status;
-  $('nowStatus').className = 'status ' + s.status;
-  $('stAgents').textContent = s.agents.filter((a) => a.status === 'running' || a.status === 'working').length;
   $('stActions').textContent = s.agents.reduce((n, a) => n + a.actions, 0);
   $('stPrompts').textContent = s.prompts;
+  renderStatus(s);
   renderGantt();
   renderFeed(s);
   renderSide(s);
+}
+
+function renderStatus(s) {
+  const st = sessionStatus(s);
+  $('nowStatus').textContent = T.status[st] || st;
+  $('nowStatus').className = 'status ' + st;
+  $('stAgents').textContent = s.agents.filter((a) => ['running', 'working'].includes(agentStatus(a, s))).length;
 }
 
 function renderGantt() {
@@ -131,10 +144,12 @@ function renderGantt() {
       const end = a.endedAt || now;
       const left = ((start - from) / span) * 100;
       const width = Math.max(0.5, ((end - start) / span) * 100);
-      const cls = a.id === 'main' ? s.status : a.status;
-      const sub = a.id === 'main' ? (T.status[s.status] || '') : T.agentStats(T.agentStatus[a.status] || a.status, a.actions);
+      const st = sessionStatus(s);
+      const ast = agentStatus(a, s);
+      const cls = a.id === 'main' ? st : ast;
+      const sub = a.id === 'main' ? (T.status[st] || '') : T.agentStats(T.agentStatus[ast] || ast, a.actions);
       return `<div class="grow">
-        <div class="glabel" title="${esc(a.description || '')}">${a.id === 'main' ? '<b>Claude</b>' : '↳ ' + esc(a.label)}<small>${esc(sub)}</small></div>
+        <div class="glabel" title="${esc(a.description || '')}">${a.id === 'main' ? '<b>Claude</b>' : '<span class="branch"></span>' + esc(a.label)}<small>${esc(sub)}</small></div>
         <div class="gtrack"><div class="gbar ${esc(cls)}" style="left:${left}%;width:${Math.min(width, 100 - left)}%" title="${esc(a.description || a.label)}"></div></div>
       </div>`;
     });
@@ -190,6 +205,6 @@ function renderSide(s) {
 }
 
 // Refresh bars and relative times every second without waiting for events.
-setInterval(() => { renderGantt(); renderSessions(); }, 1000);
+setInterval(() => { renderGantt(); renderSessions(); if (current) renderStatus(current); }, 1000);
 applyStatic();
 connect();

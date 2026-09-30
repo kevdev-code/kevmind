@@ -6,6 +6,7 @@ const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const MAX_EVENTS = 300;
 const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
+const STALE_MS = 5 * 60 * 1000;
 
 export class State {
   constructor() {
@@ -199,24 +200,37 @@ export class State {
     return s;
   }
 
-  summary(s) {
+  summary(s, now = Date.now()) {
     const { pending, agentSeq, ...rest } = s;
+    const stale = isStale(s, now);
     // Drop duplicate agent aliases (same object registered under its real id).
     const seen = new Set();
     const agents = [];
     for (const a of Object.values(s.agents)) {
       if (seen.has(a)) continue;
       seen.add(a);
-      agents.push(a);
+      agents.push(stale && (a.status === 'running' || a.status === 'working') ? { ...a, status: 'idle' } : a);
     }
-    return { ...rest, agents, files: Object.values(s.files), tools: Object.values(s.tools), alerts: s.alerts.slice(-20) };
+    return {
+      ...rest, status: stale ? 'idle' : s.status, agents,
+      files: Object.values(s.files), tools: Object.values(s.tools), alerts: s.alerts.slice(-20),
+    };
   }
 
-  list() {
+  list(now = Date.now()) {
     return [...this.sessions.values()]
       .sort((a, b) => b.lastAt - a.lastAt)
-      .map((s) => ({ id: s.id, project: s.project, cwd: s.cwd, status: s.status, lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts }));
+      .map((s) => ({
+        id: s.id, project: s.project, cwd: s.cwd, status: isStale(s, now) ? 'idle' : s.status,
+        lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts,
+      }));
   }
+}
+
+// A session that never got Stop/SessionEnd stays "working" in storage; report it idle once it goes quiet.
+// Computed at read time so a late event still resumes it normally.
+function isStale(s, now) {
+  return (s.status === 'working' || s.status === 'waiting') && now - s.lastAt > STALE_MS;
 }
 
 // Last path segment, accepting both / and \ so Windows paths work on any host.
