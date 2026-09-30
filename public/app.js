@@ -5,6 +5,11 @@ const WINDOW_MS = 15 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
 const LANG_KEY = 'kevmind.lang';
 const THINKS_KEY = 'kevmind.thinks';
+const PROJECT_KEY = 'kevmind.project';
+const params = new URLSearchParams(location.search);
+// ?focus=latest: no session list, always the most recently started session of the chosen project.
+const focus = params.get('focus') === 'latest';
+if (focus) document.body.classList.add('focus');
 
 let sessions = [];
 let current = null;      // full summary of the selected session
@@ -13,6 +18,21 @@ let pinned = false;      // true when the user picked a session manually
 let lastEventCount = 0;
 let connected = null;
 let bootId = null;       // server boot id from the first "hello"; a different one means the server restarted
+// ?project=Name for this page load, else the remembered choice, else all projects.
+let projectFilter = params.get('project') || '';
+if (!projectFilter) { try { projectFilter = localStorage.getItem(PROJECT_KEY) || ''; } catch { /* storage unavailable */ } }
+let projectOptions = '';  // the option set last rendered, so an open dropdown isn't rebuilt under the mouse
+const visibleSessions = () => (projectFilter ? sessions.filter((s) => s.project === projectFilter) : sessions);
+const newestVisible = () => visibleSessions().slice().sort((a, b) => b.startedAt - a.startedAt)[0];
+$('projectFilter').addEventListener('change', (e) => {
+  projectFilter = e.target.value;
+  try { localStorage.setItem(PROJECT_KEY, projectFilter); } catch { /* ignore */ }
+  pinned = false;
+  const visible = visibleSessions();
+  if (!visible.some((s) => s.id === selectedId)) { selectedId = null; current = null; clearSession(); }
+  renderSessions();
+  if (!selectedId && visible[0]) select(visible[0].id, false);
+});
 let showThinks = true;   // feed toggle for "thinks" events
 try { showThinks = localStorage.getItem(THINKS_KEY) !== '0'; } catch { /* storage unavailable */ }
 $('showThinks').checked = showThinks;
@@ -49,6 +69,8 @@ function applyStatic() {
   document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = T[el.dataset.i18n]; });
   document.querySelectorAll('[data-i18n-html]').forEach((el) => { el.innerHTML = T[el.dataset.i18nHtml]; });
   document.querySelectorAll('[data-lang]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  $('projectFilter').setAttribute('aria-label', T.projectFilter);
+  projectOptions = ''; // the option labels change with the language
   if (connected !== null) setConn(connected);
 }
 
@@ -67,15 +89,20 @@ function connect() {
       bootId = msg.bootId;
     }
     sessions = msg.sessions || sessions;
-    if (msg.type === 'session') {
-      const s = msg.session;
-      if (!pinned || s.id === selectedId) {
-        if (s.id !== selectedId) lastEventCount = 0;
-        selectedId = s.id;
-        current = s;
-      }
+    const shown = (s) => !projectFilter || s.project === projectFilter;
+    if (focus) {
+      const newest = newestVisible();
+      if (newest && newest.id !== selectedId) {
+        if (msg.type === 'session' && msg.session.id === newest.id) { selectedId = newest.id; current = msg.session; lastEventCount = 0; }
+        else return select(newest.id, false);
+      } else if (msg.type === 'session' && msg.session.id === selectedId) current = msg.session;
+    } else if (msg.type === 'session' && shown(msg.session) && (!pinned || msg.session.id === selectedId)) {
+      if (msg.session.id !== selectedId) lastEventCount = 0;
+      selectedId = msg.session.id;
+      current = msg.session;
     }
-    if (msg.type === 'hello' && !selectedId && sessions[0]) select(sessions[0].id, false);
+    const first = visibleSessions()[0];
+    if (!selectedId && first) return select(first.id, false);
     renderSessions();
     renderSession();
   };
@@ -115,8 +142,15 @@ const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
 const agentStatus = (a, s) => (isStale(s) && (a.status === 'running' || a.status === 'working') ? 'idle' : a.status);
 
 function renderSessions() {
-  $('noSessions').hidden = sessions.length > 0;
-  $('sessionList').innerHTML = sessions.map((s) => {
+  const names = [...new Set(sessions.map((s) => s.project))].sort((a, b) => a.localeCompare(b));
+  if (projectFilter && !names.includes(projectFilter)) names.push(projectFilter);
+  const options = `<option value="">${esc(T.allProjects)}</option>` +
+    names.map((n) => `<option value="${esc(n)}"${n === projectFilter ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  if (options !== projectOptions) { $('projectFilter').innerHTML = options; projectOptions = options; }
+  const visible = visibleSessions();
+  $('noSessions').hidden = visible.length > 0;
+  $('noSessions').innerHTML = sessions.length && !visible.length ? esc(T.noProjectSessions) : T.noSessions;
+  $('sessionList').innerHTML = visible.map((s) => {
     const st = sessionStatus(s);
     return `
     <li data-id="${esc(s.id)}" class="${s.id === selectedId ? 'sel' : ''}" title="${esc(s.cwd)}">
@@ -150,6 +184,22 @@ function renderSession() {
   renderGantt();
   renderFeed(s);
   renderSide(s);
+}
+
+// Nothing to show for the chosen project: blank the panels rather than leave another project on screen.
+function clearSession() {
+  $('nowProject').textContent = '—';
+  $('nowCwd').textContent = '';
+  $('nowModel').hidden = true;
+  $('nowLoading').hidden = true;
+  $('nowStatus').textContent = '—';
+  $('nowStatus').className = 'status';
+  for (const id of ['stAgents', 'stActions', 'stPrompts']) $(id).textContent = '0';
+  $('stTime').textContent = '0 min';
+  $('stTokens').textContent = '—';
+  $('stCache').textContent = '—';
+  for (const id of ['gantt', 'feed', 'alerts', 'files', 'tools']) $(id).innerHTML = '';
+  $('noAlerts').hidden = false;
 }
 
 function renderStatus(s) {

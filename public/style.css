@@ -70,7 +70,14 @@ h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; margin-lef
 .empty.small { font-size: 12px; margin: 0; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
 
-/* Sesiones */
+/* Sessions */
+.project-filter {
+  width: 100%; margin-bottom: 8px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
+}
+/* ?focus=latest: the session list goes away and the main panels take its width */
+body.focus .sessions { display: none; }
+body.focus .layout { grid-template-columns: minmax(0, 1fr) 320px; }
 .sessions ul li {
   padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
   display: grid; grid-template-columns: 10px 1fr; column-gap: 8px; align-items: center;
@@ -169,6 +176,7 @@ h2 .toggle input { margin: 0; accent-color: var(--accent); }
 
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 220px minmax(0, 1fr); }
+  body.focus .layout { grid-template-columns: minmax(0, 1fr); }
   .right { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 }
 @media (max-width: 720px) {

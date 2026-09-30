@@ -72,6 +72,15 @@ npx kevmind demo
 
 Simula una sesión con tres agentes en paralelo. Aparece como proyecto `demo-kevmind` para que no se confunda con datos reales.
 
+## Grabar una demo
+
+Dos parámetros en la URL dejan fuera de pantalla a los demás proyectos:
+
+- `http://localhost:4777/?project=KevMind` muestra solo las sesiones de ese proyecto. El selector arriba de la lista de sesiones hace lo mismo y recuerda tu elección.
+- `http://localhost:4777/?focus=latest` oculta la lista de sesiones y muestra solo la sesión iniciada más recientemente, cambiando a una más nueva en cuanto aparece.
+
+Combínalos para grabar un solo proyecto: `http://localhost:4777/?project=KevMind&focus=latest`.
+
 ## Privacidad
 
 - Todo se queda en `~/.kevmind/`. No hay telemetría.

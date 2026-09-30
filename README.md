@@ -98,6 +98,15 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 | `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
 | `KEVMIND_DEV`  | unset         | `1` reloads the open page when a file in `public/` changes (set by `npm run dev`) |
 
+## Recording a demo
+
+Two URL parameters keep other projects off the screen:
+
+- `http://localhost:4777/?project=KevMind` shows only that project's sessions. The dropdown above the session list does the same and remembers your choice.
+- `http://localhost:4777/?focus=latest` hides the session list and shows only the most recently started session, switching to a newer one as soon as it appears.
+
+Combine them to record a single project: `http://localhost:4777/?project=KevMind&focus=latest`.
+
 ## Clearing data
 
 ```bash
