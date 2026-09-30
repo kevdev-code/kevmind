@@ -6,6 +6,14 @@
   "bin": {
     "kevmind": "bin/kevmind.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevdev-code/kevmind.git"
+  },
+  "homepage": "https://github.com/kevdev-code/kevmind#readme",
+  "bugs": {
+    "url": "https://github.com/kevdev-code/kevmind/issues"
+  },
   "files": [
     "bin",
     "src",
@@ -14,6 +22,7 @@
     "scripts",
     ".claude-plugin",
     "README.md",
+    "README.es.md",
     "LICENSE"
   ],
   "scripts": {
