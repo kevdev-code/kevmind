@@ -10,7 +10,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 ## What it shows
 
-- **Sessions** from the last 24 h, per project, with their status (working, idle, needs your OK). When a session needs your OK, the browser tab says so even when you are looking at another one: the title starts with "⏸ Needs your OK" and the icon gets an amber dot. No sounds, no notifications.
+- **Sessions** from the last 24 h, grouped by project (most recent first, the current one open), each named by its title or first prompt, with start time and duration; closed sessions older than 2 h fold under "Show closed". Status: working, idle, needs your OK. When a session needs your OK, the browser tab says so even when you are looking at another one: the title starts with "⏸ Needs your OK" and the icon gets an amber dot. No sounds, no notifications.
 - **Parallel agents**: a timeline of Claude and every subagent it launches, with each one's action count.
 - **Live activity**: every read, edit, command, search and MCP call as it happens.
 - **Most-touched files**: how often each file was read and edited.
@@ -20,7 +20,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 - **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
 
-The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width.
+The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width. On wide screens the page stays still and each column (sessions, center, right rail) scrolls on its own; the activity feed scrolls inside its panel.
 
 It's lightweight: plain HTML and CSS with system fonts, no 3D, no GPU. Zero dependencies; just Node 18+. It renders only what changed, does no work while idle, and stops rendering while its tab is hidden. The design system is documented in [DESIGN.md](DESIGN.md).
 
