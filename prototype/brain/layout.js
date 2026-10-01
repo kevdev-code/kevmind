@@ -42,8 +42,10 @@ export function layout(graph, { seed = 3, iterations = 60 } = {}) {
   const count = new Int32Array(regions.length);
   for (const nd of nodes) count[nd.region]++;
 
-  // 1. Region anchors inside each lobe: discs sized by node count, packed by relaxation, same project together.
+  // 1. Region anchors inside each lobe: areas sized by node count, packed by relaxation. Each region is an ellipse
+  // with its lobe's aspect ratio (same area as the disc), so a flat lobe like the temporal gets flat regions.
   const anchor = regions.map(() => [0, 0, 0]);
+  const aspect = (g) => { const r0 = LOBE_SHAPES[g.lobe].r; return [Math.sqrt(r0[0] / r0[1]), Math.sqrt(r0[1] / r0[0])]; };
   const rad = regions.map((g) => 0.02 + 0.01 * Math.sqrt(count[g.id]));
   for (const [lobe, shape] of Object.entries(LOBE_SHAPES)) {
     const rs = regions.filter((g) => g.lobe === lobe).sort((a, b) => (projOrder.get(a.project) ?? -1) - (projOrder.get(b.project) ?? -1) || count[b.id] - count[a.id]);
@@ -61,14 +63,16 @@ export function layout(graph, { seed = 3, iterations = 60 } = {}) {
         const A = anchor[rs[i].id];
         for (let j = i + 1; j < rs.length; j++) {
           const B = anchor[rs[j].id];
-          const dx = B[0] - A[0], dy = B[1] - A[1], d = Math.hypot(dx, dy) || 1e-4;
+          const [ax, ay] = aspect(rs[i]);
+          const dx = B[0] - A[0], dy = B[1] - A[1], d = Math.hypot(dx / ax, dy / ay) || 1e-4;
           const min = rad[rs[i].id] + rad[rs[j].id];
           const push = d < min ? (min - d) * 0.5 : 0;
-          A[0] -= (dx / d) * push; A[1] -= (dy / d) * push; B[0] += (dx / d) * push; B[1] += (dy / d) * push;
+          A[0] -= (dx / d) * push; A[1] -= (dy / d) * push; B[0] += (dx / d) * push; B[1] += (dy / d) * push; // in lobe-scaled units
         }
         // Keep the disc inside the lobe ellipse
-        const ex = (A[0] - shape.c[0]) / Math.max(0.01, shape.r[0] - rad[rs[i].id] * 0.7);
-        const ey = (A[1] - shape.c[1]) / Math.max(0.01, shape.r[1] - rad[rs[i].id] * 0.7);
+        const [ax, ay] = aspect(rs[i]);
+        const ex = (A[0] - shape.c[0]) / Math.max(0.01, shape.r[0] - rad[rs[i].id] * ax * 0.7);
+        const ey = (A[1] - shape.c[1]) / Math.max(0.01, shape.r[1] - rad[rs[i].id] * ay * 0.7);
         const e = Math.hypot(ex, ey);
         if (e > 1) { A[0] = shape.c[0] + (A[0] - shape.c[0]) / e; A[1] = shape.c[1] + (A[1] - shape.c[1]) / e; }
       }
@@ -77,11 +81,11 @@ export function layout(graph, { seed = 3, iterations = 60 } = {}) {
 
   // 2. Nodes start in a ball around their anchor.
   for (let i = 0; i < n; i++) {
-    const g = nodes[i].region, A = anchor[g], s = rad[g];
+    const g = nodes[i].region, A = anchor[g], s = rad[g], [ax, ay] = aspect(regions[g]);
     const u = r() * 2 - 1, phi = r() * Math.PI * 2, d = Math.sqrt(r()) * s;
     const q = Math.sqrt(1 - u * u);
-    pos[i * 3] = A[0] + Math.cos(phi) * q * d;
-    pos[i * 3 + 1] = A[1] + Math.sin(phi) * q * d;
+    pos[i * 3] = A[0] + Math.cos(phi) * q * d * ax;
+    pos[i * 3 + 1] = A[1] + Math.sin(phi) * q * d * ay;
     pos[i * 3 + 2] = A[2] + u * d * 2.2; // deeper than wide: depth reads as volume
   }
 
@@ -140,8 +144,8 @@ export function layout(graph, { seed = 3, iterations = 60 } = {}) {
     spring(cross, 0.002, 0.2);
     for (let i = 0; i < n; i++) {
       const g = nodes[i].region, A = anchor[g], j = i * 3;
-      const s = rad[g] * 1.15, dx = pos[j] - A[0], dy = pos[j + 1] - A[1], dd = Math.hypot(dx, dy);
-      if (dd > s) { const f = ((dd - s) / dd) * 0.08; vel[j] -= dx * f; vel[j + 1] -= dy * f; } // stay on the region's disc
+      const s = rad[g] * 1.15, [ax, ay] = aspect(regions[g]), dx = pos[j] - A[0], dy = pos[j + 1] - A[1], dd = Math.hypot(dx / ax, dy / ay);
+      if (dd > s) { const f = ((dd - s) / dd) * 0.08; vel[j] -= dx * f; vel[j + 1] -= dy * f; } // stay on the region's ellipse
       vel[j + 2] += (A[2] - pos[j + 2]) * 0.003;
       for (let a = 0; a < 3; a++) { pos[j + a] += vel[j + a] * cool; vel[j + a] *= 0.5; }
       // Containment: back inside the lobe ellipsoid
