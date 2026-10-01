@@ -1,27 +1,40 @@
 // KevMind dashboard: listens to /stream (SSE) and renders the selected session.
+// Cheap by design: SSE messages only update state and ask for one animation frame; a frame renders what changed;
+// rows are kept and updated in place (only changed text is written); nothing renders while the tab is hidden,
+// and the page catches up when it is shown again. The tab title and favicon still follow "needs your OK".
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const WINDOW_MS = 15 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
+const FEED_MAX = 150;
+const ALERTS_SHOWN = 3;
 const LANG_KEY = 'kevmind.lang';
 const THINKS_KEY = 'kevmind.thinks';
 const PROJECT_KEY = 'kevmind.project';
+const THEME_KEY = 'kevmind.theme';
 const params = new URLSearchParams(location.search);
 // ?focus=latest: no session list, always the most recently started session of the chosen project.
 const focus = params.get('focus') === 'latest';
 if (focus) document.body.classList.add('focus');
 
+// Writes that skip the DOM when nothing changed: the 1 s tick and every frame go through these.
+const setText = (el, v) => { v = String(v ?? ''); if (el._t !== v) { el._t = v; el.textContent = v; } };
+const setClass = (el, v) => { if (el._c !== v) { el._c = v; el.className = v; } };
+const setAttr = (el, k, v) => { if (el.getAttribute(k) !== v) el.setAttribute(k, v); };
+const setHidden = (el, h) => { if (el.hidden !== h) el.hidden = h; };
+const patchHTML = (el, html) => { if (el._h !== html) { el._h = html; el.innerHTML = html; } };
+
 let sessions = [];
 let current = null;      // full summary of the selected session
 let selectedId = null;
 let pinned = false;      // true when the user picked a session manually
-let lastEventCount = 0;
 let connected = null;
 let bootId = null;       // server boot id from the first "hello"; a different one means the server restarted
 // ?project=Name for this page load, else the remembered choice, else all projects.
 let projectFilter = params.get('project') || '';
 if (!projectFilter) { try { projectFilter = localStorage.getItem(PROJECT_KEY) || ''; } catch { /* storage unavailable */ } }
 let projectOptions = '';  // the option set last rendered, so an open dropdown isn't rebuilt under the mouse
+let alertsOpen = false;
 const visibleSessions = () => (projectFilter ? sessions.filter((s) => s.project === projectFilter) : sessions);
 const newestVisible = () => visibleSessions().slice().sort((a, b) => b.startedAt - a.startedAt)[0];
 $('projectFilter').addEventListener('change', (e) => {
@@ -30,7 +43,7 @@ $('projectFilter').addEventListener('change', (e) => {
   pinned = false;
   const visible = visibleSessions();
   if (!visible.some((s) => s.id === selectedId)) { selectedId = null; current = null; clearSession(); }
-  renderSessions();
+  schedule();
   if (!selectedId && visible[0]) select(visible[0].id, false);
 });
 let showThinks = true;   // feed toggle for "thinks" events
@@ -39,8 +52,22 @@ $('showThinks').checked = showThinks;
 $('showThinks').addEventListener('change', (e) => {
   showThinks = e.target.checked;
   try { localStorage.setItem(THINKS_KEY, showThinks ? '1' : '0'); } catch { /* ignore */ }
-  if (current) renderFeed(current);
+  schedule();
 });
+
+// ---------- theme: system / dark / light, remembered per browser ----------
+let theme = 'system';
+try { theme = localStorage.getItem(THEME_KEY) || 'system'; } catch { /* storage unavailable */ }
+function applyTheme() {
+  const root = document.documentElement;
+  if (theme === 'dark' || theme === 'light') root.dataset.theme = theme; else root.removeAttribute('data-theme');
+  document.querySelectorAll('[data-theme-set]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.themeSet === theme)));
+}
+document.querySelectorAll('[data-theme-set]').forEach((b) => b.addEventListener('click', () => {
+  theme = b.dataset.themeSet;
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+  applyTheme();
+}));
 
 // ---------- i18n ----------
 let lang = pickLang();
@@ -60,8 +87,8 @@ function setLang(next) {
   T = I18N[lang];
   try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
   applyStatic();
-  renderSessions();
-  renderSession();
+  schedule();
+  updateAttention();
   if (typeof renderMemoryView === 'function') renderMemoryView();
 }
 
@@ -70,12 +97,52 @@ function applyStatic() {
   document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = T[el.dataset.i18n]; });
   document.querySelectorAll('[data-i18n-html]').forEach((el) => { el.innerHTML = T[el.dataset.i18nHtml]; });
   document.querySelectorAll('[data-lang]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  document.querySelectorAll('[data-theme-set]').forEach((b) => { b.title = T.theme[b.dataset.themeSet]; b.setAttribute('aria-label', T.theme[b.dataset.themeSet]); });
+  $('viewGroup').setAttribute('aria-label', T.viewGroup);
+  $('themeGroup').setAttribute('aria-label', T.themeGroup);
+  $('langGroup').setAttribute('aria-label', T.langGroup);
   $('projectFilter').setAttribute('aria-label', T.projectFilter);
   projectOptions = ''; // the option labels change with the language
   if (connected !== null) setConn(connected);
 }
 
 document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+
+// ---------- rendering is batched: one frame for any number of messages ----------
+let frame = 0;
+let dirty = false;
+const liveVisible = () => !document.hidden && !document.body.classList.contains('view-memory');
+function schedule() {
+  dirty = true;
+  if (!frame && liveVisible()) frame = requestAnimationFrame(flush);
+}
+function flush() {
+  frame = 0;
+  if (!dirty || !liveVisible()) return; // stays dirty: wakeLive() renders it when the page is shown again
+  dirty = false;
+  renderSessions();
+  renderSession();
+}
+// Called when the Live view or the tab becomes visible again: catch up once.
+function wakeLive() { schedule(); startTick(); }
+
+let tickTimer = 0;
+function startTick() { if (!tickTimer && !document.hidden) tickTimer = setInterval(tick, 1000); }
+function stopTick() { clearInterval(tickTimer); tickTimer = 0; }
+// Relative times, staleness and live bars. Only writes text that changed; when nothing runs, nothing changes.
+function tick() {
+  if (!liveVisible()) return;
+  renderSessions();
+  if (current) { renderNow(current); renderGantt(); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopTick();
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+  } else {
+    wakeLive();
+  }
+});
 
 // ---------- data ----------
 function connect() {
@@ -90,22 +157,21 @@ function connect() {
       bootId = msg.bootId;
     }
     sessions = msg.sessions || sessions;
+    updateAttention();
     const shown = (s) => !projectFilter || s.project === projectFilter;
     if (focus) {
       const newest = newestVisible();
       if (newest && newest.id !== selectedId) {
-        if (msg.type === 'session' && msg.session.id === newest.id) { selectedId = newest.id; current = msg.session; lastEventCount = 0; }
+        if (msg.type === 'session' && msg.session.id === newest.id) { selectedId = newest.id; current = msg.session; }
         else return select(newest.id, false);
       } else if (msg.type === 'session' && msg.session.id === selectedId) current = msg.session;
     } else if (msg.type === 'session' && shown(msg.session) && (!pinned || msg.session.id === selectedId)) {
-      if (msg.session.id !== selectedId) lastEventCount = 0;
       selectedId = msg.session.id;
       current = msg.session;
     }
     const first = visibleSessions()[0];
     if (!selectedId && first) return select(first.id, false);
-    renderSessions();
-    renderSession();
+    schedule();
   };
 }
 
@@ -118,16 +184,32 @@ function setConn(on) {
 async function select(id, byUser = true) {
   selectedId = id;
   pinned = byUser;
-  lastEventCount = 0;
   const r = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
   if (r.ok) current = await r.json();
-  renderSessions();
-  renderSession();
+  schedule();
 }
 
-// ---------- rendering ----------
+// ---------- "needs your OK" from another tab: title and favicon, no sound, no notifications ----------
+const favicon = $('favicon');
+const FAVICON = favicon.getAttribute('href');
+const FAVICON_WAIT = FAVICON.replace('</svg>', "<circle cx='25' cy='7' r='6.5' fill='%23f2a93b' stroke='white' stroke-width='2'/></svg>");
+let attentionTimer = 0;
+function updateAttention() {
+  const waiting = sessions.filter((s) => sessionStatus(s) === 'waiting');
+  const title = waiting.length ? `⏸ ${T.needsOk} · KevMind` : 'KevMind';
+  if (document.title !== title) document.title = title;
+  const href = waiting.length ? FAVICON_WAIT : FAVICON;
+  if (favicon.getAttribute('href') !== href) favicon.setAttribute('href', href);
+  // A waiting session goes idle after 5 min without events: clear the marker then, with one timeout, not a poll.
+  clearTimeout(attentionTimer);
+  if (waiting.length) attentionTimer = setTimeout(updateAttention, Math.max(1000, Math.min(...waiting.map((s) => s.lastAt + STALE_MS - Date.now())) + 500));
+}
+
+// ---------- formatting ----------
 const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
-const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const hhmmss = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const fmtMin = (m) => { m = Math.max(0, Math.round(m)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
 const tokensTip = (t) => `${T.tokensInOut}: ${t.input} / ${t.output} · ${T.cacheRW}: ${t.cacheRead} / ${t.cacheWrite}`;
@@ -141,7 +223,17 @@ const agentMap = (s) => {
 const isStale = (s) => (s.status === 'working' || s.status === 'waiting') && Date.now() - s.lastAt > STALE_MS;
 const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
 const agentStatus = (a, s) => (isStale(s) && (a.status === 'running' || a.status === 'working') ? 'idle' : a.status);
+const isLive = (st) => st === 'running' || st === 'working';
 
+// ---------- sessions: keyed buttons, updated in place ----------
+const sessionRows = new Map();
+function sessionRow(id) {
+  const li = document.createElement('li');
+  li.innerHTML = '<button type="button"><span class="dot"></span><span class="name"></span><span class="meta"></span></button>';
+  const btn = li.firstChild;
+  btn.dataset.id = id;
+  return { li, btn, dot: btn.children[0], name: btn.children[1], meta: btn.children[2] };
+}
 function renderSessions() {
   const names = [...new Set(sessions.map((s) => s.project))].sort((a, b) => a.localeCompare(b));
   if (projectFilter && !names.includes(projectFilter)) names.push(projectFilter);
@@ -149,39 +241,36 @@ function renderSessions() {
     names.map((n) => `<option value="${esc(n)}"${n === projectFilter ? ' selected' : ''}>${esc(n)}</option>`).join('');
   if (options !== projectOptions) { $('projectFilter').innerHTML = options; projectOptions = options; }
   const visible = visibleSessions();
-  $('noSessions').hidden = visible.length > 0;
-  $('noSessions').innerHTML = sessions.length && !visible.length ? esc(T.noProjectSessions) : T.noSessions;
-  $('sessionList').innerHTML = visible.map((s) => {
+  setHidden($('noSessions'), visible.length > 0);
+  if (!visible.length) patchHTML($('noSessions'), sessions.length ? esc(T.noProjectSessions) : T.noSessions);
+  const list = $('sessionList');
+  const seen = new Set();
+  let prev = null;
+  for (const s of visible) {
+    let r = sessionRows.get(s.id);
+    if (!r) { r = sessionRow(s.id); sessionRows.set(s.id, r); }
+    seen.add(s.id);
     const st = sessionStatus(s);
-    return `
-    <li data-id="${esc(s.id)}" class="${s.id === selectedId ? 'sel' : ''}" title="${esc(s.cwd)}">
-      <span class="sdot ${esc(st)}"></span>
-      <span class="sname">${esc(s.project)}</span>
-      <span class="smeta">${esc(T.status[st] || st)} · ${T.ago(secondsSince(s.lastAt))}</span>
-    </li>`;
-  }).join('');
+    setClass(r.dot, 'dot ' + st);
+    setText(r.name, s.project);
+    setText(r.meta, `${T.status[st] || st} · ${T.ago(secondsSince(s.lastAt))}`);
+    setAttr(r.btn, 'aria-current', String(s.id === selectedId));
+    if (r.btn.title !== (s.cwd || '')) r.btn.title = s.cwd || '';
+    const want = prev ? prev.nextSibling : list.firstChild;
+    if (r.li !== want) list.insertBefore(r.li, want);
+    prev = r.li;
+  }
+  for (const [id, r] of sessionRows) if (!seen.has(id)) { r.li.remove(); sessionRows.delete(id); }
 }
 $('sessionList').addEventListener('click', (e) => {
-  const li = e.target.closest('li[data-id]');
-  if (li) select(li.dataset.id);
+  const b = e.target.closest('button[data-id]');
+  if (b) select(b.dataset.id);
 });
 
 function renderSession() {
   const s = current;
   if (!s) return;
-  $('nowProject').textContent = s.project;
-  $('nowCwd').textContent = s.cwd;
-  $('nowModel').textContent = s.model || '';
-  $('nowModel').hidden = !s.model;
-  $('nowLoading').hidden = !s.loading;
-  $('stActions').textContent = s.agents.reduce((n, a) => n + a.actions, 0);
-  $('stPrompts').textContent = s.prompts;
-  const t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  $('stTokens').textContent = `${fmtK(t.input)} / ${fmtK(t.output)}`;
-  $('stTokens').title = tokensTip(t);
-  $('stCache').textContent = `${fmtK(t.cacheRead)} / ${fmtK(t.cacheWrite)}`;
-  $('stCache').title = tokensTip(t);
-  renderStatus(s);
+  renderNow(s);
   renderGantt();
   renderFeed(s);
   renderSide(s);
@@ -189,112 +278,213 @@ function renderSession() {
 
 // Nothing to show for the chosen project: blank the panels rather than leave another project on screen.
 function clearSession() {
-  $('nowProject').textContent = '—';
-  $('nowCwd').textContent = '';
-  $('nowModel').hidden = true;
-  $('nowLoading').hidden = true;
-  $('nowStatus').textContent = '—';
-  $('nowStatus').className = 'status';
-  for (const id of ['stAgents', 'stActions', 'stPrompts']) $(id).textContent = '0';
-  $('stTime').textContent = '0 min';
-  $('stTokens').textContent = '—';
-  $('stCache').textContent = '—';
-  for (const id of ['gantt', 'feed', 'alerts', 'files', 'tools']) $(id).innerHTML = '';
-  $('noAlerts').hidden = false;
+  setText($('nowProject'), '—');
+  setText($('nowPath'), '');
+  setHidden($('nowLoading'), true);
+  setHidden($('nowAsk'), true);
+  setText($('nowStatusText'), '—');
+  setClass($('nowStatus'), 'status');
+  setClass($('nowDot'), 'dot');
+  setClass($('now'), 'panel now');
+  for (const id of ['stAgents', 'stActions', 'stPrompts']) setText($(id), '0');
+  setText($('stTime'), '0 min');
+  for (const id of ['stTokens', 'stCache']) { setText($(id), '—'); setClass($(id), 'none'); }
+  for (const id of ['gantt', 'feed', 'alerts', 'files', 'tools']) patchHTML($(id), '');
+  ganttRows.clear();
+  feedRows.clear();
+  feedSig = '';
+  setHidden($('noAlerts'), false);
+  setHidden($('alertCount'), true);
+  setHidden($('alertsMore'), true);
 }
 
-function renderStatus(s) {
+// ---------- now: status first ----------
+function renderNow(s) {
   const st = sessionStatus(s);
-  $('nowStatus').textContent = T.status[st] || st;
-  $('nowStatus').className = 'status ' + st;
-  $('stAgents').textContent = s.agents.filter((a) => ['running', 'working'].includes(agentStatus(a, s))).length;
+  setText($('nowStatusText'), T.status[st] || st);
+  setClass($('nowStatus'), 'status ' + st);
+  setClass($('nowDot'), 'dot ' + st);
+  setClass($('now'), st === 'waiting' ? 'panel now waiting' : 'panel now');
+  setText($('nowProject'), s.project);
+  setText($('nowPath'), s.model ? `${s.cwd} · ${s.model}` : s.cwd);
+  setHidden($('nowLoading'), !s.loading);
+  // What Claude is asking for, and for how long: the last "waiting" event.
+  let ask = null;
+  if (st === 'waiting') for (let i = s.events.length - 1; i >= 0; i--) if (s.events[i].kind === 'waiting') { ask = s.events[i]; break; }
+  setHidden($('nowAsk'), st !== 'waiting');
+  if (st === 'waiting') {
+    setText($('nowAskText'), ask?.detail || T.askTitle);
+    setText($('nowAskAgo'), `· ${T.ago(secondsSince(ask?.ts || s.lastAt))}`);
+  }
+  setText($('stAgents'), s.agents.filter((a) => isLive(agentStatus(a, s))).length);
+  setText($('stActions'), s.agents.reduce((n, a) => n + a.actions, 0));
+  setText($('stPrompts'), s.prompts);
+  setText($('stTime'), fmtMin(((isLive(st) || st === 'waiting' ? Date.now() : s.lastAt) - s.startedAt) / 60000));
+  const t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const known = t.input || t.output || t.cacheRead || t.cacheWrite;
+  setText($('stTokens'), known ? `${fmtK(t.input)} / ${fmtK(t.output)}` : '—');
+  setText($('stCache'), known ? `${fmtK(t.cacheRead)} / ${fmtK(t.cacheWrite)}` : '—');
+  setClass($('stTokens'), known ? '' : 'none');
+  setClass($('stCache'), known ? '' : 'none');
+  const tip = known ? tokensTip(t) : '';
+  if ($('stTokens').title !== tip) { $('stTokens').title = tip; $('stCache').title = tip; }
 }
 
+// ---------- agents timeline: keyed rows; bars move by clip-path (repaint, no layout) ----------
+const ganttRows = new Map();
+function ganttRow() {
+  const el = document.createElement('div');
+  el.className = 'grow';
+  el.innerHTML = '<div class="glabel"><span class="ty"><span class="dot"></span><span></span></span><span class="task"></span></div>' +
+    '<div class="gtrack"><div class="gbar"></div></div><span class="gnum"><span class="gst"></span><span></span></span>';
+  const [label, track, num] = el.children;
+  return { el, dot: label.children[0].children[0], ty: label.children[0].children[1], task: label.children[1], label,
+    track, bar: track.children[0], beat: null, st: num.children[0], n: num.children[1] };
+}
 function renderGantt() {
   const s = current;
   if (!s) return;
-  const now = Date.now();
-  $('stTime').textContent = `${Math.max(0, Math.round((now - s.startedAt) / 60000))} min`;
   const st = sessionStatus(s);
-  const live = (a) => (a.id === 'main' ? st === 'working' || st === 'waiting' : ['running', 'working'].includes(agentStatus(a, s)));
-  const endOf = (a) => (live(a) ? now : a.endedAt || now); // a live bar reaches "now" whatever endedAt says
+  const live = (a) => (a.id === 'main' ? st === 'working' || st === 'waiting' : isLive(agentStatus(a, s)));
+  const anyLive = s.agents.some(live);
+  // When nothing runs, "now" stops at the last activity: the bars stand still and an idle page does no work.
+  const now = anyLive ? Date.now() : Math.max(s.lastAt, ...s.agents.map((a) => a.endedAt || 0));
+  const endOf = (a) => (live(a) ? now : Math.min(a.endedAt || now, now));
   // Zoom to the subagents: from their earliest start (the session start if there are none) with 10 % padding,
   // never more than 15 min back, never narrower than 60 s.
   const subs = s.agents.filter((a) => a.id !== 'main');
   const first = subs.length ? Math.min(...subs.map((a) => a.startedAt)) : s.startedAt;
   const from = Math.min(Math.max(first - (now - first) * 0.1, now - WINDOW_MS), now - 60_000);
   const span = Math.max(1, now - from);
-  const rows = s.agents
-    .filter((a) => a.id === 'main' || endOf(a) >= from)
-    .map((a) => {
-      const start = Math.max(a.startedAt, from);
-      const end = Math.max(start, endOf(a));
-      const left = ((start - from) / span) * 100;
-      const width = ((end - start) / span) * 100;
-      const ast = a.id === 'main' ? st : agentStatus(a, s);
-      const hasTokens = a.tokens && (a.tokens.input || a.tokens.output || a.tokens.cacheRead || a.tokens.cacheWrite);
-      const tk = hasTokens ? `${fmtK(a.tokens.input + a.tokens.cacheRead + a.tokens.cacheWrite)}/${fmtK(a.tokens.output)}` : '';
-      const sub = T.agentStats((a.id === 'main' ? T.status[ast] : T.agentStatus[ast]) || ast, a.actions, tk);
-      const tip = (a.description || a.label) + (a.tokens ? '\n' + tokensTip(a.tokens) : '');
-      return `<div class="grow">
-        <div class="glabel" title="${esc(tip)}">${a.id === 'main' ? '<b>Claude</b>' : '<span class="branch"></span>' + esc(a.label)}<small>${esc(sub)}</small></div>
-        <div class="gtrack"><div class="gbar ${esc(ast)}" style="left:${left}%;width:${Math.min(width, 100 - left)}%" title="${esc(tip)}"></div></div>
-      </div>`;
-    });
+  const list = $('gantt');
+  const seen = new Set();
+  let prev = null;
+  for (const a of s.agents) {
+    if (a.id !== 'main' && endOf(a) < from) continue;
+    let r = ganttRows.get(a.id);
+    if (!r) { r = ganttRow(); ganttRows.set(a.id, r); }
+    seen.add(a.id);
+    const ast = a.id === 'main' ? st : agentStatus(a, s);
+    const isMain = a.id === 'main';
+    setClass(r.dot, 'dot ' + ast);
+    setText(r.ty, isMain ? 'Claude' : a.type || a.label);
+    setText(r.task, isMain ? T.mainSession : a.description || a.label);
+    setText(r.st, isMain ? T.status[ast] || ast : T.agentWord[ast] || ast);
+    setText(r.n, T.actionsN(a.actions));
+    const tip = (a.description || a.label) + (a.tokens && (a.tokens.input || a.tokens.output) ? '\n' + tokensTip(a.tokens) : '');
+    if (r.label.title !== tip) r.label.title = tip;
+    const start = Math.max(a.startedAt, from);
+    const end = Math.max(start, endOf(a));
+    const left = ((start - from) / span) * 100;
+    const right = 100 - Math.max(left + 0.6, Math.min(100, ((end - from) / span) * 100)); // at least a sliver
+    setClass(r.bar, 'gbar ' + ast);
+    const clip = `inset(0 ${right.toFixed(2)}% 0 ${left.toFixed(2)}% round 4px)`;
+    if (r.bar._clip !== clip) { r.bar._clip = clip; r.bar.style.clipPath = clip; }
+    // One small beat at the leading edge of a live bar; removed when it stops.
+    if (live(a) && !r.beat) { r.beat = document.createElement('span'); r.beat.className = 'gbeat'; r.track.appendChild(r.beat); }
+    if (!live(a) && r.beat) { r.beat.remove(); r.beat = null; }
+    if (r.beat) { const pos = `${(100 - right).toFixed(2)}%`; if (r.beat._l !== pos) { r.beat._l = pos; r.beat.style.left = pos; } }
+    const want = prev ? prev.nextSibling : list.firstChild;
+    if (r.el !== want) list.insertBefore(r.el, want);
+    prev = r.el;
+  }
+  for (const [id, r] of ganttRows) if (!seen.has(id)) { r.el.remove(); ganttRows.delete(id); }
   const mins = Math.round(span / 60000);
-  $('gantt').innerHTML = rows.join('') +
-    `<div class="gaxis"><div></div><div><span>${mins > 0 ? T.minAgo(mins) : T.start}</span><span>${T.now}</span></div></div>`;
-  // The pulse needs room: only bars wider than 24 px get it.
-  for (const bar of $('gantt').querySelectorAll('.gbar')) if (bar.getBoundingClientRect().width > 24) bar.classList.add('pulse');
+  setText($('ganttFrom'), mins > 0 ? T.minAgo(mins) : T.start);
+  setText($('ganttNow'), anyLive ? T.now : hhmm(now));
 }
 
+// ---------- activity feed: rows keyed by event number; new ones are added, old ones dropped ----------
+const feedRows = new Map(); // seq -> li
+let feedSig = '';
+const PATHY = new Set(['read', 'edit', 'command', 'web', 'mcp', 'tool']);
+function feedRow(e, s, byId) {
+  // Agents by type in the feed (the timeline shows their task); the full label is on hover.
+  const who = (id) => (id === 'user' ? T.you : id === 'system' ? T.system : id === 'main' ? 'Claude' : byId[id]?.type || byId[id]?.label || id);
+  const full = (id) => byId[id]?.label || '';
+  const fn = T.text[e.kind];
+  const text = e.kind === 'agent_start' ? fn(who(e.target), e.detail) : e.kind === 'agent_done' ? fn(who(e.actor)) : fn ? fn(e.detail, e.actor, e.tool, e) : e.detail;
+  const label = e.tool && !['read', 'edit', 'error', 'mcp'].includes(e.kind) ? toolName(e.tool) : T.kind[e.kind] || e.kind;
+  const body = PATHY.has(e.kind) && !fn ? `<code>${esc(text)}</code>` : esc(text);
+  const li = document.createElement('li');
+  li.className = e.kind;
+  li.innerHTML = `<span class="t">${hhmmss(e.ts)}</span><span class="k ${esc(e.kind)}">${esc(label)}</span>` +
+    `<span class="x">${e.kind !== 'agent_done' ? `<span class="who" title="${esc(full(e.actor))}">${esc(who(e.actor))}</span>` : ''}${body}</span>`;
+  li._time = li.firstChild;
+  return li;
+}
 function renderFeed(s) {
   const byId = agentMap(s);
-  const who = (id) => (id === 'user' ? T.you : id === 'system' ? T.system : id === 'main' ? 'Claude' : byId[id]?.label || id);
-  const text = (e) => {
-    const fn = T.text[e.kind];
-    if (e.kind === 'agent_start') return fn(who(e.target), e.detail);
-    if (e.kind === 'agent_done') return fn(who(e.actor));
-    return fn ? fn(e.detail, e.actor, e.tool, e) : e.detail;
-  };
-  const events = s.events.filter((e) => showThinks || e.kind !== 'thinks').reverse();
-  const fresh = Math.max(0, s.events.length - lastEventCount);
-  lastEventCount = s.events.length;
-  $('feed').innerHTML = events.slice(0, 150).map((e, i) => {
-    const label = e.tool && !['read', 'edit', 'error', 'mcp'].includes(e.kind) ? e.tool : T.kind[e.kind] || e.kind;
-    const showWho = e.kind !== 'agent_done';
-    return `<li class="${esc(e.kind)}${i < fresh && fresh < 20 ? ' new' : ''}">
-      <span class="t">${hhmm(e.ts)}</span>
-      <span class="k ${esc(e.kind)}">${esc(label)}</span>
-      <span class="x">${showWho ? `<span class="who">${esc(who(e.actor))}</span>` : ''}${esc(text(e))}</span>
-    </li>`;
-  }).join('');
+  // Row text depends on the language, the thinking toggle and agent names: when one changes, rebuild once.
+  const sig = `${s.id}|${lang}|${showThinks}|${s.agents.map((a) => a.id + ':' + a.label).join(',')}`;
+  const list = $('feed');
+  if (sig !== feedSig) { feedSig = sig; feedRows.clear(); list.textContent = ''; }
+  const events = [];
+  for (let i = s.events.length - 1; i >= 0 && events.length < FEED_MAX; i--) {
+    const e = s.events[i];
+    if (showThinks || e.kind !== 'thinks') events.push(e);
+  }
+  const fresh = list.firstChild !== null; // rows added after the first render fade in
+  let added = 0;
+  const keep = new Set();
+  let node = list.firstChild;
+  let prevTime = null;
+  for (const e of events) {
+    const key = e.seq ?? `${e.ts}|${e.kind}|${e.actor}|${e.detail}`;
+    keep.add(key);
+    let li = feedRows.get(key);
+    if (!li) {
+      li = feedRow(e, s, byId);
+      if (fresh && added++ < 20) li.classList.add('new');
+      feedRows.set(key, li);
+    }
+    if (li !== node) list.insertBefore(li, node); else node = node.nextSibling;
+    // A time is printed only when it changes from the row above.
+    const time = li._time.textContent;
+    setClass(li._time, time === prevTime ? 't same' : 't');
+    prevTime = time;
+  }
+  for (const [key, li] of feedRows) if (!keep.has(key)) { li.remove(); feedRows.delete(key); }
 }
 
+// ---------- right rail: rewritten only when its HTML changes ----------
+const WARN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>';
 function renderSide(s) {
   const byId = agentMap(s);
-  const name = (id) => (id === 'main' ? 'Claude' : byId[id]?.label || id);
-  const alerts = s.alerts.slice().reverse();
-  $('noAlerts').hidden = alerts.length > 0;
-  $('alerts').innerHTML = alerts.map((a) =>
-    `<li><b>${esc(T.alertKind[a.kind] || a.kind)}</b>${esc(T.conflict(name(a.a), name(a.b), a.file))}</li>`).join('');
+  const name = (id) => (id === 'main' ? 'Claude' : byId[id]?.type || byId[id]?.label || id);
+  // The same two agents on the same file make one row with a count; newest first.
+  const groups = new Map();
+  for (const a of s.alerts) {
+    const pair = [name(a.a), name(a.b)];
+    const key = `${a.kind}|${a.file}|${[a.a, a.b].sort().join('|')}`;
+    const g = groups.get(key) || { ...a, pair, n: 0, last: 0 };
+    g.n++;
+    g.last = Math.max(g.last, a.ts);
+    groups.set(key, g);
+  }
+  const all = [...groups.values()].sort((x, y) => y.last - x.last);
+  const shown = alertsOpen ? all : all.slice(0, ALERTS_SHOWN);
+  patchHTML($('alerts'), shown.map((g) => `<li>${WARN_ICON}<div><b>${esc(T.conflictTitle)}</b>${g.n > 1 ? `<span class="count">×${g.n}</span>` : ''}` +
+    `<code>${esc(g.file)}</code><small>${esc(T.conflictWho(g.pair[0], g.pair[1], hhmm(g.last)))}</small></div></li>`).join(''));
+  setHidden($('noAlerts'), all.length > 0);
+  setHidden($('alertCount'), !all.length);
+  setText($('alertCount'), all.length);
+  setHidden($('alertsMore'), all.length <= ALERTS_SHOWN);
+  setText($('alertsMore'), alertsOpen ? T.showFewer : T.showAll(all.length));
 
   const files = s.files.slice().sort((a, b) => (b.edits * 3 + b.reads) - (a.edits * 3 + a.reads)).slice(0, 8);
   const max = Math.max(1, ...files.map((f) => f.reads + f.edits));
-  $('files').innerHTML = files.map((f) => `<li title="${esc(f.path)}">
-      <span class="fname">${esc(f.path.split(/[\\/]/).pop())}</span>
-      <span class="fnum">${T.fileStats(f.reads, f.edits)}</span>
-      <span class="fbar"><i class="r" style="width:${(f.reads / max) * 100}%"></i><i class="e" style="width:${(f.edits / max) * 100}%"></i></span>
-    </li>`).join('') || `<li class="empty">${T.nothingYet}</li>`;
+  patchHTML($('files'), files.map((f) => `<li title="${esc(f.path)}"><span class="fn">${esc(f.path.split(/[\\/]/).pop())}</span>` +
+    `<span class="fc">${esc(T.fileStats(f.reads, f.edits))}</span><span class="fbar"><i class="r" style="width:${((f.reads / max) * 100).toFixed(1)}%"></i>` +
+    `<i class="e" style="width:${((f.edits / max) * 100).toFixed(1)}%"></i></span></li>`).join('') || `<li class="empty">${esc(T.nothingYet)}</li>`);
 
   const tools = s.tools.slice().sort((a, b) => b.count - a.count).slice(0, 10);
-  $('tools').innerHTML = tools.map((t) => `<tr>
-      <td title="${esc(t.name)}">${esc(toolName(t.name))}</td><td>${t.count}</td>
-      <td class="${t.errors ? 'err' : ''}">${t.errors}</td>
-      <td>${t.timed ? fmtMs(t.totalMs / t.timed) : '—'}</td></tr>`).join('');
+  patchHTML($('tools'), tools.map((t) => `<tr><td title="${esc(t.name)}">${esc(toolName(t.name))}</td><td>${t.count}</td>` +
+    `<td class="${t.errors ? 'err' : ''}">${t.errors}</td><td>${t.timed ? fmtMs(t.totalMs / t.timed) : '—'}</td></tr>`).join(''));
 }
+$('alertsMore').addEventListener('click', () => { alertsOpen = !alertsOpen; if (current) renderSide(current); });
 
-// Refresh bars and relative times every second without waiting for events.
-setInterval(() => { renderGantt(); renderSessions(); if (current) renderStatus(current); }, 1000);
+applyTheme();
 applyStatic();
+startTick();
 connect();

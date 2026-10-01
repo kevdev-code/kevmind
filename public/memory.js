@@ -1,5 +1,7 @@
 // Memory tab: what Claude Code and Serena remember about a project, problems first. Read-only: the one action
-// is copying a fix prompt to paste into Claude Code. Loaded after app.js and uses its helpers ($, esc, T, fmtK).
+// is copying a fix prompt to paste into Claude Code. Loaded after app.js and uses its helpers ($, esc, T, fmtK,
+// patchHTML, setText, wakeLive). Sections are rewritten only when their HTML changes, and polling stops while
+// the tab is hidden.
 const VIEW_KEY = 'kevmind.view';
 const MEM_POLL_MS = 15_000;
 let view = 'live';
@@ -24,12 +26,19 @@ function setView(next) {
   document.body.classList.toggle('view-memory', view === 'memory');
   $('memoryView').hidden = view !== 'memory';
   document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
-  clearInterval(memTimer);
-  if (view === 'memory') {
-    loadMemory();
-    memTimer = setInterval(loadMemory, MEM_POLL_MS);
-  }
+  pollMemory();
+  if (view === 'live') wakeLive();
 }
+
+// Poll only while the Memory view is shown and the tab is visible.
+function pollMemory() {
+  clearInterval(memTimer);
+  memTimer = null;
+  if (view !== 'memory' || document.hidden) return;
+  loadMemory();
+  memTimer = setInterval(loadMemory, MEM_POLL_MS);
+}
+document.addEventListener('visibilitychange', pollMemory);
 
 async function loadMemory() {
   try {
@@ -70,8 +79,8 @@ function selectMemProject(key) {
 
 for (const id of ['memProjectList', 'memOtherList']) {
   $(id).addEventListener('click', (e) => {
-    const li = e.target.closest('li[data-key]');
-    if (li) selectMemProject(li.dataset.key);
+    const b = e.target.closest('button[data-key]');
+    if (b) selectMemProject(b.dataset.key);
   });
 }
 
@@ -83,26 +92,27 @@ const fileName = (p) => String(p || '').split('/').pop();
 
 function renderMemoryView() {
   if (view !== 'memory') return;
-  const row = (p) => `<li data-key="${esc(p.key)}" class="${p.key === memKey ? 'sel' : ''}" title="${esc(p.root)}"><span class="sname">${esc(p.name)}</span><span class="smeta">${esc(p.root)}</span></li>`;
+  const row = (p) => `<li><button type="button" data-key="${esc(p.key)}" aria-current="${p.key === memKey}" title="${esc(p.root)}">` +
+    `<span class="name">${esc(p.name)}</span><span class="meta">${esc(p.root)}</span></button></li>`;
   const mine = memProjects.filter((p) => p.source === 'session');
   const others = memProjects.filter((p) => p.source !== 'session');
-  $('memProjectList').innerHTML = mine.map(row).join('');
-  $('memOtherList').innerHTML = others.map(row).join('');
+  patchHTML($('memProjectList'), mine.map(row).join(''));
+  patchHTML($('memOtherList'), others.map(row).join(''));
   $('memOtherWrap').hidden = !others.length;
-  $('memOtherCount').textContent = others.length ? `(${others.length})` : '';
+  setText($('memOtherCount'), others.length ? `(${others.length})` : '');
   if (others.some((p) => p.key === memKey)) $('memOtherWrap').open = true;
   $('memNoProjects').hidden = memProjects.length > 0;
 
   const r = memReport;
   const p = memProjects.find((x) => x.key === memKey);
-  $('memName').textContent = p ? p.name : '—';
-  $('memRoot').textContent = p ? p.root : '';
-  $('memUpdated').textContent = memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hourCycle: 'h23' })) : p ? T.memLoading : '';
+  setText($('memName'), p ? p.name : '—');
+  setText($('memRoot'), p ? p.root : '');
+  setText($('memUpdated'), memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })) : p ? T.memLoading : '');
   renderExperience(memExp);
   if (!r) {
-    for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) $(id).innerHTML = '';
-    $('memClaudeDir').textContent = '';
-    $('memSerenaDir').textContent = '';
+    for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) patchHTML($(id), '');
+    setText($('memClaudeDir'), '');
+    setText($('memSerenaDir'), '');
     return;
   }
   renderBudget(r);
@@ -112,40 +122,36 @@ function renderMemoryView() {
 
 function renderBudget(r) {
   const total = r.startup.total || 1;
-  const seg = (part) => `<i class="b-${esc(part.label)}" style="width:${(part.tokens / total) * 100}%" title="${esc(T.memPart[part.label])}: ${esc(estTok(part.tokens))}"></i>`;
-  $('memBudget').innerHTML = `
-    <div class="budget-head"><b>${esc(T.memStartup)}</b> <span>${esc(estTok(r.startup.total))}</span>
+  const seg = (part) => `<i class="b-${esc(part.label)}" style="width:${((part.tokens / total) * 100).toFixed(2)}%" title="${esc(T.memPart[part.label])}: ${esc(estTok(part.tokens))}"></i>`;
+  patchHTML($('memBudget'), `
+    <div class="budget-line"><b>${esc(T.memStartup)}</b> <span>${esc(estTok(r.startup.total))}</span>
       <small>${esc(r.startup.observed ? T.memObserved : T.memInferred)}</small></div>
-    <div class="budget-bar">${r.startup.parts.filter((x) => x.tokens > 0).map(seg).join('')}</div>
-    <div class="budget-legend">${r.startup.parts.map((x) => `<span><i class="b-${esc(x.label)}"></i>${esc(T.memPart[x.label])} ${esc(fmtK(x.tokens))}</span>`).join('')}</div>`;
+    <div class="bar">${r.startup.parts.filter((x) => x.tokens > 0).map(seg).join('')}</div>
+    <div class="legend">${r.startup.parts.map((x) => `<span><i class="b-${esc(x.label)}"></i>${esc(T.memPart[x.label])} ${esc(fmtK(x.tokens))}</span>`).join('')}</div>`);
 }
 
 const SHARED = new Set(['inherits', 'nested_project']);
+const TIERS = ['problem', 'warning', 'suggestion'];
 
+// One row of counts, then only the issues that exist, worst first. Nothing found says so once.
 function renderProblems(r) {
-  const tiers = ['problem', 'warning', 'suggestion'];
-  // Files shared with another project: one line each, with a way to go where their issues are listed.
-  const shared = r.problems.filter((p) => SHARED.has(p.code)).map((p) => `<li class="mem-shared">
-      <span>${esc(T.memInfo[p.code]({ ...p.params, file: p.file }))}</span>
+  const shared = r.problems.filter((p) => SHARED.has(p.code)).map((p) => `<li class="shared">
+      <span class="txt">${esc(T.memInfo[p.code]({ ...p.params, file: p.file }))}</span>
       <button type="button" class="link" data-goto="${esc(p.params.key)}">${esc(T.memSee(p.params.project))}</button>
     </li>`).join('');
-  const info = r.problems.filter((p) => p.tier === 'info' && !SHARED.has(p.code));
-  const html = tiers.map((tier) => {
-    const list = r.problems.map((p, i) => ({ p, i })).filter(({ p }) => p.tier === tier);
-    const notes = tier === 'suggestion' ? info.map((p) => `<li class="mem-info">${esc(T.memInfo[p.code]?.(p.params) || p.code)}</li>`).join('') : '';
-    const rows = list.map(({ p, i }) => `<li class="mem-issue ${tier}">
-        <div class="mem-issue-text">${esc(T.memProblem[p.code]?.(p.params) || p.code)}<small>${esc(p.file || '')}</small>${pathList(p)}</div>
-        ${p.fix ? `<button type="button" class="copy-fix" data-fix="${i}">${esc(T.memCopyFix)}</button>` : ''}
-      </li>`).join('');
-    return `<section class="mem-group">
-      <h3 class="tier ${tier}">${esc(T.memTier[tier])} <small>${list.length}</small></h3>
-      <ul>${rows || `<li class="mem-none">${esc(T.memNoneTier)}</li>`}${notes}</ul>
-    </section>`;
-  }).join('');
-  const actionable = r.problems.filter((p) => p.tier === 'problem' || p.tier === 'warning').length;
-  const all = actionable ? `<div class="mem-fix-all"><button type="button" class="copy-fix" data-fix-all>${esc(T.memCopyAll)}</button>
+  const notes = r.problems.filter((p) => p.tier === 'info' && !SHARED.has(p.code))
+    .map((p) => `<li class="note">${esc(T.memInfo[p.code]?.(p.params) || p.code)}</li>`).join('');
+  const counts = Object.fromEntries(TIERS.map((t) => [t, r.problems.filter((p) => p.tier === t).length]));
+  const tallies = `<div class="tallies">${TIERS.map((t) => `<span class="tally"><span class="dot ${t === 'problem' ? 'error' : t === 'warning' ? 'waiting' : 'suggestion'}"></span><b>${counts[t]}</b> ${esc(T.memTally[t](counts[t]))}</span>`).join('')}</div>`;
+  const rows = TIERS.flatMap((tier) => r.problems.map((p, i) => ({ p, i })).filter(({ p }) => p.tier === tier).map(({ p, i }) => `<li class="${tier}">
+      <div class="txt">${esc(T.memProblem[p.code]?.(p.params) || p.code)}<small>${esc(p.file || '')}</small>${pathList(p)}</div>
+      ${p.fix ? `<button type="button" class="btn" data-fix="${i}">${esc(T.memCopyFix)}</button>` : ''}
+    </li>`)).join('');
+  const actionable = counts.problem + counts.warning;
+  const all = actionable ? `<div class="fix-all"><button type="button" class="btn" data-fix-all>${esc(T.memCopyAll)}</button>
     <small>${esc(T.memCopyAllHint(actionable))}</small></div>` : '';
-  $('memProblems').innerHTML = all + (shared ? `<ul class="mem-shared-list">${shared}</ul>` : '') + html;
+  const calm = !rows ? `<p class="calm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>${esc(T.memAllClear)}</p>` : '';
+  patchHTML($('memProblems'), tallies + calm + all + `<ul class="issues">${shared}${rows}${notes}</ul>`);
 }
 
 // Every path behind a "missing" or "moved" row, with the lines it is cited on, so each can be checked.
@@ -153,7 +159,7 @@ function pathList(p) {
   const items = p.params?.items;
   if (!items?.length) return '';
   const key = `${p.code}|${p.file}`;
-  return `<details class="mem-paths" data-key="${esc(key)}"${memPathsOpen.has(key) ? ' open' : ''}>
+  return `<details class="paths" data-key="${esc(key)}"${memPathsOpen.has(key) ? ' open' : ''}>
     <summary>${esc(T.memShowPaths(items.length))}</summary>
     <ul>${items.map((it) => `<li><code>${esc(it.path)}</code> <span class="muted">${esc(T.memLines(it.lines))}</span>${
       it.to?.length ? ` <span class="moved">${esc(T.memMaybe)} ${it.to.map((t) => `<code>${esc(t)}</code>`).join(' · ')}</span>` : ''}</li>`).join('')}</ul>
@@ -161,7 +167,7 @@ function pathList(p) {
 }
 
 $('memProblems').addEventListener('toggle', (e) => {
-  const d = e.target.closest?.('details.mem-paths');
+  const d = e.target.closest?.('details.paths');
   if (!d) return;
   if (d.open) memPathsOpen.add(d.dataset.key); else memPathsOpen.delete(d.dataset.key);
 }, true);
@@ -223,7 +229,7 @@ function renderTables(r) {
   const count = (file) => issues.get(file) ? `<span class="issue-count">${issues.get(file)}</span>` : '';
 
   // Instructions
-  $('memInstructions').innerHTML = r.instructions.length ? table(
+  patchHTML($('memInstructions'), r.instructions.length ? table(
     [T.memCol.file, T.memCol.scope, T.memCol.loads, T.memCol.lines, T.memCol.tokens, T.memCol.observed, T.memCol.issues],
     r.instructions.map((i) => ({
       id: 'i:' + i.display,
@@ -232,13 +238,13 @@ function renderTables(r) {
         i.observed ? T.memYes : '—', count(i.display)],
       detail: () => citesHtml(i.cites),
     })),
-  ) : `<p class="empty small">${esc(T.memNone)}</p>`;
+  ) : `<p class="empty">${esc(T.memNone)}</p>`);
 
   // Claude memory
   const m = r.memory;
-  $('memClaudeDir').textContent = m.display;
+  setText($('memClaudeDir'), m.display);
   const idx = m.index ? `<p class="mem-index"><code>MEMORY.md</code> ${esc(T.memIndexStats(m.index.lines, fmtK(m.index.tokens), m.index.entries))}${m.index.truncated ? ` <b class="warn">${esc(T.memTruncated)}</b>` : ''}</p>` : '';
-  $('memNotes').innerHTML = !m.exists ? `<p class="empty small">${esc(T.memNoAutoMemory)}</p>` : idx + table(
+  patchHTML($('memNotes'), !m.exists ? `<p class="empty">${esc(T.memNoAutoMemory)}</p>` : idx + table(
     [T.memCol.note, T.memCol.type, T.memCol.tokens, T.memCol.modified, T.memCol.links, T.memCol.lastRead, T.memCol.issues],
     m.notes.slice().sort((a, b) => (issues.get(b.display) || 0) - (issues.get(a.display) || 0) || a.title.localeCompare(b.title)).map((n) => ({
       id: 'm:' + n.display,
@@ -247,47 +253,47 @@ function renderTables(r) {
         `${n.linksIn.length} / ${n.linksOut.length}`, n.lastRead ? esc(T.ago(secondsSince(n.lastRead))) : '—', count(n.display)],
       detail: () => noteDetail(n),
     })),
-  );
+  ));
 
   // Serena
   const s = r.serena;
-  $('memSerenaDir').textContent = s.exists ? s.display : '';
-  $('memSerena').innerHTML = !s.notes.length ? `<p class="empty small">${esc(T.memNoSerena)}</p>` : table(
+  setText($('memSerenaDir'), s.exists ? s.display : '');
+  patchHTML($('memSerena'), !s.notes.length ? `<p class="empty">${esc(T.memNoSerena)}</p>` : table(
     [T.memCol.note, T.memCol.tokens, T.memCol.modified, T.memCol.links, T.memCol.issues],
     s.notes.map((n) => ({
       id: 's:' + n.display,
       cells: [esc(n.name), esc(fmtK(n.tokens)), esc(dateOf(n.modified)), `${n.linksIn.length} / ${n.linksOut.length}`, count(n.display)],
       detail: () => noteDetail(n),
     })),
-  );
+  ));
 }
 
 // What the experience tools would tell Claude about this project today, and whether calls help. Shown whether
 // or not the tools are on, so it's clear when turning them on is worth it.
 function renderExperience(x) {
   const el = $('memExperience');
-  if (!x) { el.innerHTML = ''; return; }
+  if (!x) { patchHTML(el, ''); return; }
   const t = x.tools || { on: false, source: 'default' };
   const toggle = `<div class="exp-switch">
-      <label><input type="checkbox" id="expToggle"${t.on ? ' checked' : ''}> <b>${esc(T.expToggle)}</b></label>
+      <button type="button" class="switch" role="switch" id="expToggle" aria-checked="${!!t.on}"><span class="knob"></span>${esc(T.expToggle)}</button>
       <span class="muted">${esc(T.expSource[t.source] || '')} · ${esc(T.expNextSession)}</span>
-      ${expToggleError ? `<span class="exp-err">${esc(T.expToggleError(expToggleError))}</span>` : ''}
+      ${expToggleError ? `<span class="err">${esc(T.expToggleError(expToggleError))}</span>` : ''}
     </div>`;
-  if (!x.known) { el.innerHTML = `${toggle}<p class="empty small">${esc(T.expUnknown)}</p>`; return; }
+  if (!x.known) { patchHTML(el, `${toggle}<p class="empty">${esc(T.expUnknown)}</p>`); return; }
   const { gate, coChange, readFirst, failures, hotspots } = x.preview;
   const th = x.thresholds;
   const m = x.measure;
-  const ok = (b) => `<b class="${b ? 'ok' : 'off'}">${esc(b ? T.expMet : T.expNotYet)}</b>`;
-  const list = (items, fn) => (items.length ? `<ul class="exp-list">${items.map((i) => `<li>${fn(i)}</li>`).join('')}</ul>` : `<p class="empty small">${esc(T.expNone)}</p>`);
+  const dot = (ok) => `<span class="dot ${ok ? 'working' : 'waiting'}" title="${esc(ok ? T.expMet : T.expNotYet)}"></span><span class="sr">${esc(ok ? T.expMet : T.expNotYet)}: </span>`;
+  const list = (items, fn) => (items.length ? `<ul class="exp-list">${items.map((i) => `<li>${fn(i)}</li>`).join('')}</ul>` : `<p class="none">${esc(T.expNone)}</p>`);
   const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
-  el.innerHTML = `${toggle}
-    <div class="exp-gate">
-      <div>${esc(T.expEpisodes(gate.episodes, gate.days))} ${ok(x.preview.episodePairs > 0)}</div>
-      ${x.preview.episodePairs ? '' : `<div class="muted">${esc(x.preview.nearest
-        ? T.expNearest(x.preview.nearest.a, x.preview.nearest.b, x.preview.nearest.n, x.preview.nearest.days, th.coEditEpisodes, th.minDays)
-        : T.expNoEpisodes(th.coEditEpisodes, th.minDays))}</div>`}
-      <div>${esc(T.expCommits(gate.commits, th.minGitCommits))} ${ok(gate.gitOk)}</div>
-      <p class="muted">${esc(T.expHowTo)}</p>
+  const why = x.preview.episodePairs ? '' : x.preview.nearest
+    ? T.expNearest(x.preview.nearest.a, x.preview.nearest.b, x.preview.nearest.n, x.preview.nearest.days, th.coEditEpisodes, th.minDays)
+    : T.expNoEpisodes(th.coEditEpisodes, th.minDays);
+  patchHTML(el, `${toggle}
+    <div class="gate">
+      <div>${dot(x.preview.episodePairs > 0)}<span>${esc(T.expEpisodes(gate.episodes, gate.days))}<span class="why">${esc(T.expEpisodeHint)}${why ? ' ' + esc(why) : ''}</span></span></div>
+      <div>${dot(gate.gitOk)}<span>${esc(T.expCommits(gate.commits, th.minGitCommits))}</span></div>
+      <span class="why" style="padding-left:0">${esc(T.expHowTo)}</span>
     </div>
     <h3 class="exp-h">${esc(T.expWouldServe)}</h3>
     <div class="exp-grid">
@@ -297,23 +303,25 @@ function renderExperience(x) {
       <section><h4>${esc(T.expHotspots)}</h4>${list(hotspots, (h) => `<code>${esc(h.file)}</code><small>${esc(T.expHot(h.changes, h.fixes))}</small>`)}</section>
     </div>
     <h3 class="exp-h">${esc(T.expUse)}</h3>
-    <div class="stats exp-stats">
+    <div class="stats">
       <div><b>${m.calls}</b><span>${esc(T.expCalls)}</span></div>
       <div><b>${esc(fmtK(m.tokens))}</b><span>${esc(T.expTokens)}</span></div>
       <div><b>${m.calls ? pct(m.noData / m.calls) : '—'}</b><span>${esc(T.expNoData)}</span></div>
       <div><b>${pct(m.followRate)}</b><span>${esc(T.expFollow(m.withSuggestions))}</span></div>
       <div><b>${pct(m.baseline)}</b><span>${esc(T.expBaseline(m.baselineSample))}</span></div>
     </div>
-    <p class="muted">${esc(T.expVerdict[m.verdict])}</p>
+    <p class="verdict">${esc(T.expVerdict[m.verdict])}</p>
     ${m.last.length ? `<ul class="exp-list">${m.last.map((c) => `<li><code>${esc(c.tool)}</code> ${esc(new Date(c.ts).toLocaleString(lang))} · ≈ ${c.tokens} tok${c.noData ? ` · ${esc(T.expNoDataShort)}` : ''}${
-      c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`;
+      c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`);
 }
 
 // The on/off switch writes KevMind's own ~/.kevmind/config.json through the server (not Claude's settings).
-$('memExperience').addEventListener('change', async (e) => {
-  if (e.target.id !== 'expToggle') return;
+$('memExperience').addEventListener('click', async (e) => {
+  const sw = e.target.closest('#expToggle');
+  if (!sw) return;
+  const on = sw.getAttribute('aria-checked') !== 'true';
   try {
-    const r = await fetch('/api/tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: e.target.checked }) });
+    const r = await fetch('/api/tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on }) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     if (memExp) memExp.tools = await r.json();
     expToggleError = null;
@@ -321,24 +329,33 @@ $('memExperience').addEventListener('change', async (e) => {
     expToggleError = err.message;
   }
   renderExperience(memExp);
+  $('expToggle')?.focus();
 });
 
 // A table whose rows expand to show metadata, headings, links and cited files (never the note's body).
+// Rows are focusable and open with Enter or Space as well as a click.
 function table(head, rows) {
   return `<table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => {
     const open = memOpen.has(row.id);
-    return `<tr class="mem-row${open ? ' open' : ''}" data-row="${esc(row.id)}">${row.cells.map((c) => `<td>${c}</td>`).join('')}</tr>` +
+    return `<tr class="mem-row${open ? ' open' : ''}" data-row="${esc(row.id)}" tabindex="0" aria-expanded="${open}">${row.cells.map((c) => `<td>${c}</td>`).join('')}</tr>` +
       (open ? `<tr class="mem-detail"><td colspan="${head.length}">${row.detail()}</td></tr>` : '');
   }).join('')}</tbody></table>`;
 }
 
+function toggleRow(tr) {
+  const rowId = tr.dataset.row;
+  if (memOpen.has(rowId)) memOpen.delete(rowId); else memOpen.add(rowId);
+  renderTables(memReport);
+  document.querySelector(`tr[data-row="${CSS.escape(rowId)}"]`)?.focus();
+}
 for (const id of ['memInstructions', 'memNotes', 'memSerena']) {
   $(id).addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-row]');
-    if (!tr) return;
-    const rowId = tr.dataset.row;
-    if (memOpen.has(rowId)) memOpen.delete(rowId); else memOpen.add(rowId);
-    renderTables(memReport);
+    if (tr) toggleRow(tr);
+  });
+  $(id).addEventListener('keydown', (e) => {
+    const tr = e.target.closest?.('tr[data-row]');
+    if (tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleRow(tr); }
   });
 }
 
@@ -362,5 +379,5 @@ function citesHtml(cites) {
   }</tbody></table>`;
 }
 
-if (focus) document.querySelector('.views').hidden = true;
+if (focus) $('viewGroup').hidden = true;
 setView(view);

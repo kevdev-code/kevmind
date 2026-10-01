@@ -4,22 +4,30 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KevMind</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%237c6cf0'/><circle cx='11' cy='13' r='3' fill='white'/><circle cx='21' cy='13' r='3' fill='white'/><circle cx='16' cy='21' r='3' fill='white'/></svg>" />
+  <link rel="icon" id="favicon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%237c5cf0'/><circle cx='11' cy='13' r='3' fill='white'/><circle cx='21' cy='13' r='3' fill='white'/><circle cx='16' cy='21' r='3' fill='white'/></svg>" />
+  <script>
+    // The chosen theme before the first paint, so a dark page never flashes light (or the other way round).
+    try { const t = localStorage.getItem('kevmind.theme'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch {}
+  </script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="var(--accent)"/><circle cx="11" cy="13" r="3" fill="#fff"/><circle cx="21" cy="13" r="3" fill="#fff"/><circle cx="16" cy="21" r="3" fill="#fff"/><path d="M11 13L21 13L16 21Z" stroke="#fff" stroke-width="1.2" fill="none"/></svg>
-      <span>KevMind</span>
-      <div class="views" role="group" aria-label="View">
+      <span class="logo"><svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="var(--accent-fill)"/><circle cx="11" cy="13" r="3" fill="#fff"/><circle cx="21" cy="13" r="3" fill="#fff"/><circle cx="16" cy="21" r="3" fill="#fff"/><path d="M11 13L21 13L16 21Z" stroke="#fff" stroke-width="1.2" fill="none"/></svg>KevMind</span>
+      <div class="seg" role="group" id="viewGroup">
         <button type="button" data-view="live" data-i18n="viewLive"></button>
         <button type="button" data-view="memory" data-i18n="viewMemory"></button>
       </div>
     </div>
     <div class="top-right">
-      <div class="conn" id="conn"><span class="dot"></span><span id="connText" data-i18n="connecting"></span></div>
-      <div class="lang" role="group" aria-label="Language">
+      <span class="conn" id="conn"><span class="dot"></span><span id="connText" data-i18n="connecting"></span></span>
+      <div class="seg icons" role="group" id="themeGroup">
+        <button type="button" data-theme-set="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
+        <button type="button" data-theme-set="dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+        <button type="button" data-theme-set="light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+      </div>
+      <div class="seg" role="group" id="langGroup">
         <button type="button" data-lang="en">EN</button>
         <button type="button" data-lang="es">ES</button>
       </div>
@@ -27,107 +35,110 @@
   </header>
 
   <main class="layout">
-    <aside class="panel sessions">
-      <h2><span data-i18n="sessions"></span> <small data-i18n="last24h"></small></h2>
-      <select id="projectFilter" class="project-filter"></select>
-      <ul id="sessionList"></ul>
+    <aside class="rail sessions">
+      <h2 class="head"><span data-i18n="sessions"></span> <small data-i18n="last24h"></small></h2>
+      <select id="projectFilter" class="filter"></select>
+      <ul id="sessionList" class="list"></ul>
       <p class="empty" id="noSessions" data-i18n-html="noSessions"></p>
     </aside>
 
     <section class="center">
-      <div class="panel now" id="now">
-        <div class="now-head">
-          <div>
-            <div class="project" id="nowProject">—</div>
-            <div class="muted"><span id="nowCwd"></span><code class="model" id="nowModel" hidden></code><span class="loading" id="nowLoading" data-i18n="loadingHistory" hidden></span></div>
-          </div>
-          <span class="status" id="nowStatus">—</span>
+      <section class="panel now" id="now">
+        <div class="now-top">
+          <span class="status" id="nowStatus"><span class="dot" id="nowDot"></span><span id="nowStatusText">—</span></span>
+          <span class="project" id="nowProject">—</span>
+          <span class="loading" id="nowLoading" data-i18n="loadingHistory" hidden></span>
         </div>
+        <div class="ask" id="nowAsk" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          <span id="nowAskText"></span> <span class="muted" id="nowAskAgo"></span>
+        </div>
+        <div class="path"><bdi id="nowPath"></bdi></div>
         <div class="stats">
           <div><b id="stAgents">0</b><span data-i18n="activeAgents"></span></div>
           <div><b id="stActions">0</b><span data-i18n="actions"></span></div>
           <div><b id="stPrompts">0</b><span data-i18n="messages"></span></div>
           <div><b id="stTime">0 min</b><span data-i18n="duration"></span></div>
-          <div><b id="stTokens">—</b><span data-i18n="tokensInOut"></span></div>
-          <div><b id="stCache">—</b><span data-i18n="cacheRW"></span></div>
+          <div><b id="stTokens" class="none">—</b><span data-i18n="tokensInOut"></span></div>
+          <div><b id="stCache" class="none">—</b><span data-i18n="cacheRW"></span></div>
         </div>
-      </div>
+      </section>
 
-      <div class="panel">
-        <h2><span data-i18n="agents"></span> <small data-i18n="agentsSub"></small></h2>
+      <section class="panel">
+        <h2 class="head"><span data-i18n="agents"></span> <small data-i18n="agentsSub"></small></h2>
         <div id="gantt" class="gantt"></div>
-      </div>
+        <div class="gaxis"><div></div><div><span id="ganttFrom"></span><span id="ganttNow"></span></div><div></div></div>
+      </section>
 
-      <div class="panel feed-panel">
-        <h2><span data-i18n="activity"></span> <small data-i18n="live"></small>
-          <label class="toggle"><input type="checkbox" id="showThinks" checked /> <span data-i18n="showThinks"></span></label>
+      <section class="panel feed-panel">
+        <h2 class="head"><span data-i18n="activity"></span> <small data-i18n="live"></small>
+          <label class="end check"><input type="checkbox" id="showThinks" checked /> <span data-i18n="showThinks"></span></label>
         </h2>
         <ol id="feed" class="feed"></ol>
-      </div>
+      </section>
     </section>
 
-    <aside class="right">
-      <div class="panel">
-        <h2 data-i18n="alerts"></h2>
+    <aside class="rail right">
+      <section>
+        <h2 class="head"><span data-i18n="alerts"></span> <span class="count" id="alertCount" hidden></span></h2>
         <ul id="alerts" class="alerts"></ul>
-        <p class="empty small" id="noAlerts" data-i18n="noAlerts"></p>
-      </div>
-      <div class="panel">
-        <h2><span data-i18n="files"></span> <small data-i18n="mostTouched"></small></h2>
+        <p class="calm" id="noAlerts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><span data-i18n="noAlerts"></span></p>
+        <button type="button" class="more" id="alertsMore" hidden></button>
+      </section>
+      <section>
+        <h2 class="head"><span data-i18n="files"></span> <small data-i18n="mostTouched"></small></h2>
         <ul id="files" class="files"></ul>
-      </div>
-      <div class="panel">
-        <h2 data-i18n="tools"></h2>
-        <table class="tools">
+      </section>
+      <section>
+        <h2 class="head" data-i18n="tools"></h2>
+        <table class="tbl">
           <thead><tr><th data-i18n="tool"></th><th data-i18n="uses"></th><th data-i18n="errors"></th><th data-i18n="avg"></th></tr></thead>
           <tbody id="tools"></tbody>
         </table>
-      </div>
+      </section>
     </aside>
   </main>
 
   <!-- Memory tab: read-only report on what Claude Code and Serena remember about a project -->
   <main class="memory-view" id="memoryView" hidden>
-    <aside class="panel mem-projects">
-      <h2 data-i18n="memProjects"></h2>
-      <ul id="memProjectList"></ul>
-      <details id="memOtherWrap" hidden>
+    <aside class="rail">
+      <h2 class="head" data-i18n="memProjects"></h2>
+      <ul id="memProjectList" class="list"></ul>
+      <details id="memOtherWrap" class="other" hidden>
         <summary><span data-i18n="memOther"></span> <small id="memOtherCount"></small></summary>
-        <ul id="memOtherList"></ul>
+        <ul id="memOtherList" class="list"></ul>
       </details>
-      <p class="empty small" id="memNoProjects" data-i18n="memNoProjects" hidden></p>
+      <p class="empty" id="memNoProjects" data-i18n="memNoProjects" hidden></p>
     </aside>
     <section class="mem-main">
-      <div class="panel">
-        <div class="now-head">
-          <div>
-            <div class="project" id="memName">—</div>
-            <div class="muted" id="memRoot"></div>
-          </div>
-          <span class="muted" id="memUpdated"></span>
+      <section class="panel">
+        <div class="now-top">
+          <span class="project" id="memName">—</span>
+          <span class="muted end" id="memUpdated"></span>
         </div>
+        <div class="path"><bdi id="memRoot"></bdi></div>
         <div id="memBudget" class="budget"></div>
-      </div>
-      <div class="panel">
-        <h2 data-i18n="memIssues"></h2>
+      </section>
+      <section class="panel">
+        <h2 class="head" data-i18n="memIssues"></h2>
         <div id="memProblems"></div>
-      </div>
-      <div class="panel">
-        <h2><span data-i18n="expTitle"></span> <small data-i18n="expSub"></small></h2>
+      </section>
+      <section class="panel">
+        <h2 class="head"><span data-i18n="expTitle"></span> <small data-i18n="expSub"></small></h2>
         <div id="memExperience"></div>
-      </div>
-      <div class="panel">
-        <h2 data-i18n="memInstructions"></h2>
+      </section>
+      <section class="panel">
+        <h2 class="head" data-i18n="memInstructions"></h2>
         <div id="memInstructions" class="mem-table"></div>
-      </div>
-      <div class="panel">
-        <h2><span data-i18n="memClaude"></span> <small id="memClaudeDir"></small></h2>
+      </section>
+      <section class="panel">
+        <h2 class="head"><span data-i18n="memClaude"></span> <small id="memClaudeDir"></small></h2>
         <div id="memNotes" class="mem-table"></div>
-      </div>
-      <div class="panel">
-        <h2><span data-i18n="memSerena"></span> <small id="memSerenaDir"></small></h2>
+      </section>
+      <section class="panel">
+        <h2 class="head"><span data-i18n="memSerena"></span> <small id="memSerenaDir"></small></h2>
         <div id="memSerena" class="mem-table"></div>
-      </div>
+      </section>
     </section>
   </main>
 
