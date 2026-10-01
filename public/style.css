@@ -118,6 +118,8 @@ body.view-memory .layout { display: none; }
 .mem-issue-text small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin-top: 2px; }
 .mem-none, .mem-info { color: var(--muted); font-size: 12px; padding: 2px 2px 6px; }
 .mem-shared-list { margin-bottom: 12px; }
+.mem-fix-all { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.mem-fix-all small { color: var(--muted); font-size: 12px; }
 .mem-shared { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--muted); font-size: 13px; padding: 2px 0 4px; overflow-wrap: anywhere; }
 button.link { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .mem-paths { margin-top: 6px; font-size: 12px; }

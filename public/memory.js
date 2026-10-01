@@ -133,7 +133,10 @@ function renderProblems(r) {
       <ul>${rows || `<li class="mem-none">${esc(T.memNoneTier)}</li>`}${notes}</ul>
     </section>`;
   }).join('');
-  $('memProblems').innerHTML = (shared ? `<ul class="mem-shared-list">${shared}</ul>` : '') + html;
+  const actionable = r.problems.filter((p) => p.tier === 'problem' || p.tier === 'warning').length;
+  const all = actionable ? `<div class="mem-fix-all"><button type="button" class="copy-fix" data-fix-all>${esc(T.memCopyAll)}</button>
+    <small>${esc(T.memCopyAllHint(actionable))}</small></div>` : '';
+  $('memProblems').innerHTML = all + (shared ? `<ul class="mem-shared-list">${shared}</ul>` : '') + html;
 }
 
 // Every path behind a "missing" or "moved" row, with the lines it is cited on, so each can be checked.
@@ -154,13 +157,41 @@ $('memProblems').addEventListener('toggle', (e) => {
   if (d.open) memPathsOpen.add(d.dataset.key); else memPathsOpen.delete(d.dataset.key);
 }, true);
 
+const FIX_ALL_INTRO = 'Fix these memory and instruction issues. For each one, check the current code first; if a cited path moved, update it; ' +
+  'if it was deleted on purpose and the note still has value, rewrite the line to say so in past tense; if the note is obsolete, tell me before deleting it.';
+
+// One prompt for every problem and warning of the project (not suggestions), grouped by file. Always English,
+// like the single-row prompts. Rows that list paths become one item per path, with the lines it is cited on.
+function fixAllPrompt(r) {
+  const byFile = new Map();
+  for (const p of r.problems.filter((x) => x.tier === 'problem' || x.tier === 'warning')) {
+    const items = byFile.get(p.file) || [];
+    if (p.code === 'cited_file_missing') {
+      for (const it of p.params.items) {
+        items.push(`- Line${it.lines.length > 1 ? 's' : ''} ${it.lines.join(', ')}: \`${it.path}\` exists nowhere in the workspace (working tree or default branch). Find where it lives now and update the path, or rewrite the passage if the code was removed on purpose.`);
+      }
+    } else {
+      const line = p.params?.line ? `Line ${p.params.line}: ` : '';
+      items.push(`- ${line}${p.fix.replace(/\s*\n\s*/g, ' ')}`);
+    }
+    byFile.set(p.file, items);
+  }
+  const sections = [...byFile].map(([file, items]) => `## ${file}\n${items.join('\n')}`);
+  return `${FIX_ALL_INTRO}\n\nProject root: ${r.root.replace(/\\/g, '/')} (paths starting with ~ are in your home folder).\n\n${sections.join('\n\n')}\n`;
+}
+
 $('memProblems').addEventListener('click', async (e) => {
   const go = e.target.closest('button[data-goto]');
   if (go) { selectMemProject(go.dataset.goto); return; }
+  const all = e.target.closest('button[data-fix-all]');
+  if (all && memReport) { await copyText(all, fixAllPrompt(memReport), T.memCopyAll); return; }
   const b = e.target.closest('button[data-fix]');
   if (!b || !memReport) return;
   const text = memReport.problems[Number(b.dataset.fix)]?.fix;
-  if (!text) return;
+  if (text) await copyText(b, text, T.memCopyFix);
+});
+
+async function copyText(b, text, label) {
   let ok = false;
   try { await navigator.clipboard.writeText(text); ok = true; } catch {
     const ta = document.createElement('textarea'); // older browsers, or a page without clipboard permission
@@ -174,8 +205,8 @@ $('memProblems').addEventListener('click', async (e) => {
   }
   b.textContent = ok ? T.memCopied : T.memCopyFailed;
   b.classList.toggle('done', ok);
-  setTimeout(() => { b.textContent = T.memCopyFix; b.classList.remove('done'); }, 1600);
-});
+  setTimeout(() => { b.textContent = label; b.classList.remove('done'); }, 1600);
+}
 
 function renderTables(r) {
   const issues = new Map();
