@@ -8,7 +8,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 **English** · [Español](README.es.md)
 
-> Status: **MVP (v0.1)**. The live dashboard works. The memory graph and "brain" view come later (see roadmap).
+> Status: **0.4**. The live dashboard, the Memory tab and the optional experience tools for Claude work. An animated "brain" view comes next (see the roadmap).
 
 ## What it shows
 
@@ -183,12 +183,14 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 
 ## Roadmap
 
-- [ ] Tokens and cost per session and per agent (from transcripts).
+- [x] Tokens per session and per agent, from transcripts (no cost estimates: prices change).
+- [x] Memory tab: `CLAUDE.md` files, auto memory and Serena notes, flagging stale, duplicate or broken-link notes.
+- [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
+- [ ] Optional animated "brain" view (next).
 - [ ] Replay a past session step by step.
-- [ ] Memory graph: `CLAUDE.md` and notes, flagging stale, duplicate or broken-link notes.
-- [ ] MCP server so Claude can query its own memory before working.
 - [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
-- [ ] Optional 3D "brain" view.
+
+Current status, decisions and known limitations: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License
 

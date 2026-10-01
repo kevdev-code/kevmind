@@ -1,34 +1,67 @@
 # KevMind
 
-Local dashboard that watches Claude Code work in real time. Hooks POST events to a Node server, which streams them to a plain HTML/CSS/JS page over SSE. The server also tails each active session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, and the exact identity of subagents; the hook payloads are the fallback when no transcript is available.
+Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history.
+
+Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Design system: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
 
 ## Rules
 
-- Code, comments, commit messages and README are in English. The UI is bilingual through `public/i18n.js`: every new UI string needs both `en` and `es`.
-- Zero runtime dependencies. Node 18+. Reach for `node:` built-ins before writing anything.
+- Code, comments, commit messages and README are in English. The UI is bilingual through `public/i18n.js`: every new UI string needs both `en` and `es`, with the same keys in both (Spanish runs longer; check it fits).
+- Zero runtime dependencies. Node 18+. Reach for `node:` built-ins first. Temporary tools for one-off jobs (ffmpeg, etc.) go in a scratch folder, never in `package.json`.
 - Never break Claude Code: `hooks/send.js` must always exit 0 and stay fast, whether or not the server is running.
-- On Windows, stage files by name (`git add <file>`), never `git add -A`. The repo has `core.filemode=true`, so `-A` silently drops the executable bit on `bin/kevmind.js` and `hooks/send.js`.
-- `npm test` runs the regression tests with Node's built-in runner. When you fix a tracking bug, add a replay of the sequence that exposed it (redacted) to `test/`.
-- Transcript data is sensitive: keep only short redacted excerpts, never read thinking signatures or redacted thinking, never copy a transcript into KevMind's data, and never invent cost figures from token counts.
-- The experience tools (`src/experience.js`, `mcp/server.js`) only report history: no code parsing, symbols or indexing, ever, and no writes; git only through `git log`. `test/experience-readonly.test.mjs` enforces it. Every threshold is a named constant in `THRESHOLDS` in `src/experience.js`; nothing below a threshold is served, and answers stay under 400 tokens. The dashboard server owns `~/.kevmind/experience.json` (written atomically); the MCP server only reads it. Event logs are monthly, `events-YYYY-MM.jsonl` (`src/logs.js`). Their on/off switch is KevMind's own `~/.kevmind/config.json` (`src/config.js`), written by `kevmind tools on|off` and the dashboard toggle; it wins over the plugin option, and the MCP server only reads it.
-- The Memory tab (`src/memory.js`) is read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config. `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
+- Everything stays local: the server listens on 127.0.0.1 only, no telemetry, no CDN or web fonts. Never show cost estimates from token counts.
+- Transcript data is sensitive: keep only short redacted excerpts (titles and prompts are cleaned, redacted and capped at 80 chars), never read thinking signatures or redacted thinking, never copy a transcript into KevMind's data.
+- `npm test` runs the regression tests (Node's built-in runner, `test/*.test.mjs`). When you fix a tracking bug, add a replay of the sequence that exposed it (redacted). Pure helpers in `public/app.js` are tested by lifting them from the source (`test/ui-helpers.test.mjs`).
+
+## Data and dates
+
+- Data lives in `~/.kevmind` (or `KEVMIND_HOME`): monthly event logs `events-YYYY-MM.jsonl` (`src/logs.js`, months in UTC), `spool.jsonl` (events sent while the server was down), `experience.json`, `config.json`, `server.log`, `server.pid`.
+- Timestamps are stored as epoch ms. Every date shown to the user or to Claude, and every count of "distinct days", uses the machine's local time zone, never UTC.
+- Per session the server keeps the newest 300 events and 50 alerts; every event gets an increasing `seq`, which the page uses to key feed rows.
+
+## Experience tools (Phase 3)
+
+- History only: no code parsing, symbols or indexing, ever, and no writes; git only through `git log`. `test/experience-readonly.test.mjs` enforces it. For code structure, Claude uses Serena; KevMind coexists with it and never reimplements indexing.
+- Evidence is counted in work episodes (a prompt turn that ends with at least one edit; without prompts, a block separated by more than 30 min). Every episode-based insight also needs at least 2 distinct local days. Every threshold is a named constant in `THRESHOLDS` in `src/experience.js`; nothing below a threshold is served; answers stay under 400 tokens and cite their counts.
+- Paths are routed to the git repo that holds them when it is nested inside the session's folder (e.g. `frontend/` with its own `.git`); repos outside the session folder are never answered.
+- The dashboard server owns `~/.kevmind/experience.json` (written atomically); the MCP server only reads it. The on/off switch is `~/.kevmind/config.json` (`src/config.js`), written by `kevmind tools on|off` and the dashboard toggle; it wins over the plugin option. Changes take effect in the next Claude Code session.
+
+## Memory tab (Phase 2)
+
+Read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config (never its secrets). `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
+
+## UI and performance budget
+
+- Follow DESIGN.md: OKLCH tokens for dark and light, one hue per meaning (working green, waiting amber, error red, read blue, edit pink; tools and finished work neutral), purple only for selection/focus/primary, system fonts, 12px floor, no side-stripe borders, no uppercase eyebrows, no glows or gradients (reserved for the future brain view).
+- WCAG AA in both themes for every text pair (check the contrast of any new color on every surface it appears on), state never by color alone, keyboard reachable with a visible focus ring, `prefers-reduced-motion` respected, works at phone width (no sideways scroll at 375 px).
+- Motion only for a real change (a new feed row at a calm pace, a running agent), transform/opacity only, nothing looping when idle.
+- Rendering: SSE messages update state and request one animation frame; rows are keyed and updated in place; write only what changed (`setText`, `setClass`, `patchHTML`); no per-second layout or paint when idle; nothing renders and nothing polls while the tab is hidden (only the tab title/favicon follow "needs your OK"). Any UI change that could cost CPU gets measured before and after (idle CPU, layouts/paints per second, ms per event at 5 events/s, hidden-tab cost, heap/nodes/listeners over time) with headless Edge over CDP on a test server.
+- Wide screens use an app shell (fixed header, each column scrolls); phones keep normal page scroll.
 
 ## The live dashboard
 
 The user keeps a real dashboard running on port 4777 with real data.
 
-- The hook starts the dashboard by itself at session start when nothing answers on the port, but as a plain server without file watching.
-- At the start of a work session, check it: `GET http://127.0.0.1:4777/api/health`. If nothing answers, start it detached with `npm run dev -- --background`, so it keeps running after this Claude Code session ends. If it answers with `"dev": false` (the hook started it), run `node bin/kevmind.js restart --dev` so changes reload it. Its output goes to `~/.kevmind/server.log` and its PID to `~/.kevmind/server.pid`.
+- The hook starts the dashboard by itself at session start when nothing answers on the port (`KEVMIND_AUTOSTART=0` disables it), but as a plain server without file watching.
+- At the start of a work session, check it: `GET http://127.0.0.1:4777/api/health`. If nothing answers, start it detached with `npm run dev -- --background`, so it keeps running after this Claude Code session ends. If it answers with `"dev": false`, run `node bin/kevmind.js restart --dev` so changes reload it. Output goes to `~/.kevmind/server.log`, the PID to `~/.kevmind/server.pid`.
 - Never ask the user to restart it. Changes under `src/` or `bin/` restart the server automatically, and the open page reloads by itself after a restart or a change under `public/`.
-- If it is stuck, run `node bin/kevmind.js restart`. It relaunches the server the same way it was running (dev mode, detached).
-- Events sent while the dashboard is down are spooled by the hook and ingested at the next start, so a short outage loses nothing.
+- If it is stuck, run `node bin/kevmind.js restart`. It relaunches the server the same way it was running.
+- It's fine to verify features on the real dashboard by reading it (the user asks for real-data results); never write test events into it.
 
 ## Tests and probes
 
-- Always use a temporary `KEVMIND_HOME` and a non-default `KEVMIND_PORT`, so nothing is ever written to the user's real data or shown in their dashboard.
+- Always use a temporary `KEVMIND_HOME` and a non-default `KEVMIND_PORT`, so nothing is written to the user's real data or shown in their dashboard. `kevmind demo` data (session ids `demo-…`, project `demo-kevmind`) is for demos and recordings only.
 - Stop every test server you started when you are done.
 - `kevmind clear --all` is destructive. Never run it against the real data dir unless the user asks for it.
 
-## Planned
+## Windows notes
 
-- Coexist with Serena: read `.serena/memories` later. Do not reimplement code indexing here.
+- Stage files by name (`git add <file>`), never `git add -A`: the repo has `core.filemode=true`, and `-A` silently drops the executable bit on `bin/kevmind.js`, `hooks/send.js` and `mcp/server.js`. After committing, `git ls-files -s` on those three should show `100755`. CRLF warnings on commit are expected.
+- The Bash tool strips one level of backslashes, even inside quoted heredocs. Write scripts and tests that contain backslashes (Windows paths, regex escapes, `\n` in strings) with the file tools, or build them at runtime (`String.fromCharCode(92)`). Import local `.mjs` files with `file:///C:/...` URLs.
+- Headless Edge for screenshots and benchmarks: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`; Node 24's global `WebSocket` drives it over CDP with no dependencies.
+
+## Commits, versions, publishing
+
+- Commit in logical steps, staged by name, and push when a request is done. End commit messages with the `Co-Authored-By` trailer the harness gives.
+- Run `npm test` before every commit and `claude plugin validate .` after any change to `.claude-plugin/`.
+- A version bump changes `package.json` and `.claude-plugin/plugin.json` together (the plugin version pins installed users until it changes). The user publishes to npm; never run `npm publish`. A version already on npm can't be republished, so changes after a publish need a new patch version.

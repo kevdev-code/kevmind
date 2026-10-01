@@ -8,7 +8,7 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 
 [English](README.md) · **Español**
 
-> Estado: **MVP (v0.1)**. El panel en vivo funciona. El grafo de memoria y la vista "cerebro" vienen después (ver hoja de ruta).
+> Estado: **0.4**. El panel en vivo, la pestaña Memoria y las herramientas de experiencia opcionales para Claude funcionan. La vista animada "cerebro" viene después (ver la hoja de ruta).
 
 ## Qué muestra
 
