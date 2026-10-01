@@ -1,7 +1,8 @@
 // The brain from six fixed views (left, right, top, front, back and the 3/4 opening view), at ~600 and ~3,000 nodes:
-// a screenshot of each, the outline measured in it, and one contact sheet per size with the expected proportions.
-//   [REF=<side-view image, front at the left> REF_BOX=x0,y0,x1,y1 (its brain's bounding box in pixels)] node bench/views.mjs <outDir>
-// With REF, each sheet also shows the left view with the reference over it at 50% opacity, and the two side by side.
+// a screenshot of each, the outline measured in it, and one contact sheet per size. Each sheet also overlays the
+// public-domain plates in docs/reference/ on the front, back and top views at 50%, next to the plates themselves.
+//   [REF=<side-view image, front at the left> REF_BOX=x0,y0,x1,y1] node bench/views.mjs <outDir>
+// REF adds the same for the left view. The overlays are shot with the shell 2.5 times as bright, so its outline reads.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launch, sleep } from './cdp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REFS = path.join(HERE, '..', '..', '..', 'docs', 'reference');
 const out = path.resolve(process.argv[2] || 'views');
 const PORT = 4795;
 // A real brain: length 1 : width 0.83 : cerebrum height 0.6-0.65.
@@ -20,11 +22,21 @@ const VIEWS = [
   { name: 'Back', yaw: -Math.PI / 2, pitch: 0, axes: 'width × height', want: [0.83 / 0.65, 0.83 / 0.6] },
   { name: '3/4 (opening view)', yaw: 0.32, pitch: 0.16, axes: 'oblique', want: null },
 ];
-
+// Plates over views: which part of our outline each one is matched to (one scale, centers aligned), and its own
+// bounding box in pixels.
+const OVERLAYS = [
+  { view: 'Front', title: 'Front over Gray 718 (coronal section, right half mirrored)', plates: [{ file: 'Gray718-front.png', w: 630, h: 590, box: [8, 78, 621, 559], part: 'cer' }] },
+  { view: 'Back', title: 'Back over Gray 718 (cerebrum) and Gray 703 (cerebellum)', plates: [{ file: 'Gray718-front.png', w: 630, h: 590, box: [8, 78, 621, 559], part: 'cer' }, { file: 'Gray703.png', w: 600, h: 350, box: [5, 48, 585, 332], part: 'cbl' }] },
+  { view: 'Top', title: 'Top over Gray 725 (left hemisphere from above, mirrored)', plates: [{ file: 'Gray725-top.png', w: 494, h: 600, box: [10, 9, 483, 599], part: 'cer' }] },
+];
 fs.mkdirSync(out, { recursive: true });
-const REF = process.env.REF, refFile = REF && 'reference' + path.extname(REF);
-if (REF) fs.copyFileSync(REF, path.join(out, refFile));
-const RB = (process.env.REF_BOX || '20,112,955,873').split(',').map(Number);
+if (process.env.REF) {
+  const ext = path.extname(process.env.REF), b = (process.env.REF_BOX || '20,112,955,873').split(',').map(Number);
+  fs.copyFileSync(process.env.REF, path.join(out, 'reference' + ext));
+  OVERLAYS.unshift({ view: 'Left', title: 'Left over the side reference', plates: [{ file: 'reference' + ext, w: 980, h: 980, box: b, part: 'all', local: true }] });
+}
+for (const o of OVERLAYS) for (const pl of o.plates) if (!pl.local) fs.copyFileSync(path.join(REFS, pl.file), path.join(out, pl.file));
+
 const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore', windowsHide: true });
 process.on('exit', () => { try { server.kill(); } catch {} });
 await sleep(500);
@@ -34,25 +46,31 @@ await p.send('Page.enable');
 await p.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 await p.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
 await p.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('kevmind.lang', 'en'); localStorage.removeItem('kevmind.brain.anim'); } catch {}" });
-const results = {};
-for (const nodes of [0, 3000]) {
-  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay${nodes ? `&nodes=${nodes}` : ''}` });
+const load = async (q) => {
+  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay${q}` });
   for (let i = 0; i < 100; i++) { await sleep(100); if (await p.eval('!!(window.__brain && __brain.frames() > 0)').catch(() => false)) break; }
   await sleep(800);
+};
+const shoot = async (v, file, well) => {
+  await p.eval(`__brain.view(${v.yaw}, ${v.pitch})`);
+  await sleep(700);
+  const shot = await p.send('Page.captureScreenshot', { format: 'png', clip: { x: well.x, y: well.y, width: well.width, height: well.height, scale: 1 } });
+  fs.writeFileSync(path.join(out, file), Buffer.from(shot.data, 'base64'));
+  return { m: JSON.parse(await p.eval('JSON.stringify(__brain.outline())')), labels: JSON.parse(await p.eval('JSON.stringify(__brain.labels())')) };
+};
+const pct = (v, of) => ((v / of) * 100).toFixed(2) + '%';
+const results = {};
+for (const nodes of [0, 3000]) {
+  const q = nodes ? `&nodes=${nodes}` : '';
+  await load(q);
   const count = await p.eval('__brain.nodes');
   const well = JSON.parse(await p.eval("JSON.stringify(document.getElementById('well').getBoundingClientRect())"));
   const rows = [];
-  for (const v of VIEWS) {
-    await p.eval(`__brain.view(${v.yaw}, ${v.pitch})`);
-    await sleep(700);
-    const m = JSON.parse(await p.eval('JSON.stringify(__brain.outline())'));
-    const labels = JSON.parse(await p.eval('JSON.stringify(__brain.labels())'));
-    const shot = await p.send('Page.captureScreenshot', { format: 'png', clip: { x: well.x, y: well.y, width: well.width, height: well.height, scale: 1 } });
-    const file = `${count}-${v.name.split(' ')[0].replace('/', '-')}.png`;
-    fs.writeFileSync(path.join(out, file), Buffer.from(shot.data, 'base64'));
-    rows.push({ ...v, file, m, labels });
-  }
-  results[count] = rows;
+  for (const v of VIEWS) { const file = `${count}-${v.name.split(' ')[0].replace('/', '-')}.png`; rows.push({ ...v, file, ...(await shoot(v, file, well)) }); }
+  await load(q + '&shell=2.5'); // the overlays: the same views with the shell brighter
+  const ovs = [];
+  for (const o of OVERLAYS) { const file = `${count}-${o.view}-overlay.png`; ovs.push({ ...o, file, ...(await shoot(VIEWS.find((x) => x.name === o.view), file, well)) }); }
+  results[count] = { rows: rows.map((r) => ({ view: r.name, m: r.m, labels: r.labels })), overlays: ovs.map((o) => ({ view: o.view, m: o.m })) };
   const ratio = (wh) => wh[0] / wh[1];
   const cell = (r) => {
     const c = ratio(r.m.cerebrum), a = ratio(r.m.all);
@@ -60,26 +78,36 @@ for (const nodes of [0, 3000]) {
     const want = r.want ? ` (real: ${r.want[0].toFixed(2)}${r.want[1] !== r.want[0] ? `–${r.want[1].toFixed(2)}` : ''})` : '';
     return `<figure><img src="${r.file}"><figcaption><b>${r.name}</b> <span>${r.axes}</span><br>` +
       `cerebrum ${r.m.cerebrum[0].toFixed(2)} × ${r.m.cerebrum[1].toFixed(2)} = <b class="${ok}">${c.toFixed(2)}</b>${want}` +
-      ` · with cerebellum and brainstem ${a.toFixed(2)} · on screen ${r.m.px[0]} × ${r.m.px[1]} px` +
-      ` · ${r.labels.length} labels${r.labels.some((l) => l.leader) ? `, ${r.labels.filter((l) => l.leader).length} with a leader line` : ''}</figcaption></figure>`;
+      ` · with cerebellum and brainstem ${a.toFixed(2)} · ${r.labels.length} labels${r.labels.some((l) => l.leader) ? `, ${r.labels.filter((l) => l.leader).length} with a leader line` : ''}</figcaption></figure>`;
   };
-  // The reference over the left view: one scale (the mean of the two bounding boxes' ratios), centers aligned.
-  const left = rows[0], [bx0, by0, bx1, by1] = left.m.box, sx = (bx1 - bx0) / (RB[2] - RB[0]), sy = (by1 - by0) / (RB[3] - RB[1]), k = (sx + sy) / 2;
-  const pct = (v, of) => ((v / of) * 100).toFixed(2) + '%';
-  const refFig = !REF ? '' : `<section><figure><div class="ov"><img src="${left.file}"><img class="ref" src="${refFile}" style="left:${pct((bx0 + bx1) / 2 - ((RB[0] + RB[2]) / 2) * k, well.width)};top:${pct((by0 + by1) / 2 - ((RB[1] + RB[3]) / 2) * k, well.height)};width:${pct(980 * k, well.width)}"></div>` +
-    `<figcaption><b>Left view with the reference at 50%</b><br>bounding box height ÷ width: ours ${((by1 - by0) / (bx1 - bx0)).toFixed(3)}, reference ${((RB[3] - RB[1]) / (RB[2] - RB[0])).toFixed(3)}</figcaption></figure>` +
-    `<figure><div class="pair"><img src="${left.file}"><img src="${refFile}"></div><figcaption><b>Left view next to the reference</b></figcaption></figure></section>`;
+  const overlay = (o) => {
+    const imgs = o.plates.map((pl) => {
+      const [bx0, by0, bx1, by1] = o.m[pl.part === 'cer' ? 'boxCer' : pl.part === 'cbl' ? 'boxCbl' : 'box'];
+      const [rx0, ry0, rx1, ry1] = pl.box, k = ((bx1 - bx0) / (rx1 - rx0) + (by1 - by0) / (ry1 - ry0)) / 2;
+      const left = (bx0 + bx1) / 2 - ((rx0 + rx1) / 2) * k, top = (by0 + by1) / 2 - ((ry0 + ry1) / 2) * k;
+      const name = pl.part === 'cbl' ? 'cerebellum' : pl.part === 'cer' ? 'cerebrum' : 'brain';
+      return { html: `<img class="ref" src="${pl.file}" style="left:${pct(left, well.width)};top:${pct(top, well.height)};width:${pct(pl.w * k, well.width)}">`, text: `${name}: ours ${((by1 - by0) / (bx1 - bx0)).toFixed(3)}, plate ${((ry1 - ry0) / (rx1 - rx0)).toFixed(3)}` };
+    });
+    return `<figure><div class="pair"><div class="ov"><img src="${o.file}">${imgs.map((x) => x.html).join('')}</div>` +
+      `<div class="plates">${o.plates.map((pl) => `<img src="${pl.file}">`).join('')}</div></div>` +
+      `<figcaption><b>${o.title}</b>, at 50% · height ÷ width, ${imgs.map((x) => x.text).join(' · ')}</figcaption></figure>`;
+  };
   fs.writeFileSync(path.join(out, `views-${count}.html`), `<!doctype html><meta charset="utf-8"><style>
 body { margin: 0; padding: 20px; background: #0d0d14; color: #cfcfe0; font: 15px system-ui, sans-serif; }
-h1 { font-size: 20px; margin: 0 0 14px; } main { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+h1 { font-size: 20px; margin: 0 0 14px; } h2 { font-size: 17px; margin: 22px 0 10px; }
+main { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; } section { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 figure { margin: 0; } img { width: 100%; display: block; border-radius: 8px; } figcaption { margin-top: 6px; line-height: 1.5; }
 figcaption span { color: #8a8aa0; } .ok { color: #7ee0a0; } .off { color: #ff8a8a; }
-section { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; } .ov { position: relative; overflow: hidden; border-radius: 8px; }
-.ov .ref { position: absolute; opacity: 0.5; border-radius: 0; } .pair { display: grid; grid-template-columns: 1.6fr 1fr; gap: 8px; align-items: center; background: #fff; border-radius: 8px; } .pair img { border-radius: 0; }
-</style><h1>${count} nodes · six fixed views · outline measured orthographically in brain units (width × height on screen)</h1><main>${rows.map(cell).join('')}</main>${refFig}`);
+.pair { display: grid; grid-template-columns: 1.7fr 1fr; gap: 10px; align-items: center; } .ov { position: relative; overflow: hidden; border-radius: 8px; }
+.ov .ref { position: absolute; opacity: 0.5; border-radius: 0; filter: invert(1); mix-blend-mode: screen; }
+.plates { display: grid; gap: 8px; background: #fff; border-radius: 8px; padding: 8px; } .plates img { border-radius: 0; }
+</style><h1>${count} nodes · six fixed views · outline measured orthographically in brain units (width × height on screen)</h1>
+<main>${rows.map(cell).join('')}</main>
+<h2>The plates over our views at 50% (inverted so their lines read on the dark well; the shell 2.5 times as bright in these shots)</h2>
+<section>${ovs.map(overlay).join('')}</section>`);
   await p.send('Emulation.setDeviceMetricsOverride', { width: 2400, height: 1400, deviceScaleFactor: 1, mobile: false });
   await p.send('Page.navigate', { url: pathToFileURL(path.join(out, `views-${count}.html`)).href });
-  await sleep(1200);
+  await sleep(1500);
   const sheet = await p.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
   fs.writeFileSync(path.join(out, `views-${count}.png`), Buffer.from(sheet.data, 'base64'));
   await p.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });

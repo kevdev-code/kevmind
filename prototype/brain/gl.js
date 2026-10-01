@@ -174,15 +174,13 @@ void main() {
 
 export const SPRITE_VS = `#version 300 es
 in vec3 a_pos; in float a_size; in vec4 a_color; in float a_mode;
-uniform mat4 u_vp; uniform float u_px; uniform vec2 u_depth; uniform float u_gain;
+uniform mat4 u_vp; uniform float u_px; uniform vec2 u_depth;
 out vec4 v_color; out float v_mode;
 ${DEPTH}
 void main() {
   vec4 p = u_vp * vec4(a_pos, 1.0);
   gl_Position = p;
-  float far = farOf(p.w);
-  // The shell's far half almost disappears, as if the brain were solid, so the near side's folds read.
-  v_color = vec4(a_color.rgb, a_color.a * (a_mode > 2.5 ? u_gain * (1.0 - 0.85 * smoothstep(0.45, 0.7, far)) : 1.0 - far * 0.6));
+  v_color = vec4(a_color.rgb, a_color.a * (1.0 - farOf(p.w) * 0.6));
   v_mode = a_mode;
   gl_PointSize = clamp(a_size * u_px / p.w, a_mode > 2.5 ? 1.6 : 0.0, 420.0);
 }`;
@@ -201,6 +199,31 @@ void main() {
   a *= v_color.a * step(r, 1.0);
   if (a < 0.003) discard;
   o = vec4(col * a, 0.0);
+}`;
+
+// The shell: a quiet backdrop. Brightest where it faces the camera, fading out toward the rim, almost gone behind,
+// so the folds read as texture and the outline is felt more than seen.
+export const DUST_VS = `#version 300 es
+in vec3 a_pos; in vec3 a_nrm;
+uniform mat4 u_vp; uniform float u_px, u_size, u_alpha; uniform vec3 u_eye, u_color;
+out vec4 v_color;
+void main() {
+  vec4 p = u_vp * vec4(a_pos, 1.0);
+  gl_Position = p;
+  float f = dot(a_nrm, normalize(u_eye - a_pos));
+  float k = f > 0.0 ? 0.1 + 0.9 * smoothstep(0.0, 0.65, f) : 0.04;
+  v_color = vec4(u_color, u_alpha * k);
+  gl_PointSize = clamp(u_size * u_px / p.w, 1.0, 6.0);
+}`;
+export const DUST_FS = `#version 300 es
+precision mediump float;
+in vec4 v_color;
+out vec4 o;
+void main() {
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(q, q), a = exp(-r2 * 3.5) * v_color.a * step(r2, 1.0);
+  if (a < 0.002) discard;
+  o = vec4(v_color.rgb * a, 0.0);
 }`;
 
 function program(gl, vs, fs) {
@@ -231,6 +254,7 @@ export class Renderer {
     this.node = program(gl, NODE_VS, NODE_FS);
     this.fiber = program(gl, FIBER_VS, FIBER_FS);
     this.sprite = program(gl, SPRITE_VS, SPRITE_FS);
+    this.dust = program(gl, DUST_VS, DUST_FS);
     this.vao = { bg: gl.createVertexArray() };
     this.buf = {};
     this.counts = { nodes: 0, fibers: 0, beams: 0, dust: 0, sprites: 0 };
@@ -321,7 +345,28 @@ export class Renderer {
     gl.bindVertexArray(null);
     return { vao, b };
   }
-  setDust(data) { const s = this._spriteVao(data, this.gl.STATIC_DRAW); this.vao.dust = s.vao; this.counts.dust = data.length / SPRITE_FLOATS; }
+  // The shell: { pos, nrm, ranges ("lobe|side" → [start, count]) }, drawn range by range.
+  setDust(shell) {
+    const gl = this.gl, n = shell.pos.length / 3, data = new Float32Array(n * 6);
+    for (let i = 0; i < n; i++) { data.set(shell.pos.subarray(i * 3, i * 3 + 3), i * 6); data.set(shell.nrm.subarray(i * 3, i * 3 + 3), i * 6 + 3); }
+    this.vao.dust = gl.createVertexArray();
+    gl.bindVertexArray(this.vao.dust);
+    this._layout(this.dust, this._buffer(data, gl.STATIC_DRAW), [['a_pos', 3], ['a_nrm', 3]]);
+    gl.bindVertexArray(null);
+    this.dustRanges = shell.ranges;
+    this.counts.dust = n;
+  }
+  // ranges: [[start, count]]; alpha and color per call; half: every other point of each range (while moving).
+  _dust(view, ranges, alpha, color, half) {
+    const gl = this.gl, L = this.dust.loc, P = this.palette;
+    this._common(this.dust, view);
+    gl.uniform3f(L.u_eye, ...view.eye);
+    gl.uniform1f(L.u_size, P.dustSize);
+    gl.uniform1f(L.u_alpha, alpha * (half ? 2 : 1));
+    gl.uniform3f(L.u_color, ...color);
+    gl.bindVertexArray(this.vao.dust);
+    for (const [start, count] of ranges) gl.drawArrays(gl.POINTS, start, half ? Math.ceil(count / 2) : count);
+  }
   setSprites(data) {
     const gl = this.gl;
     if (!this.vao.sprite) { const s = this._spriteVao(data, gl.DYNAMIC_DRAW); this.vao.sprite = s.vao; this.buf.sprite = s.b; }
@@ -388,13 +433,8 @@ export class Renderer {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE);
       const skip = layers.skip || new Set();
-      if (this.counts.dust && !skip.has('dust')) { // while the camera moves, half the (shuffled) shell, twice as bright
-        const half = (layers.lod || 0) > 0;
-        this._common(this.sprite, view);
-        gl.uniform1f(this.sprite.loc.u_gain, half ? 2 : 1);
-        gl.bindVertexArray(this.vao.dust);
-        gl.drawArrays(gl.POINTS, 0, half ? Math.ceil(this.counts.dust / 2) : this.counts.dust);
-      }
+      // While the camera moves, half of each (shuffled) range of the shell, twice as bright.
+      if (this.counts.dust && !skip.has('dust')) this._dust(view, this.dustRanges.values(), P.dustAlpha, P.dust, (layers.lod || 0) > 0);
       if (haze && !skip.has('haze')) { this._common(this.sprite, view); gl.bindVertexArray(this.vao.sprite); gl.drawArrays(gl.POINTS, 0, haze); }
       const f = this.fibers && (this.fibers[layers.lod || 0] || this.fibers[0]);
       if (f && f.count && !skip.has('fibers')) this._fibers(view, f.vao, f.count);
@@ -411,6 +451,8 @@ export class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
 
+    // Where agents work, the shell around their lobe brightens softly (layers.glow: [{ range, strength, color }]).
+    if (this.counts.dust && layers.glow) for (const g of layers.glow) if (g.strength > 0.01) this._dust(view, [g.range], P.dustAlpha * 1.6 * g.strength, g.color, false);
     this._common(this.node, view);
     const L = this.node.loc;
     gl.uniform1f(L.u_time, view.time);

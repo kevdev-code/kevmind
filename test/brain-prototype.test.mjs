@@ -58,7 +58,8 @@ test('layout keeps every node inside its lobe, on its hemisphere, and fills the 
 });
 
 test('the shell has a brain\'s proportions (length 1 : width 0.83 : cerebrum height 0.6-0.65)', () => {
-  const s = shellPoints(8000);
+  const sh = shellPoints(12000), s = new Float32Array(sh.part.length * 4); // x, y, z, part
+  sh.part.forEach((pt, i) => s.set([sh.pos[i * 3], sh.pos[i * 3 + 1], sh.pos[i * 3 + 2], pt], i * 4));
   const ext = (parts) => {
     const mn = [9, 9, 9], mx = [-9, -9, -9];
     for (let i = 0; i < s.length; i += 4) if (parts.includes(s[i + 3])) for (let a = 0; a < 3; a++) { mn[a] = Math.min(mn[a], s[i + a]); mx[a] = Math.max(mx[a], s[i + a]); }

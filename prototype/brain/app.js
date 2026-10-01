@@ -10,6 +10,7 @@ const params = new URLSearchParams(location.search);
 const TARGET = Number(params.get('nodes')) || 0;
 const SPEED = Number(params.get('speed')) || 1;
 const SKIP = new Set((params.get('skip') || '').split(',')); // benchmark only: draw without some layers
+const SHELL = Number(params.get('shell')) || 1; // checks only: the shell this many times as bright, so its outline reads
 const FRAME_MS = 1000 / 30;
 const FOV = (24 * Math.PI) / 180;
 const T0 = performance.now();
@@ -85,7 +86,8 @@ const P = {
   // What happened to a node: DESIGN.md's state hues (read, edit, error), command gray, selection violet.
   kinds: [[0, 0, 0], C(76, 0.115, 245), C(77, 0.13, 350), C(72, 0.17, 25), C(72, 0.012, 285), C(74, 0.145, 288)].flat(),
   edgeAlpha: [0.34, 0.12, 0.42, 0.24, 0.15, 0.26, 0.5, 1],
-  dust: C(82, 0.035, 290),
+  // The shell: a quiet backdrop in cool, desaturated blue-gray, about a third as bright as the nodes' layer.
+  dust: C(70, 0.03, 250), dustAlpha: 0.3 * SHELL, dustSize: 0.0085,
   breath: C(82, 0.07, 60), // Claude thinking: a warm cream glow through the whole brain
 };
 const kindRgb = (k) => P.kinds.slice(KIND[k] * 3, KIND[k] * 3 + 3);
@@ -211,12 +213,26 @@ function fiberData(segCross, segSame) {
 
 let shellXYZ = new Float32Array(0); // the shell's points, also used to frame the brain
 function dustData() {
-  const s = (shellXYZ = shellPoints(26000)), d = new Float32Array((s.length / 4) * SPRITE_FLOATS);
-  for (let i = 0, k = 0; i < s.length; i += 4, k += SPRITE_FLOATS) {
-    const part = s[i + 3];
-    d.set([s[i], s[i + 1], s[i + 2], 0.0105, ...P.dust, part === 1 ? 0.5 : 0.6, SPRITE.dust], k);
+  const sh = shellPoints(26000), n = sh.part.length;
+  shellXYZ = new Float32Array(n * 4); // x, y, z, part: for framing and the outline
+  for (let i = 0; i < n; i++) shellXYZ.set([sh.pos[i * 3], sh.pos[i * 3 + 1], sh.pos[i * 3 + 2], sh.part[i]], i * 4);
+  return sh;
+}
+// Where agents work, the shell around their lobe brightens softly, then fades back (eases in 0.6 s, out 2 s).
+const shellGlow = new Map();
+function glowLayer(now, dt) {
+  const want = new Map();
+  for (const a of agents.values()) if (a.node != null && a.status !== 'done') want.set(`${lobeOf(a.node)}|${L.side[nodes[a.node].region]}`, 1);
+  for (const k of want.keys()) if (!shellGlow.has(k)) shellGlow.set(k, 0);
+  const out = [];
+  for (const [k, v] of shellGlow) {
+    const t = want.get(k) || 0, nv = !anim ? t : v + (t - v) * Math.min(1, dt / (t > v ? 600 : 2000));
+    if (Math.abs(t - nv) > 0.01) busy(now + 60); else if (!t) { shellGlow.delete(k); continue; }
+    shellGlow.set(k, nv);
+    const range = R && R.dustRanges && R.dustRanges.get(k), lobe = k.split('|')[0];
+    if (range) out.push({ range, strength: nv, color: P.dust.map((c, i) => c * 0.5 + C(...LOBE_COLOR[lobe])[i] * 0.5) });
   }
-  return d;
+  return out;
 }
 
 // ---- view state ----------------------------------------------------------------------------------------------
@@ -561,7 +577,7 @@ function frame(now) {
   for (let k = rings.length - 1; k >= 0; k--) if (now - rings[k].t0 > rings[k].dur) rings.splice(k, 1);
   const haze = buildSprites(now);
   R.setBeams(buildBeams(now));
-  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth }, { haze, staticKey, skip: SKIP, lod: moving ? 1 : 0 });
+  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye }, { haze, staticKey, skip: SKIP, lod: moving ? 1 : 0, glow: glowLayer(now, dt) });
   if (labelsDirty) layoutLabels();
   placeChips(now);
   if (anim && (now < busyUntil || moving || thinking())) request();
@@ -674,10 +690,14 @@ function regionName(g) {
 // from the brain's center, with a leader line back to the lobe's center.
 const lobeEls = new Map();
 let chipBoxes = [];
+const chipLines = { svg: null, key: '' };
 const NS = 'http://www.w3.org/2000/svg';
 const leaders = document.createElementNS(NS, 'svg');
 leaders.setAttribute('class', 'leaders');
 labelBox.prepend(leaders);
+chipLines.svg = document.createElementNS(NS, 'svg');
+chipLines.svg.setAttribute('class', 'leaders chip-leaders');
+chipBox.prepend(chipLines.svg);
 const leaderEls = new Map();
 // The outline: the farthest projected shell point from the outline's center, in 48 directions.
 function silhouette() {
@@ -824,20 +844,45 @@ function placeChips(now) {
   }
   placed.sort((x, y) => x[2] - y[2]);
   for (const [a] of placed) if (!a.chipW) a.chipW = a.chip.offsetWidth || 160; // reads after all text writes: one layout at most
-  // Lobe labels keep their place: a chip takes the first spot around its agent (up-right, up-left, down-right,
-  // down-left) that covers no label and no other chip; only if none is free does it stack and the label give way.
+  // Agents close together (within 70 px) share one stack of chips, top to bottom in their order on screen, so tags
+  // never overlap; a stack of several gets a thin line from each chip to its agent. Each stack takes the first spot
+  // around its group (up-right, up-left, down-right, down-left) that covers no label and no other stack; lobe labels
+  // keep their place and give way only when no spot is free.
   const hit = (b, o) => b[0] < o[0] + o[2] && o[0] < b[0] + b[2] && b[1] < o[1] + o[3] && o[1] < b[1] + b[3];
   const labels = [...lobeEls.values()].filter((el) => !el.hidden && el._box).map((el) => el._box);
-  const boxes = [];
-  for (const [a, px, py] of placed) {
-    const el = a.chip, w = a.chipW;
-    const spots = [[px + 14, py - 30], [px - w - 14, py - 30], [px + 14, py + 10], [px - w - 14, py + 10]].map(([x, y]) => [clamp(x, 8, W - w - 8), y, w, 22]);
+  const groups = [];
+  for (const it of placed) {
+    const g = groups.find((q) => q.some(([, x, y]) => Math.hypot(x - it[1], y - it[2]) < 70));
+    if (g) g.push(it); else groups.push([it]);
+  }
+  const boxes = [], lines = [];
+  for (const g of groups) {
+    const cx = g.reduce((t, it) => t + it[1], 0) / g.length, top = Math.min(...g.map((it) => it[2])), bot = Math.max(...g.map((it) => it[2]));
+    const w = Math.max(...g.map(([a]) => a.chipW)), h = g.length * 25 - 3, gap = g.length > 1 ? 26 : 14;
+    const spots = [[cx + gap, top - h - 8], [cx - w - gap, top - h - 8], [cx + gap, bot + 10], [cx - w - gap, bot + 10]].map(([x, y]) => [clamp(x, 8, W - w - 8), clamp(y, 8, H - h - 8), w, h]);
     let b = spots.find((s) => !labels.some((l) => hit(s, l)) && !boxes.some((o) => hit(s, o)));
-    if (!b) { b = spots[0]; for (const o of boxes) if (hit(b, o)) b = [b[0], o[1] + 25, w, 22]; }
+    if (!b) { b = spots[0]; for (const o of boxes) if (hit(b, o)) b = [b[0], o[1] + o[3] + 3, w, h]; }
     boxes.push(b);
-    el.style.transform = `translate3d(${Math.round(b[0])}px, ${Math.round(b[1])}px, 0)`;
+    g.forEach(([a, px, py], k) => {
+      const y = b[1] + k * 25;
+      a.chip.style.transform = `translate3d(${Math.round(b[0])}px, ${Math.round(y)}px, 0)`;
+      if (g.length > 1) lines.push([px, py, b[0] + (b[0] > px ? 0 : a.chipW), y + 11, a.css]);
+    });
   }
   chipBoxes = boxes;
+  // The stacks' lines to their agents (reused SVG lines, written only when they change).
+  const key = lines.map((l) => l.map((v) => (typeof v === 'number' ? Math.round(v) : v)).join()).join(';');
+  if (key !== chipLines.key) {
+    chipLines.key = key;
+    while (chipLines.svg.children.length < lines.length) chipLines.svg.append(document.createElementNS(NS, 'line'));
+    [...chipLines.svg.children].forEach((ln, k) => {
+      const l = lines[k];
+      ln.style.display = l ? '' : 'none';
+      if (!l) return;
+      ln.setAttribute('x1', l[0].toFixed(1)); ln.setAttribute('y1', l[1].toFixed(1)); ln.setAttribute('x2', l[2].toFixed(1)); ln.setAttribute('y2', l[3].toFixed(1));
+      ln.style.color = l[4];
+    });
+  }
   // A label only gives way where a chip had nowhere else to go.
   const busyBoxes = boxes;
   for (const el of lobeEls.values()) {
@@ -1301,12 +1346,13 @@ window.__brain = { nodes: N, edges: edges.length, frames: () => frames, staticDr
   },
   outline() {
     const size = (parts) => { const e = extent(cam.yaw, cam.pitch, parts); return [+(e.x1 - e.x0).toFixed(3), +(e.y1 - e.y0).toFixed(3)]; };
-    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    const b = [0, 1, 2, 3].map(() => [1e9, 1e9, -1e9, -1e9]); // per part, then all: screen boxes
     for (let i = 0; i < shellXYZ.length; i += 4) {
       const p = project([shellXYZ[i], shellXYZ[i + 1], shellXYZ[i + 2]]);
-      x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+      for (const k of [shellXYZ[i + 3], 3]) { const q = b[k]; q[0] = Math.min(q[0], p[0]); q[1] = Math.min(q[1], p[1]); q[2] = Math.max(q[2], p[0]); q[3] = Math.max(q[3], p[1]); }
     }
-    return { cerebrum: size([0]), all: size([0, 1, 2]), px: [Math.round(x1 - x0), Math.round(y1 - y0)], box: [x0, y0, x1, y1].map(Math.round) };
+    const box = b.map((q) => q.map(Math.round));
+    return { cerebrum: size([0]), all: size([0, 1, 2]), px: [box[3][2] - box[3][0], box[3][3] - box[3][1]], box: box[3], boxCer: box[0], boxCbl: box[1] };
   },
   labels: () => [...lobeEls].filter(([, el]) => !el.hidden).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), leader: leaderEls.get(l)?.style.display !== 'none' })) };
 const _draw = R ? R.draw.bind(R) : null;

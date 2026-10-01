@@ -1,19 +1,20 @@
 // Brain geometry and node layout in 3D: x back→front, y down→up, z the right (+) and left (−) hemispheres.
-// The side view is a region map traced from a real brain (shape.js); each part is inflated from it into a solid: the
-// cerebrum rounds off toward its outline with a broad base (two hemispheres with flat inner faces, split by a thin
-// fissure), the cerebellum is a compact flattened dome, the brainstem a round tube. Lobes are the map's regions
-// through the whole depth, mirrored on both hemispheres, so a lobe's nodes fill its part of the shell. Each lobe's
-// volume is shared among its regions (a project's folder or kind of note) in proportion to their node counts, and a
-// short force simulation evens the nodes out inside it.
+// Built from four traced views (shape.js): the side view's region map gives each column's top and bottom; the top
+// view gives the width along the length; the coronal section gives the cross-section's shape, scaled into every
+// column; the cerebellum's front view gives its two lobes. So the cerebrum's outline matches the side, top and front
+// views at once: a dome with the temporal lobes as the lower part of each side, split by a thin fissure into
+// hemispheres with flat inner faces. The cerebellum sits under the occipital lobes, the brainstem is a round tube.
+// Lobes are the side map's regions through the whole depth, mirrored on both hemispheres, so a lobe's nodes fill its
+// territory; each lobe's volume is shared among its regions in proportion to their node counts, and a short force
+// simulation evens the nodes out inside it.
 import { rng } from './data.js';
-import { SHAPE } from './shape.js';
+import { SHAPE, CORONAL, TOP, CEREBELLUM } from './shape.js';
 
 // Proportions of a real brain: length 1 : width 0.83 : cerebrum height 0.62 (here the length is 2).
-const HALF_WIDTH = 0.785, TAPER = 0.08; // a little wider at the back than at the front
-const ROUND = 0.5; // how deep the cerebrum's rounding reaches in from its outline
+const HALF_WIDTH = 0.83; // the widest half-width (the top view's widest point)
 const GAP = 0.02; // half the fissure between the hemispheres: about 2.5% of the width
-const NOTCH = 0.03; // how far the top dips at the fissure, seen from the front
-const CBL_HALF = 0.52, CBL_ROUND = 0.3, STEM_R = 0.075;
+const CBL_HALF = 0.5, CBL_LIFT = 0.15; // the cerebellum's half-width; how far its top reaches up under the occipital lobes
+const STEM_R = 0.075;
 
 // The region map, decoded: one code per cell, 0 outside.
 const G = SHAPE.size, CODES = '.PFAOTCS';
@@ -28,12 +29,81 @@ const isCer = (c) => c >= 1 && c <= T_;
 // Grid ↔ world: the cerebrum is 2 long, centered on x = 0, its top at y = 0.7; the map's front (left) is +x.
 let gx0 = G, gx1 = 0, gyTop = G;
 for (let i = 0; i < G * G; i++) if (isCer(cls[i])) { const x = i % G, y = (i / G) | 0; gx0 = Math.min(gx0, x); gx1 = Math.max(gx1, x); gyTop = Math.min(gyTop, y); }
-const CELL = 2 / (gx1 - gx0 + 1), UMID = (gx0 + gx1 + 1) / 2, TOP = 0.7;
-const toU = (x) => UMID - x / CELL, toV = (y) => gyTop + (TOP - y) / CELL;
-const cellX = (gx) => (UMID - gx - 0.5) * CELL, cellY = (gy) => TOP - (gy + 0.5 - gyTop) * CELL;
+const CELL = 2 / (gx1 - gx0 + 1), UMID = (gx0 + gx1 + 1) / 2, TOP_Y = 0.7;
+const toU = (x) => UMID - x / CELL, toV = (y) => gyTop + (TOP_Y - y) / CELL;
+const cellX = (gx) => (UMID - gx - 0.5) * CELL, cellY = (gy) => TOP_Y - (gy + 0.5 - gyTop) * CELL;
+const cellAt = (x, y) => { const u = Math.floor(toU(x)), v = Math.floor(toV(y)); return u < 0 || v < 0 || u >= G || v >= G ? 0 : cls[v * G + u]; };
 
-// Distance (world units) from each cell to the nearest cell where inside() is false: a two-pass chamfer transform.
-function distance(inside) {
+// Each part's column in the side view: its bottom and top at every x, interpolated between cell centers.
+function columns(test, lift = 0) {
+  const b = new Float32Array(G).fill(NaN), t = new Float32Array(G).fill(NaN);
+  for (let gx = 0; gx < G; gx++) for (let gy = 0; gy < G; gy++) if (test(cls[gy * G + gx])) {
+    const top = cellY(gy) + CELL / 2, bot = cellY(gy) - CELL / 2;
+    if (Number.isNaN(t[gx]) || top > t[gx]) t[gx] = top + lift;
+    if (Number.isNaN(b[gx]) || bot < b[gx]) b[gx] = bot;
+  }
+  let x0 = 9, x1 = -9;
+  for (let gx = 0; gx < G; gx++) if (!Number.isNaN(b[gx])) { x0 = Math.min(x0, cellX(gx) - CELL / 2); x1 = Math.max(x1, cellX(gx) + CELL / 2); }
+  const at = (x) => {
+    const u = toU(x) - 0.5, i = Math.floor(u), w = u - i;
+    const pick = (a) => { const p = a[Math.max(0, Math.min(G - 1, i))], q = a[Math.max(0, Math.min(G - 1, i + 1))]; return Number.isNaN(p) ? q : Number.isNaN(q) ? p : p * (1 - w) + q * w; };
+    if (x < x0 || x > x1) return null;
+    const bb = pick(b), tt = pick(t);
+    return Number.isNaN(bb) || Number.isNaN(tt) || tt <= bb ? null : [bb, tt];
+  };
+  return { at, x0, x1 };
+}
+const colCer = columns(isCer), colCbl = columns((c) => c === C_, CBL_LIFT);
+
+// A traced profile as a function: lookup with linear interpolation, and a rounded cap where its top and bottom have
+// not met at an end, so every surface closes smoothly (no flat wall, no bright rim).
+function profile(top, bottom, { both = false, aspect = 1.4 } = {}) {
+  const n = top.length, pts = []; // [position, bottom, top], position 0..1 (or -1..1 when both ends cap)
+  const cap = (k, dir) => { // a quarter-circle cap beyond sample k, outward in direction dir
+    const c = (top[k] + bottom[k]) / 2, h = Math.max(0, (top[k] - bottom[k]) / 2), out = [];
+    for (let j = 1; j <= 8; j++) { const a = (j / 8) * (Math.PI / 2); out.push([dir * Math.sin(a) * h / aspect, c - h * Math.cos(a), c + h * Math.cos(a)]); }
+    return out;
+  };
+  const span = both ? 2 : 1, start = both ? -1 : 0;
+  for (let i = 0; i < n; i++) pts.push([start + (i / (n - 1)) * span, bottom[i], top[i]]);
+  const end = cap(n - 1, 1).map(([d, b, t]) => [start + span + d * span, b, t]);
+  const head = both ? cap(0, -1).map(([d, b, t]) => [start + d * span, b, t]).reverse() : [];
+  const all = [...head, ...pts, ...end];
+  const lo = all[0][0], hi = all[all.length - 1][0];
+  const P = all.map(([p, b, t]) => [start + ((p - lo) / (hi - lo)) * span, b, t]); // the caps fit inside the range
+  return (pos) => {
+    if (pos < P[0][0] || pos > P[P.length - 1][0]) return null;
+    let k = 1;
+    while (k < P.length - 1 && P[k][0] < pos) k++;
+    const [p0, b0, t0] = P[k - 1], [p1, b1, t1] = P[k], w = p1 > p0 ? (pos - p0) / (p1 - p0) : 0;
+    return [b0 + (b1 - b0) * w, t0 + (t1 - t0) * w];
+  };
+}
+const coronal = profile(CORONAL.top, CORONAL.bottom);
+const cerebellumProfile = profile(CEREBELLUM.top, CEREBELLUM.bottom, { both: true, aspect: 2 });
+const widthAt = (u) => { const f = Math.max(0, Math.min(1, u)) * (TOP.length - 1), i = Math.floor(f), w = f - i; return TOP[i] * (1 - w) + (TOP[Math.min(TOP.length - 1, i + 1)] ?? TOP[i]) * w; };
+const cerW = (x) => HALF_WIDTH * widthAt((x - colCer.x0) / (colCer.x1 - colCer.x0)); // the top view: back (0) to front (1)
+const cblW = (x) => { const c = (colCbl.x0 + colCbl.x1) / 2, h = (colCbl.x1 - colCbl.x0) / 2, q = 1 - ((x - c) / h) ** 2; return q > 0 ? CBL_HALF * q ** 0.35 : 0; };
+
+// The surfaces' height at a point of the cross-section: [bottom y, top y] (null outside).
+function cerSpan(x, z) {
+  const col = colCer.at(x);
+  if (!col) return null;
+  const pr = coronal(Math.abs(z) / cerW(x));
+  return pr && pr[1] > pr[0] ? [col[0] + pr[0] * (col[1] - col[0]), col[0] + pr[1] * (col[1] - col[0])] : null;
+}
+function cblSpan(x, z) {
+  const col = colCbl.at(x), w = cblW(x);
+  if (!col || !w) return null;
+  const pr = cerebellumProfile(z / w);
+  return pr && pr[1] > pr[0] ? [col[0] + pr[0] * (col[1] - col[0]), col[0] + pr[1] * (col[1] - col[0])] : null;
+}
+const within = (s, y, m = 0) => !!s && y > s[0] + m && y < s[1] - m;
+const inCerebrum = (p, m = 0) => within(cerSpan(p[0], p[2]), p[1], m);
+const inCerebellum = (p, m = 0) => within(cblSpan(p[0], p[2]), p[1], m);
+
+// The brainstem: a round tube around the side map's stem, from its distance to the stem's outline.
+function distance(inside) { // per cell: distance (world units) to the nearest cell where inside() is false
   const d = new Float32Array(G * G);
   for (let i = 0; i < G * G; i++) d[i] = inside(i) ? 1e9 : 0;
   const R2 = Math.SQRT2;
@@ -52,65 +122,43 @@ function distance(inside) {
   for (let i = 0; i < G * G; i++) d[i] = Math.min(d[i], 99) * CELL;
   return d;
 }
-// Signed: positive inside (distance to the outline), negative outside.
 function signed(inside) {
   const a = distance(inside), b = distance((i) => !inside(i)), s = new Float32Array(G * G);
   for (let i = 0; i < G * G; i++) s[i] = a[i] > 0 ? a[i] - CELL / 2 : -(b[i] - CELL / 2);
   return s;
 }
-const sdCer = signed((i) => isCer(cls[i])), sdCbl = signed((i) => cls[i] === C_), sdStem = signed((i) => cls[i] === S_);
-// The main fissures on the surface: the Sylvian (temporal lobe against the frontal and parietal lobes above it) and the
-// central sulcus (frontal against parietal).
-const nearTo = (from, to) => { const d = distance((i) => !to(cls[i])); return d.map((v, i) => (from(cls[i]) ? v : 99)); };
-const upper = (c) => c >= 1 && c <= 3;
-const dSylvA = nearTo((c) => c === T_, upper), dSylvB = nearTo(upper, (c) => c === T_);
-const dSylv = dSylvA.map((v, i) => Math.min(v, dSylvB[i]));
-const dCentA = nearTo((c) => c === 2, (c) => c === 3), dCentB = nearTo((c) => c === 3, (c) => c === 2);
-const dCent = dCentA.map((v, i) => Math.min(v, dCentB[i]));
-
-// Half-widths: the cerebrum rounds off over ROUND from its outline (a little faster toward its base, so the base is
-// broad), the cerebellum over CBL_ROUND, the brainstem is round.
-const R = (t) => (t >= 1 ? 1 : t <= 0 ? 0 : Math.sqrt(1 - (1 - t) ** 2));
-const vMid = new Float32Array(G);
-for (let gx = 0; gx < G; gx++) {
-  let a = -1, b = -1;
-  for (let gy = 0; gy < G; gy++) if (isCer(cls[gy * G + gx])) { if (a < 0) a = gy; b = gy; }
-  vMid[gx] = a < 0 ? G / 2 : (a + b + 1) / 2;
-}
-const base = new Float32Array(G * G); // how much faster the rounding goes: 1 down to each column's middle, 1.25 at its base
-for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
-  const below = Math.max(0, Math.min(1, (gy + 0.5 - vMid[gx]) / (vMid[gx] - gyTop + 1)));
-  base[gy * G + gx] = 1 + 0.25 * below * below;
-}
-// Bilinear sample of a cell field at a world (x, y).
-function sample(f, x, y) {
+function sample(f, x, y, outside = 0) { // bilinear, at a world (x, y)
   const u = toU(x) - 0.5, v = toV(y) - 0.5, i = Math.floor(u), j = Math.floor(v), a = u - i, b = v - j;
-  const at = (p, q) => (p < 0 || q < 0 || p >= G || q >= G ? f === sdCer || f === sdCbl || f === sdStem ? -1 : 0 : f[q * G + p]);
+  const at = (p, q) => (p < 0 || q < 0 || p >= G || q >= G ? outside : f[q * G + p]);
   return (at(i, j) * (1 - a) + at(i + 1, j) * a) * (1 - b) + (at(i, j + 1) * (1 - a) + at(i + 1, j + 1) * a) * b;
 }
-// Half-widths from the smoothly interpolated distance, so each surface closes to zero exactly at its outline.
-const zCer = (x, y) => HALF_WIDTH * (1 - TAPER * x) * R((sample(sdCer, x, y) * sample(base, x, y)) / ROUND);
-const zCbl = (x, y) => CBL_HALF * R(sample(sdCbl, x, y) / CBL_ROUND);
-const zStem = (x, y) => STEM_R * 1.3 * R(sample(sdStem, x, y) / STEM_R);
-const cellAt = (x, y) => { const u = Math.floor(toU(x)), v = Math.floor(toV(y)); return u < 0 || v < 0 || u >= G || v >= G ? 0 : cls[v * G + u]; };
+const sdStem = signed((i) => cls[i] === S_);
+const R = (t) => (t >= 1 ? 1 : t <= 0 ? 0 : Math.sqrt(1 - (1 - t) ** 2));
+const zStem = (x, y) => STEM_R * 1.3 * R(sample(sdStem, x, y, -1) / STEM_R);
+// The main fissures on the surface: the Sylvian (temporal lobe against the frontal and parietal lobes above it) and the
+// central sulcus (frontal against parietal), as distances in the side view.
+const nearTo = (from, to) => { const d = distance((i) => !to(cls[i])); return d.map((v, i) => (from(cls[i]) ? v : 99)); };
+const upper = (c) => c >= 1 && c <= 3;
+const dSylv = (() => { const a = nearTo((c) => c === T_, upper), b = nearTo(upper, (c) => c === T_); return a.map((v, i) => Math.min(v, b[i])); })();
+const dCent = (() => { const a = nearTo((c) => c === 2, (c) => c === 3), b = nearTo((c) => c === 3, (c) => c === 2); return a.map((v, i) => Math.min(v, b[i])); })();
 
 // Which lobe and hemisphere a point is in, as [lobe, side] (side 0 for the midline brainstem), or null outside the
 // volumes nodes use (a little inside the shell, off the fissure).
 function classify(p) {
-  const c = cellAt(p[0], p[1]);
-  if (!c) return null;
-  const z = Math.abs(p[2]), side = p[2] > 0 ? 1 : -1;
-  if (c === S_) return z < 0.85 * zStem(p[0], p[1]) && sample(sdStem, p[0], p[1]) > 0 ? ['stem', 0] : null;
-  if (c === C_) return z > 0.01 && z < 0.88 * zCbl(p[0], p[1]) && sample(sdCbl, p[0], p[1]) > 0 ? ['cerebellum', side] : null;
-  if (z < GAP * 2 || z > 0.9 * zCer(p[0], p[1]) || sample(sdCer, p[0], p[1]) <= 0) return null;
-  return [LOBE_OF[c], side];
+  const c = cellAt(p[0], p[1]), z = Math.abs(p[2]), side = p[2] > 0 ? 1 : -1;
+  if (c === S_) return z < 0.85 * zStem(p[0], p[1]) && sample(sdStem, p[0], p[1], -1) > 0 ? ['stem', 0] : null;
+  if (inCerebrum(p)) {
+    if (z < GAP * 2 || !isCer(c) || !inCerebrum(p, 0.04) || Math.abs(p[2]) > 0.94 * cerW(p[0])) return null;
+    return [LOBE_OF[c], side];
+  }
+  return z > 0.01 && inCerebellum(p, 0.03) ? ['cerebellum', side] : null;
 }
 export const lobeAt = classify;
 
 // A fixed pool of points spread through each lobe's volume: shares out the volume among regions and gives each lobe
 // its center, extent and volume.
 const LOBE_NAMES = ['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem'];
-const BOX = [[-1.05, 1.05], [-1.05, 0.75], [-0.92, 0.92]];
+const BOX = [[-1.05, 1.05], [-1.05, 0.75], [-0.9, 0.9]];
 const POOL_N = 60000;
 const pool = new Map(), VOL = {};
 {
@@ -153,8 +201,8 @@ export const lobeShape = (lobe, side) => {
   return shapes.get(key);
 };
 const STEM_BOTTOM = (() => { let b = 0; for (let i = 0; i < G * G; i++) if (cls[i] === S_) b = Math.max(b, (i / G) | 0); return cellY(b); })();
-export const BRAIN_CENTER = [0, (TOP + STEM_BOTTOM) / 2, 0];
-export const BRAIN_RADIUS = Math.hypot(1.05, (TOP - STEM_BOTTOM) / 2); // bounding sphere, for framing and depth fog
+export const BRAIN_CENTER = [0, (TOP_Y + STEM_BOTTOM) / 2, 0];
+export const BRAIN_RADIUS = Math.hypot(1.05, (TOP_Y - STEM_BOTTOM) / 2); // bounding sphere, for framing and depth fog
 
 // Positions for every node (Float32Array x,y,z, world), plus per region: side, centroid, spread, count.
 // Only nodes with visible[i] (default: all) are laid out, so "Re-layout" can respread what the filters show.
@@ -314,51 +362,71 @@ const gyri = (x, y, z) =>
   Math.sin(4.4 * y + 3.1 * z - 1.9 * Math.sin(4.7 * x + 2.9 * z) + 1.3 * Math.sin(3.7 * x + 1.1 * y)) +
   0.9 * Math.sin(5.7 * z - 3.3 * y + 2.1 * Math.sin(6.1 * x - 1.3 * y));
 export const GYRI = { bands: 1.05, ridge: 0.5 }; // bands per unit of the field; the share of each band that is ridge
+const PARTS = ['cerebrum', 'cerebellum', 'stem'];
 
-// [x, y, z, part] per particle: part 0 cerebrum, 1 cerebellum, 2 brainstem. Each part's surface is its two sides,
-// ±half-width over the side view, sampled evenly over its area.
-export function shellPoints(count = 20000, seed = 9) {
-  const r = rng(seed);
-  const out = [];
-  const parts = [
-    { part: 0, z: zCer, sd: sdCer, share: 0.82 },
-    { part: 1, z: zCbl, sd: sdCbl, share: 0.12 },
-    { part: 2, z: zStem, sd: sdStem, share: 0.06 },
-  ];
-  for (const P of parts) {
-    let x0 = 9, x1 = -9, y0 = 9, y1 = -9;
-    for (let i = 0; i < G * G; i++) if (P.sd[i] > 0) { const x = cellX(i % G), y = cellY((i / G) | 0); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-    x0 -= CELL; x1 += CELL; y0 -= CELL; y1 += CELL;
-    const want = Math.round(count * P.share);
-    for (let k = 0, tries = 0; k < want && tries < want * 60; tries++) {
-      const x = x0 + r() * (x1 - x0), y = y0 + r() * (y1 - y0);
-      if (sample(P.sd, x, y) <= 0) continue;
-      const z = P.z(x, y), e = 0.008;
-      const gx = (P.z(x + e, y) - P.z(x - e, y)) / (2 * e), gy = (P.z(x, y + e) - P.z(x, y - e)) / (2 * e);
-      if (r() * 3 > Math.min(3, Math.hypot(1, gx, gy))) continue; // even over the surface, the steepest rims a little sparser
-      const s = r() < 0.5 ? 1 : -1, p = [x, y, s * z * (1 + (r() - 0.5) * 0.02)];
-      if (P.part === 0) {
-        const c = cellAt(x, y);
-        if (z < GAP && c !== T_) continue; // the longitudinal fissure between the hemispheres
-        const syl = sample(dSylv, x, y), cen = sample(dCent, x, y);
-        if (z > 0.2 && syl < 0.03) continue; // the Sylvian fissure, the clearest groove on the side
-        if (cen < 0.02) continue; // the central sulcus
-        const u = gyri(x, y, p[2]) * GYRI.bands, q = Math.abs(u - Math.round(u)) * 2;
-        if (q > GYRI.ridge || r() > 1 - q / GYRI.ridge * 0.8) continue; // dense along each ridge, empty in the grooves
-        const near = Math.min(z > 0.2 ? syl : 9, cen);
-        p[2] *= 1 - 0.07 * Math.exp(-((near / 0.05) ** 2)); // the big grooves sink in a little
-        if (toV(y) < vMid[Math.min(G - 1, Math.max(0, Math.floor(toU(x))))]) p[1] -= NOTCH * Math.exp(-((z / 0.08) ** 2)); // the top dips at the fissure
-      } else if (P.part === 1) {
-        if (Math.abs(Math.sin(62 * (y + 0.25 * (x + 0.6) ** 2))) < 0.42) continue; // the cerebellum's fine, curved folia
-      }
-      out.push(p[0], p[1], p[2], P.part);
-      k++;
+// The shell: { pos, nrm (Float32Array, x y z per point), part (0 cerebrum, 1 cerebellum, 2 brainstem), ranges }.
+// Points are grouped by lobe and hemisphere (ranges: "lobe|side" → [start, count]) so a lobe's patch can be drawn on
+// its own, and shuffled inside each group, so any prefix of a group is an even sample of it.
+export function shellPoints(count = 26000, seed = 9) {
+  const r = rng(seed), groups = new Map();
+  const add = (key, p, n, part) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push([p, n, part]); };
+  const norm = (v) => { const l = Math.hypot(...v) || 1; return v.map((c) => c / l); };
+  // A part whose surfaces are the top and bottom of its cross-section over (x, z): sampled evenly by area.
+  const surfaces = (want, span, x0, x1, zMax, part, keep) => {
+    const CAP = 4, e = 0.006;
+    for (let k = 0, tries = 0; k < want && tries < want * 80; tries++) {
+      const x = x0 + r() * (x1 - x0), z = (r() * 2 - 1) * zMax, s = span(x, z);
+      if (!s) continue;
+      const top = r() < 0.5, y = s[top ? 1 : 0];
+      const fy = (xx, zz) => { const q = span(xx, zz); return q ? q[top ? 1 : 0] : null; };
+      const ax = fy(x + e, z), bx = fy(x - e, z), az = fy(x, z + e), bz = fy(x, z - e);
+      if (ax == null || bx == null || az == null || bz == null) continue; // the very rim
+      const gx = (ax - bx) / (2 * e), gz = (az - bz) / (2 * e), slope = Math.hypot(1, gx, gz);
+      if (r() * CAP > Math.min(CAP, slope)) continue; // even over the surface, steep sides included
+      const n = norm(top ? [-gx, 1, -gz] : [gx, -1, gz]), p = [x, y, z];
+      const key = keep(p, top);
+      if (key) { add(key, p, n, part); k++; }
     }
+  };
+  // The cerebrum: gyri on every lobe; the Sylvian fissure, the central sulcus and the midline fissure are the
+  // clearest grooves.
+  surfaces(count * 0.8, cerSpan, colCer.x0, colCer.x1, HALF_WIDTH, 0, (p, top) => {
+    const c = cellAt(p[0], p[1]), zn = Math.abs(p[2]) / cerW(p[0]);
+    if (top && Math.abs(p[2]) < GAP) return null; // the longitudinal fissure
+    if (inCerebellum(p)) return null; // the cerebellum's surface shows there instead
+    const syl = sample(dSylv, p[0], p[1], 99), cen = sample(dCent, p[0], p[1], 99);
+    if (zn > 0.55 && syl < 0.03) return null; // the Sylvian fissure, the clearest groove on the side
+    if (cen < 0.02) return null; // the central sulcus
+    const u = gyri(...p) * GYRI.bands, q = Math.abs(u - Math.round(u)) * 2;
+    if (q > GYRI.ridge || r() > 1 - (q / GYRI.ridge) * 0.8) return null; // dense along each ridge, empty in the grooves
+    return `${isCer(c) ? LOBE_OF[c] : 'parietal'}|${p[2] > 0 ? 1 : -1}`;
+  });
+  // The cerebellum: fine curved folia; only the part under the cerebrum shows.
+  surfaces(count * 0.14, cblSpan, colCbl.x0, colCbl.x1, CBL_HALF, 1, (p) => {
+    if (inCerebrum(p)) return null;
+    if (Math.abs(Math.sin(62 * (p[1] + 0.25 * (p[0] + 0.6) ** 2))) < 0.42) return null;
+    return `cerebellum|${p[2] > 0 ? 1 : -1}`;
+  });
+  // The brainstem: a round tube, ±half-width over the side map, its normal from the half-width's slope.
+  let sx0 = 9, sx1 = -9, sy0 = 9, sy1 = -9;
+  for (let i = 0; i < G * G; i++) if (cls[i] === S_) { const x = cellX(i % G), y = cellY((i / G) | 0); sx0 = Math.min(sx0, x); sx1 = Math.max(sx1, x); sy0 = Math.min(sy0, y); sy1 = Math.max(sy1, y); }
+  for (let k = 0, tries = 0, want = count * 0.06; k < want && tries < want * 60; tries++) {
+    const x = sx0 + r() * (sx1 - sx0), y = sy0 + r() * (sy1 - sy0);
+    if (sample(sdStem, x, y, -1) <= 0) continue;
+    const z = zStem(x, y), e = 0.006, gx = (zStem(x + e, y) - zStem(x - e, y)) / (2 * e), gy = (zStem(x, y + e) - zStem(x, y - e)) / (2 * e);
+    if (r() * 3 > Math.min(3, Math.hypot(1, gx, gy))) continue;
+    const s = r() < 0.5 ? 1 : -1, p = [x, y, s * z];
+    if (inCerebrum(p) || inCerebellum(p)) continue;
+    add('stem|0', p, norm([-gx, -gy, s]), 2);
+    k++;
   }
-  // Shuffled, so any prefix is an even sample of the whole shell (the renderer draws half of it while the camera moves).
-  const n = out.length / 4, res = new Float32Array(out.length);
-  const order = Array.from({ length: n }, (_, i) => i);
-  for (let i = n - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  order.forEach((j, i) => res.set(out.slice(j * 4, j * 4 + 4), i * 4));
-  return res;
+  const n = [...groups.values()].reduce((t, g) => t + g.length, 0);
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), part = new Uint8Array(n), ranges = new Map();
+  let o = 0;
+  for (const [key, list] of groups) {
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
+    ranges.set(key, [o, list.length]);
+    for (const [p, nv, pt] of list) { pos.set(p, o * 3); nrm.set(nv, o * 3); part[o] = pt; o++; }
+  }
+  return { pos, nrm, part, ranges, parts: PARTS };
 }
