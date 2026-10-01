@@ -92,7 +92,7 @@ body.view-memory .layout { display: none; }
 .rail { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
 .rail.sessions { gap: 0; }
 .center { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4); min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4); min-width: 0; contain: content; }
 .head { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0 0 var(--sp-3); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
 .head small { font-weight: 400; color: var(--text-3); font-size: var(--fs-xs); }
 .count { font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); background: var(--raised); border-radius: var(--r-pill); padding: 0 7px; line-height: 18px; }
@@ -149,9 +149,9 @@ select.filter { width: 100%; padding: 6px 8px; border: 1px solid var(--border); 
 .gnum .gst { color: var(--text-2); }
 .gaxis { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--text-3); }
 .gaxis div:nth-child(2) { display: flex; justify-content: space-between; }
-/* a running agent: one small beat at the edge of its live bar; opacity only, never when nothing runs */
-.gbeat { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -6px; border-radius: var(--r-pill); background: var(--surface); opacity: 0; animation: beat 1.6s var(--ease-out) infinite; pointer-events: none; }
-@keyframes beat { 0%, 100% { opacity: 0; } 40% { opacity: 0.5; } }
+/* a running agent breathes: opacity only (the compositor, no layout or paint), never when nothing runs */
+.gbar.running, .gbar.working { animation: breathe 2.4s var(--ease-out) infinite; will-change: opacity; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
 
 /* ---------- activity feed ---------- */
 .feed { display: flex; flex-direction: column; max-height: 520px; overflow-y: auto; margin: 0 calc(-1 * var(--sp-2)); overflow-anchor: auto; }

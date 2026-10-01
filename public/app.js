@@ -207,8 +207,14 @@ function updateAttention() {
 
 // ---------- formatting ----------
 const secondsSince = (ts) => Math.max(0, Math.round((Date.now() - ts) / 1000));
-const hhmmss = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
-const hhmm = (ts) => new Date(ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+// Intl formatters are costly to build: one per language, reused.
+const fmtCache = {};
+const timeFmt = () => (fmtCache[lang] ||= {
+  s: new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }),
+  m: new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+});
+const hhmmss = (ts) => timeFmt().s.format(ts);
+const hhmm = (ts) => timeFmt().m.format(ts);
 const fmtMin = (m) => { m = Math.max(0, Math.round(m)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
@@ -339,7 +345,7 @@ function ganttRow() {
     '<div class="gtrack"><div class="gbar"></div></div><span class="gnum"><span class="gst"></span><span></span></span>';
   const [label, track, num] = el.children;
   return { el, dot: label.children[0].children[0], ty: label.children[0].children[1], task: label.children[1], label,
-    track, bar: track.children[0], beat: null, st: num.children[0], n: num.children[1] };
+    bar: track.children[0], st: num.children[0], n: num.children[1] };
 }
 function renderGantt() {
   const s = current;
@@ -380,10 +386,6 @@ function renderGantt() {
     setClass(r.bar, 'gbar ' + ast);
     const clip = `inset(0 ${right.toFixed(2)}% 0 ${left.toFixed(2)}% round 4px)`;
     if (r.bar._clip !== clip) { r.bar._clip = clip; r.bar.style.clipPath = clip; }
-    // One small beat at the leading edge of a live bar; removed when it stops.
-    if (live(a) && !r.beat) { r.beat = document.createElement('span'); r.beat.className = 'gbeat'; r.track.appendChild(r.beat); }
-    if (!live(a) && r.beat) { r.beat.remove(); r.beat = null; }
-    if (r.beat) { const pos = `${(100 - right).toFixed(2)}%`; if (r.beat._l !== pos) { r.beat._l = pos; r.beat.style.left = pos; } }
     const want = prev ? prev.nextSibling : list.firstChild;
     if (r.el !== want) list.insertBefore(r.el, want);
     prev = r.el;
@@ -397,6 +399,7 @@ function renderGantt() {
 // ---------- activity feed: rows keyed by event number; new ones are added, old ones dropped ----------
 const feedRows = new Map(); // seq -> li
 let feedSig = '';
+let lastFeedAdd = 0;
 const PATHY = new Set(['read', 'edit', 'command', 'web', 'mcp', 'tool']);
 function feedRow(e, s, byId) {
   // Agents by type in the feed (the timeline shows their task); the full label is on hover.
@@ -424,7 +427,10 @@ function renderFeed(s) {
     const e = s.events[i];
     if (showThinks || e.kind !== 'thinks') events.push(e);
   }
-  const fresh = list.firstChild !== null; // rows added after the first render fade in
+  // Rows added after the first render fade in, but only when events come at a calm pace: in a burst every
+  // frame would be animating, which says nothing and costs a repaint per frame.
+  const now = Date.now();
+  const fade = list.firstChild !== null && now - lastFeedAdd > 1200;
   let added = 0;
   const keep = new Set();
   let node = list.firstChild;
@@ -435,7 +441,8 @@ function renderFeed(s) {
     let li = feedRows.get(key);
     if (!li) {
       li = feedRow(e, s, byId);
-      if (fresh && added++ < 20) li.classList.add('new');
+      if (fade && added < 20) li.classList.add('new');
+      added++;
       feedRows.set(key, li);
     }
     if (li !== node) list.insertBefore(li, node); else node = node.nextSibling;
@@ -445,6 +452,7 @@ function renderFeed(s) {
     prevTime = time;
   }
   for (const [key, li] of feedRows) if (!keep.has(key)) { li.remove(); feedRows.delete(key); }
+  if (added) lastFeedAdd = now;
 }
 
 // ---------- right rail: rewritten only when its HTML changes ----------
