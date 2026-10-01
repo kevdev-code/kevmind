@@ -8,7 +8,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { emptyAggregate, revive, updateFromLogs, refreshGit, answerFileContext, answerFileHistory, answerKnownFailures } from '../src/experience.js';
+import {
+  emptyAggregate, revive, updateFromLogs, refreshGit, projectAt, repoFor, answerFileContext, answerFileHistory, answerKnownFailures, THRESHOLDS,
+} from '../src/experience.js';
 import { projectRoot, keyOf } from '../src/memory.js';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
@@ -16,7 +18,6 @@ const ENABLED = /^(1|true|yes|on)$/i.test(process.env.KEVMIND_EXPERIENCE || '');
 const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
 const AGG_FILE = path.join(DATA_DIR, 'experience.json');
 const ROOT = projectRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
-const KEY = keyOf(ROOT);
 const NAME = path.basename(ROOT);
 const REFRESH_MS = 2000;
 const GIT_STALE_MS = 24 * 60 * 60_000;
@@ -27,19 +28,22 @@ const TOOLS = [
     name: 'file_context',
     description: 'Call before editing files you have not worked on in this session: which files usually change or get read alongside them, ' +
       'from this project\'s past Claude Code sessions and git history, with counts and dates. Not on every task. ' + SERENA,
-    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, maxItems: 10, description: 'File paths, relative to the project or absolute' } }, required: ['paths'] },
+    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, maxItems: 10, description: 'File paths, relative to the project or absolute. Files in a git repo nested inside the project are answered from that repo' } }, required: ['paths'] },
   },
   {
     name: 'file_history',
     description: 'How often past sessions read and edited one file, by which agent types, and how often git changed or fixed it. ' +
       'Call when unsure whether a file is risky to touch. Not on every task. ' + SERENA,
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'File path, relative to the project or absolute' } }, required: ['path'] },
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'File path, relative to the project or absolute. A file in a git repo nested inside the project is answered from that repo' } }, required: ['path'] },
   },
   {
     name: 'known_failures',
     description: 'Call after a command fails: whether this project saw the same failure before and what came before the next success. ' +
       'Not on every task. ' + SERENA,
-    inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'The failing command, or its start such as "npm test"' } } },
+    inputSchema: { type: 'object', properties: {
+      command: { type: 'string', description: 'The failing command, or its start such as "npm test"' },
+      path: { type: 'string', description: 'Optional: the folder the command ran in, to answer from a git repo nested in this project (such as "frontend")' },
+    } },
   },
 ];
 
@@ -59,22 +63,62 @@ async function data() {
     if (mtime) { try { agg = revive(JSON.parse(fs.readFileSync(AGG_FILE, 'utf8'))); aggMtime = mtime; } catch { agg = emptyAggregate(); } }
   }
   if (!(await updateFromLogs(agg, DATA_DIR, now))) { agg = emptyAggregate(); await updateFromLogs(agg, DATA_DIR, now); }
-  const proj = agg.projects[KEY];
-  if (proj && (!proj.git || now - proj.git.at > GIT_STALE_MS)) await refreshGit(proj, now);
-  if (!proj && fs.existsSync(path.join(ROOT, '.git'))) {
-    // No KevMind session here yet: git alone can answer.
-    agg.projects[KEY] = { root: ROOT, name: NAME, files: [], sessions: {}, fams: [], sigs: [], git: null };
-    await refreshGit(revive(agg).projects[KEY], now);
-  }
   return agg;
 }
 
-async function call(name, args = {}) {
-  const proj = (await data()).projects[KEY] || null;
+// One repo's project, with git refreshed when stale. With no KevMind activity there yet, git alone can answer.
+async function projectFor(root) {
+  const a = await data();
   const now = Date.now();
-  if (name === 'file_context') return answerFileContext(proj, NAME, Array.isArray(args.paths) ? args.paths.map(String) : [], now);
-  if (name === 'file_history') return answerFileHistory(proj, NAME, String(args.path || ''), now);
-  if (name === 'known_failures') return answerKnownFailures(proj, NAME, args.command ? String(args.command) : '', now);
+  let proj = a.projects[keyOf(root)];
+  if (!proj && !fs.existsSync(path.join(root, '.git'))) return null;
+  proj ||= projectAt(a, root);
+  if (!proj.git || now - proj.git.at > GIT_STALE_MS) await refreshGit(proj, now);
+  return proj;
+}
+
+// Each path is answered from the git repo that holds it, when that is a separate repo nested inside the session's
+// folder (frontend/ with its own .git); never from repos outside it. Answers name the repo when it isn't the root.
+function where(repo) {
+  if (repo === ROOT) return { name: NAME, prefix: '' };
+  const rel = path.relative(ROOT, repo).split(path.sep).join('/');
+  return { name: `${NAME}/${rel} (a separate git repo inside ${NAME})`, prefix: rel + '/' };
+}
+
+async function call(name, args = {}) {
+  const now = Date.now();
+  if (name === 'file_context') {
+    const groups = new Map();
+    for (const p of (Array.isArray(args.paths) ? args.paths.map(String) : []).slice(0, 10)) {
+      const repo = repoFor(ROOT, p);
+      (groups.get(repo) || groups.set(repo, []).get(repo)).push(repo === ROOT ? p : path.resolve(ROOT, p));
+    }
+    if (!groups.size) groups.set(ROOT, []);
+    // An equal share of the cap per repo; what a short answer leaves unused goes to the ones that were cut.
+    const answer = async ([repo, paths], tokens) => {
+      const w = where(repo);
+      return answerFileContext(await projectFor(repo), w.name, paths, now, { prefix: w.prefix, tokens });
+    };
+    const list = [...groups];
+    const share = Math.floor(THRESHOLDS.maxTokens / list.length) - 1; // 1 token for the blank line between answers
+    const out = [];
+    for (const g of list) out.push(await answer(g, share));
+    for (let i = 0; i < out.length; i++) {
+      const spare = list.length * share - out.reduce((n, t) => n + Math.ceil(t.length / 4), 0);
+      if (spare > 0 && /left out to stay under/.test(out[i])) out[i] = await answer(list[i], Math.ceil(out[i].length / 4) + spare);
+    }
+    return out.join('\n\n');
+  }
+  if (name === 'file_history') {
+    const p = String(args.path || '');
+    const repo = p ? repoFor(ROOT, p) : ROOT;
+    const w = where(repo);
+    return answerFileHistory(await projectFor(repo), w.name, repo === ROOT ? p : path.resolve(ROOT, p), now, { prefix: w.prefix });
+  }
+  if (name === 'known_failures') {
+    const repo = args.path ? repoFor(ROOT, String(args.path)) : ROOT;
+    return answerKnownFailures(await projectFor(repo), where(repo).name, args.command ? String(args.command) : '', now);
+  }
   throw Object.assign(new Error(`Unknown tool: ${name}`), { code: -32602 });
 }
 

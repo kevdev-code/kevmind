@@ -99,6 +99,8 @@ The evidence comes from two places: KevMind's own record of past Claude Code wor
 
 A work episode is one prompt turn that ends with at least one edit; without prompts, a block of activity separated from the next by more than 30 minutes. Compactions and system messages don't start a new one, so one long session still yields many episodes. Every pattern also has to show up on at least 2 different days, so something that only repeats inside one conversation never qualifies. Each insight has its own threshold; there is no project-wide minimum besides the 20 commits git needs.
 
+Each file belongs to the git repo that holds it. If you run Claude at a repo's root but work in `frontend/` and `backend/`, and those are separate git repos, their history is kept and answered per repo, and the answer names the repo it came from. Repos outside the folder Claude runs in are never answered.
+
 Every answer:
 
 - cites its source and counts, such as "episodes: 4 on 3 days, last 2026-10-21" or "git: 6 of 9 commits"; episode evidence ranks above git;

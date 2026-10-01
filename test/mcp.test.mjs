@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { hasGit } from './memory-fixture.mjs';
 
 const SERVER = new URL('../mcp/server.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const DAY = 86_400_000;
@@ -101,5 +102,51 @@ test('with the option off, the server lists no tools and refuses calls', async (
   assert.deepEqual((await c.rpc('tools/list')).result.tools, []);
   const r = await c.rpc('tools/call', { name: 'file_context', arguments: { paths: ['a.ts'] } });
   assert.equal(r.result.isError, true);
+  await c.close();
+});
+
+test('paths are answered from the git repo nested inside the session folder that holds them, never from outside it', { skip: !hasGit() && 'needs git' }, async () => {
+  // The session runs at the root repo; frontend/ and backend/ are separate repos inside it; Sibling/ is outside.
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kevmind-nested-')));
+  const root = path.join(dir, 'Odon');
+  const outside = path.join(dir, 'Sibling');
+  for (const r of [root, path.join(root, 'frontend'), path.join(root, 'backend'), outside]) {
+    fs.mkdirSync(r, { recursive: true });
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '-q'], { cwd: r, stdio: 'ignore', windowsHide: true });
+  }
+  const now = Date.now();
+  const lines = [];
+  const add = (ts, e) => lines.push(JSON.stringify({ ts, e: { session_id: 'long', cwd: root, ...e } }));
+  const edit = (ts, f) => add(ts, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, f) } });
+  for (let i = 0; i < 3; i++) {
+    const ts = now - (i + 1) * DAY;
+    add(ts, { hook_event_name: 'UserPromptSubmit', prompt: 'work' });
+    for (const [k, f] of ['frontend/src/a.ts', 'frontend/src/b.ts', 'backend/api.ts', 'backend/db.ts', 'notes.md'].entries()) edit(ts + (k + 1) * 1000, f);
+  }
+  add(now - DAY + 9000, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(outside, 'x.ts') } });
+  lines.sort((x, y) => JSON.parse(x).ts - JSON.parse(y).ts);
+  const byMonth = {};
+  for (const l of lines) (byMonth[new Date(JSON.parse(l).ts).toISOString().slice(0, 7)] ||= []).push(l);
+  for (const [m, ls] of Object.entries(byMonth)) fs.writeFileSync(path.join(dir, `events-${m}.jsonl`), ls.join('\n') + '\n');
+
+  const c = client({ KEVMIND_HOME: dir, CLAUDE_PROJECT_DIR: root, KEVMIND_EXPERIENCE: 'true' });
+  await c.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+  const text = async (name, args) => (await c.rpc('tools/call', { name, arguments: args })).result.content[0].text;
+
+  const both = await text('file_context', { paths: ['frontend/src/a.ts', path.join(root, 'backend', 'api.ts')] });
+  assert.match(both, /KevMind history for Odon\/frontend \(a separate git repo inside Odon\):\n- `frontend\/src\/a\.ts`:\n  - changes with `frontend\/src\/b\.ts` \(episodes: 3 on 3 days/);
+  assert.match(both, /KevMind history for Odon\/backend \(a separate git repo inside Odon\):\n- `backend\/api\.ts`:\n  - changes with `backend\/db\.ts` \(episodes: 3 on 3 days/);
+  assert.ok(!/frontend.*\n.*backend\/db|notes\.md/.test(both), 'each repo only cites its own files');
+  assert.ok(both.length / 4 <= 400, `${Math.round(both.length / 4)} tokens`);
+
+  // The root repo sees only its own file: frontend and backend work is not root evidence.
+  assert.match(await text('file_context', { paths: ['notes.md'] }), /^No data: no pattern above the thresholds for these files in Odon\.\n- `notes\.md`: no pattern above the thresholds \(edited in 3 episodes on 3 days/);
+  assert.match(await text('file_history', { path: path.join(root, 'frontend', 'src', 'b.ts') }),
+    /^KevMind history of `frontend\/src\/b\.ts` in Odon\/frontend \(a separate git repo inside Odon\):\n- Claude Code: edited in 3 work episodes on 3 days/);
+  assert.match(await text('known_failures', { command: 'npm test', path: 'backend' }), /^No data: no failure of `npm test` in Odon\/backend /);
+
+  const out = await text('file_context', { paths: [path.join(outside, 'x.ts')] });
+  assert.match(out, /`.*Sibling.*x\.ts`: outside Odon; KevMind only answers for repos inside the session's folder/);
+  assert.match(await text('file_history', { path: '../Sibling/x.ts' }), /^No data: `\.\.\/Sibling\/x\.ts` is outside Odon/);
   await c.close();
 });

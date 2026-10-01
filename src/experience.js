@@ -69,10 +69,10 @@ export function logFiles(dataDir) {
 // session = { first, last, prompted, eps: [episode] }
 // episode = { start, last, r: {file: first read ts}, e: {file: first edit ts}, ed: [[ts, file]],
 //   rc: {file: reads}, ec: {file: edits}, ag: {file: [agent types]}, runs: [[ts, fam, ok, sig]],
-//   calls: [[ts, tool, tokens, noData, [files], ms]] }
+//   calls: [[ts, tool, tokens, noData, [files], ms]], of?: start of the session-project episode it mirrors }
 // An episode without edits is kept (for reads, calls and measurement) but never counted as evidence.
 
-export const emptyAggregate = () => ({ version: 3, at: 0, logs: {}, projects: {} });
+export const emptyAggregate = () => ({ version: 4, at: 0, logs: {}, projects: {} });
 
 const hidden = (obj, key, value) => Object.defineProperty(obj, key, { value, enumerable: false, writable: true, configurable: true });
 
@@ -92,12 +92,19 @@ const intern = (proj, list, map, v) => {
 };
 const fileId = (proj, rel) => intern(proj, 'files', '_fi', rel);
 
-function projectOf(agg, cwd) {
-  const root = projectRoot(cwd);
-  if (!root) return null;
+export function projectAt(agg, root) {
   const k = keyOf(root);
   if (!agg.projects[k]) agg.projects[k] = { root, name: path.basename(root), files: [], sessions: {}, fams: [], sigs: [], git: null };
   return index(agg.projects[k]);
+}
+
+// The git repo holding a file or folder: a separate repo nested inside the session's project (such as frontend/
+// with its own .git), or the project itself. Repos outside the project are never returned.
+export function repoFor(root, file) {
+  const abs = path.resolve(root, String(file));
+  if (!relPath(root, abs)) return root;
+  const r = projectRoot(abs);
+  return r && keyOf(r) !== keyOf(root) && relPath(root, r) && fs.existsSync(path.join(r, '.git')) ? r : root;
 }
 
 // A path relative to the project root with forward slashes, or null when it is outside the project.
@@ -156,11 +163,26 @@ function episodeFor(s, ts, e) {
   return s.eps[s.eps.length - 1];
 }
 
+// Work on a file in a nested repo is filed under that repo, in an episode that mirrors the session's current one
+// (`of` is its start), so episode boundaries still follow the user's prompts.
+function mirror(agg, repo, sid, ep, ts) {
+  const p = projectAt(agg, repo);
+  if (p._ctx) p._ctx = null;
+  const s = (p.sessions[sid] ||= { first: ts, last: ts, prompted: false, eps: [] });
+  if (ts < s.first) s.first = ts;
+  if (ts > s.last) s.last = ts;
+  let x = s.eps[s.eps.length - 1];
+  if (!x || x.of !== ep.start) s.eps.push(x = { ...newEpisode(ts), of: ep.start });
+  if (ts > x.last) x.last = ts;
+  return [p, x];
+}
+
 // Applies one logged hook event to the aggregate.
 export function ingest(agg, e, ts) {
   if (!e || !e.session_id || !e.cwd) return;
-  const proj = projectOf(agg, e.cwd);
-  if (!proj) return;
+  const root = projectRoot(e.cwd);
+  if (!root) return;
+  const proj = projectAt(agg, root);
   if (proj._ctx) proj._ctx = null; // new evidence: the next query recomputes
   const s = (proj.sessions[e.session_id] ||= { first: ts, last: ts, prompted: false, eps: [] });
   if (ts < s.first) s.first = ts;
@@ -171,19 +193,13 @@ export function ingest(agg, e, ts) {
   const ev = e.hook_event_name;
 
   if (ev === 'PreToolUse' && (READ_TOOLS.has(tool) || EDIT_TOOLS.has(tool))) {
-    const rel = relPath(proj.root, e.tool_input?.file_path || e.tool_input?.notebook_path);
-    if (!rel) return;
-    const f = fileId(proj, rel);
-    const agent = e.agent_type || (e.agent_id ? 'subagent' : 'main');
-    if (!(ep.ag[f] ||= []).includes(agent)) ep.ag[f].push(agent);
-    if (READ_TOOLS.has(tool)) {
-      if (!(f in ep.r)) ep.r[f] = ts;
-      ep.rc[f] = (ep.rc[f] || 0) + 1;
-    } else {
-      if (!(f in ep.e)) ep.e[f] = ts;
-      ep.ec[f] = (ep.ec[f] || 0) + 1;
-      if (ep.ed.length < 2000) ep.ed.push([ts, f]);
-    }
+    const file = e.tool_input?.file_path || e.tool_input?.notebook_path;
+    if (!relPath(proj.root, file)) return;
+    const abs = path.resolve(proj.root, file);
+    const repo = repoFor(proj.root, abs);
+    const [p, x] = repo === proj.root ? [proj, ep] : mirror(agg, repo, e.session_id, ep, ts);
+    const f = fileId(p, relPath(p.root, abs));
+    recordFile(x, f, tool, e, ts);
     return;
   }
   if ((ev === 'PostToolUse' || ev === 'PostToolUseFailure') && tool === 'Bash') {
@@ -198,9 +214,33 @@ export function ingest(agg, e, ts) {
   }
   const m = MCP_TOOL_RE.exec(tool);
   if (m && (ev === 'PostToolUse' || ev === 'PostToolUseFailure')) {
+    // Answers cite files relative to the session's project; a call is recorded in every repo whose files it cites.
     const text = responseText(e.tool_response);
-    const files = [...new Set([...text.matchAll(/`([^`\n]+)`/g)].map((x) => x[1]).filter((p) => /[\w-]\.\w+$|\//.test(p)))].slice(0, 20);
-    ep.calls.push([ts, m[1], tokensOf(text), text.startsWith(NO_DATA) ? 1 : 0, files.map((p) => fileId(proj, p)), e.duration_ms || 0]);
+    const cited = [...new Set([...text.matchAll(/`([^`\n]+)`/g)].map((x) => x[1]).filter((p) => /[\w-]\.\w+$|\//.test(p)))].slice(0, 20);
+    const byRepo = new Map([[proj.root, []]]);
+    for (const c of cited) {
+      const abs = path.resolve(proj.root, c);
+      const repo = relPath(proj.root, abs) ? repoFor(proj.root, abs) : proj.root;
+      (byRepo.get(repo) || byRepo.set(repo, []).get(repo)).push(repo === proj.root ? c : relPath(repo, abs));
+    }
+    for (const [repo, files] of byRepo) {
+      if (repo === proj.root && !files.length && byRepo.size > 1) continue;
+      const [p, x] = repo === proj.root ? [proj, ep] : mirror(agg, repo, e.session_id, ep, ts);
+      x.calls.push([ts, m[1], tokensOf(text), text.startsWith(NO_DATA) ? 1 : 0, files.map((c) => fileId(p, c)), e.duration_ms || 0]);
+    }
+  }
+}
+
+function recordFile(ep, f, tool, e, ts) {
+  const agent = e.agent_type || (e.agent_id ? 'subagent' : 'main');
+  if (!(ep.ag[f] ||= []).includes(agent)) ep.ag[f].push(agent);
+  if (READ_TOOLS.has(tool)) {
+    if (!(f in ep.r)) ep.r[f] = ts;
+    ep.rc[f] = (ep.rc[f] || 0) + 1;
+  } else {
+    if (!(f in ep.e)) ep.e[f] = ts;
+    ep.ec[f] = (ep.ec[f] || 0) + 1;
+    if (ep.ed.length < 2000) ep.ed.push([ts, f]);
   }
 }
 
@@ -251,7 +291,7 @@ function prune(agg, now) {
 
 // Rebuilds lookup tables after JSON.parse. Older formats are rebuilt from the logs.
 export function revive(agg) {
-  if (!agg || agg.version !== 3 || !agg.projects) return emptyAggregate();
+  if (!agg || agg.version !== 4 || !agg.projects) return emptyAggregate();
   for (const proj of Object.values(agg.projects)) index(proj);
   return agg;
 }
@@ -455,15 +495,15 @@ export function history(proj, f, now = Date.now()) {
 const epEv = (s) => `episodes: ${s.n} on ${plural(s.days, 'day')}, last ${day(s.last)}`;
 const ev = (x) => [x.s && epEv(x.s), x.g && `git: ${x.g.n} of ${x.g.of} commits, last ${day(x.g.last)}`].filter(Boolean).join('; ');
 
-function capped(header, lines, footer) {
-  const budget = T.maxTokens * 4; // characters, the same estimate used everywhere
+function capped(header, lines, footer, tokens = T.maxTokens) {
+  const budget = tokens * 4; // characters, the same estimate used everywhere
   let out = header + '\n';
   let omitted = 0;
   for (const l of lines) {
     if ((out + l + '\n' + footer).length > budget - 60) { omitted++; continue; }
     out += l + '\n';
   }
-  if (omitted) out += `(${omitted} more line${omitted > 1 ? 's' : ''} left out to stay under ${T.maxTokens} tokens)\n`;
+  if (omitted) out += `(${omitted} more line${omitted > 1 ? 's' : ''} left out to stay under ${tokens} tokens)\n`;
   return (out + footer).slice(0, budget);
 }
 
@@ -475,14 +515,18 @@ function scope(proj, now) {
 
 const fileOf = (proj, p) => proj._fi.get(relPath(proj.root, p) || slash(String(p || '')).replace(/^\.\//, ''));
 
-export function answerFileContext(proj, name, paths, now = Date.now()) {
+// o.prefix: where the repo sits inside the session's project ("frontend/"), so cited paths open from there;
+// o.tokens: this answer's share of the cap when one call spans several repos.
+export function answerFileContext(proj, name, paths, now = Date.now(), o = {}) {
   if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
   index(proj);
+  const pre = o.prefix || '';
   const lines = [];
   let any = false;
   for (const p of paths.slice(0, 10)) {
+    if (p && !relPath(proj.root, p)) { lines.push(`- \`${p}\`: outside ${name}; KevMind only answers for repos inside the session's folder.`); continue; }
     const f = fileOf(proj, p);
-    const label = f === undefined ? relPath(proj.root, p) || p : proj.files[f];
+    const label = pre + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]);
     if (f === undefined) { lines.push(`- \`${label}\`: no data (never read or edited in recorded sessions, not in git history).`); continue; }
     const parts = partners(proj, f, now).slice(0, T.maxItems);
     const reads = readFirst(proj, f, now).slice(0, T.maxItems);
@@ -494,19 +538,20 @@ export function answerFileContext(proj, name, paths, now = Date.now()) {
     }
     any = true;
     lines.push(`- \`${label}\`:`);
-    for (const x of parts) lines.push(`  - changes with \`${proj.files[x.f]}\` (${ev(x)})`);
-    for (const x of reads) lines.push(`  - usually read first: \`${proj.files[x.f]}\` (${epEv(x)})`);
+    for (const x of parts) lines.push(`  - changes with \`${pre}${proj.files[x.f]}\` (${ev(x)})`);
+    for (const x of reads) lines.push(`  - usually read first: \`${pre}${proj.files[x.f]}\` (${epEv(x)})`);
     if (hot) lines.push(`  - ${hot}`);
   }
   const header = any ? `KevMind history for ${name}:` : `${NO_DATA} no pattern above the thresholds for these files in ${name}.`;
-  return capped(header, lines, scope(proj, now));
+  return capped(header, lines, scope(proj, now), o.tokens);
 }
 
-export function answerFileHistory(proj, name, p, now = Date.now()) {
+export function answerFileHistory(proj, name, p, now = Date.now(), o = {}) {
   if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
   index(proj);
+  if (p && !relPath(proj.root, p)) return `${NO_DATA} \`${p}\` is outside ${name}; KevMind only answers for repos inside the session's folder.`;
   const f = fileOf(proj, p);
-  const label = f === undefined ? relPath(proj.root, p) || p : proj.files[f];
+  const label = (o.prefix || '') + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]);
   if (f === undefined) return `${NO_DATA} \`${label}\` was never read or edited in recorded ${name} sessions and is not in its git history.\n${scope(proj, now)}`;
   const h = history(proj, f, now);
   if (!h.reads && !h.edits && !h.git.changes) return `${NO_DATA} \`${label}\` has no recorded activity in the window.\n${scope(proj, now)}`;

@@ -191,3 +191,27 @@ test('the panel says what is missing when no pair qualifies yet', () => {
   assert.equal(pv.episodePairs, 0);
   assert.deepEqual(pv.nearest, { a: 'a.ts', b: 'b.ts', n: 4, days: 1, of: 4 });
 });
+
+test('work on a nested repo is filed under that repo, with episodes that follow the session prompts', () => {
+  const root = tmp();
+  for (const r of ['', 'frontend']) fs.mkdirSync(path.join(root, r, '.git'), { recursive: true });
+  const agg = emptyAggregate();
+  for (let i = 0; i < 3; i++) turn(agg, root, 'long', NOW - (i + 2) * DAY, { edits: ['frontend/a.ts', 'frontend/b.ts', 'notes.md'] });
+  turn(agg, root, 'long', NOW - (2 * DAY) + 60_000, { reads: ['frontend/a.ts'] }); // a read-only turn: no episode anywhere
+  const front = projOf(agg, path.join(root, 'frontend'));
+  assert.deepEqual(front.files.sort(), ['a.ts', 'b.ts']);
+  assert.deepEqual(projOf(agg, root).files, ['notes.md']);
+  assert.deepEqual(gate(front, NOW), { episodes: 3, days: 3, commits: 0, gitOk: false });
+  assert.match(answerFileContext(front, 'Odon/frontend', ['a.ts'], NOW, { prefix: 'frontend/' }), /changes with `frontend\/b\.ts` \(episodes: 3 on 3 days/);
+
+  // A call citing frontend files (relative to the session root) is measured in the frontend repo; a new session,
+  // since a file already touched earlier in a session doesn't count as following a suggestion.
+  const t = NOW - DAY;
+  ingest(agg, { session_id: 'next', cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'next' }, t - 1000);
+  ingest(agg, { session_id: 'next', cwd: root, hook_event_name: 'PostToolUse', tool_name: 'mcp__plugin_kevmind_experience__file_context',
+    tool_response: [{ type: 'text', text: 'KevMind history for Odon/frontend:\n- `frontend/a.ts`:\n  - changes with `frontend/b.ts`' }] }, t);
+  ingest(agg, { session_id: 'next', cwd: root, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'frontend', 'b.ts') } }, t + 60_000);
+  const m = measure(front, NOW);
+  assert.deepEqual([m.calls, m.withSuggestions, m.followed], [1, 1, 1]);
+  assert.equal(measure(projOf(agg, root), NOW).calls, 0);
+});

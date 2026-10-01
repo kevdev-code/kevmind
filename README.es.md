@@ -98,6 +98,8 @@ La evidencia viene de dos fuentes: el registro de KevMind del trabajo pasado de 
 
 Un episodio de trabajo es un turno de prompt que termina con al menos una edición; sin prompts, un bloque de actividad separado del siguiente por más de 30 minutos. Las compactaciones y los mensajes del sistema no abren uno nuevo, así que una sola sesión larga deja muchos episodios. Además, cada patrón tiene que aparecer en al menos 2 días distintos, así que algo que solo se repite dentro de una conversación nunca califica. Cada resultado tiene su propio umbral; no hay un mínimo general por proyecto aparte de los 20 commits que necesita git.
 
+Cada archivo pertenece al repositorio git que lo contiene. Si corres Claude en la raíz de un repositorio pero trabajas en `frontend/` y `backend/`, y esos son repositorios git separados, su historia se guarda y se responde por repositorio, y la respuesta nombra el repositorio del que viene. Nunca se responde por repositorios fuera de la carpeta donde corre Claude.
+
 Cada respuesta:
 
 - cita su fuente y sus conteos, como "episodes: 4 on 3 days" o "git: 6 of 9 commits"; la evidencia de episodios va antes que la de git;
