@@ -23,7 +23,8 @@ export const THRESHOLDS = {
   failureEpisodes: 2,      // the same failure (command family + error) in at least this many episodes
   fixRepeats: 2,           // the same fix before the next success at least this many times
   fixWindowMs: 15 * 60_000,
-  hubShare: 0.4,           // a file in more than this share of episodes or commits says nothing as a partner
+  hubShare: 0.4,           // a file in more than this share of episodes or commits is a hub: it changes with everything...
+  hubLift: 1.25,           // ...so as a partner it must change with the file at least this many times as often as overall
   hubMinSample: 10,        // (the hub rule applies once there are this many episodes or commits)
   minGitCommits: 20,       // git evidence counts once the window holds this many commits
   gitMaxCommits: 2000,
@@ -51,7 +52,10 @@ const GIT_READ = new Set(['log']);
 export const MCP_TOOL_RE = /^mcp__(?:plugin_kevmind_experience|kevmind(?:-experience)?)__(\w+)$/; // plugin and manual installs
 export const NO_DATA = 'No data:';
 
-const day = (ts) => new Date(ts).toISOString().slice(0, 10);
+// The machine's local calendar day, for display and for counting distinct days: an evening that crosses midnight
+// UTC is still one day of work. Timestamps are stored as they are.
+const pad2 = (n) => String(n).padStart(2, '0');
+const day = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const slash = (p) => p.split(path.sep).join('/');
 
@@ -353,10 +357,13 @@ function context(proj, now) {
   const commits = proj.git?.commits || [];
   const commitsOf = new Map();
   for (const c of commits) for (const f of c[2]) (commitsOf.get(f) || commitsOf.set(f, []).get(f)).push(c);
-  const hub = (f) => episodes.length >= T.hubMinSample
-    && (((editedIn.get(f)?.length || 0) / episodes.length > T.hubShare) || ((readIn.get(f) || 0) / episodes.length > T.hubShare));
-  const gitHub = (f) => commits.length >= T.hubMinSample && (commitsOf.get(f)?.length || 0) / commits.length > T.hubShare;
-  const ctx = { at: now, all, episodes, editedIn, commitsOf, hub, gitHub, gate: gate(proj, now, episodes) };
+  // A hub partner (in most episodes or commits anyway) only counts when it goes with the file clearly more often
+  // than it goes with everything: share >= its overall rate x hubLift.
+  const rate = (f) => Math.max(editedIn.get(f)?.length || 0, readIn.get(f) || 0) / episodes.length;
+  const hubOk = (g, share) => episodes.length < T.hubMinSample || rate(g) <= T.hubShare || share >= Math.min(1, rate(g) * T.hubLift);
+  const gitRate = (f) => (commitsOf.get(f)?.length || 0) / commits.length;
+  const gitHubOk = (g, share) => commits.length < T.hubMinSample || gitRate(g) <= T.hubShare || share >= Math.min(1, gitRate(g) * T.hubLift);
+  const ctx = { at: now, all, episodes, editedIn, commitsOf, hubOk, gitHubOk, gate: gate(proj, now, episodes) };
   hidden(proj, '_ctx', ctx);
   return ctx;
 }
@@ -387,7 +394,7 @@ export function partners(proj, f, now = Date.now()) {
     }
   }
   for (const [g, c] of count) {
-    if (c.n >= T.coEditEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.coEditShare && !ctx.hub(g)) {
+    if (c.n >= T.coEditEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.coEditShare && ctx.hubOk(g, c.n / mine.length)) {
       out.set(g, { f: g, s: { n: c.n, days: c.days.size, of: mine.length, last: c.last } });
     }
   }
@@ -396,7 +403,7 @@ export function partners(proj, f, now = Date.now()) {
     const gc = new Map();
     for (const c of theirs) for (const g of c[2]) if (g !== f) { const x = gc.get(g) || { n: 0, last: 0 }; x.n++; x.last = Math.max(x.last, c[1]); gc.set(g, x); }
     for (const [g, c] of gc) {
-      if (c.n >= T.gitCoChangeCommits && c.n / theirs.length >= T.gitCoChangeShare && !ctx.gitHub(g)) {
+      if (c.n >= T.gitCoChangeCommits && c.n / theirs.length >= T.gitCoChangeShare && ctx.gitHubOk(g, c.n / theirs.length)) {
         const o = out.get(g) || { f: g };
         o.g = { n: c.n, of: theirs.length, last: c.last };
         out.set(g, o);
@@ -422,7 +429,7 @@ export function readFirst(proj, f, now = Date.now()) {
       count.set(g, c);
     }
   }
-  return [...count].filter(([g, c]) => c.n >= T.readFirstEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.readFirstShare && !ctx.hub(g))
+  return [...count].filter(([g, c]) => c.n >= T.readFirstEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.readFirstShare && ctx.hubOk(g, c.n / mine.length))
     .map(([g, c]) => ({ f: g, n: c.n, days: c.days.size, of: mine.length, last: c.last })).sort((a, b) => b.n - a.n);
 }
 
@@ -493,7 +500,10 @@ export function history(proj, f, now = Date.now()) {
 // ---- answers (what the MCP tools return) ---------------------------------------------------------------------
 
 const epEv = (s) => `episodes: ${s.n} on ${plural(s.days, 'day')}, last ${day(s.last)}`;
-const ev = (x) => [x.s && epEv(x.s), x.g && `git: ${x.g.n} of ${x.g.of} commits, last ${day(x.g.last)}`].filter(Boolean).join('; ');
+// Both sources on one line, episodes first, with the latest date of either.
+const ev = (x) => [x.s && `episodes: ${x.s.n} on ${plural(x.s.days, 'day')}`, x.g && `git: ${x.g.n} of ${x.g.of} commits`,
+  `last ${day(Math.max(x.s?.last || 0, x.g?.last || 0))}`].filter(Boolean).join('; ');
+const stronger = (a, b) => (!a ? b : !b ? a : b.n / b.of > a.n / a.of ? b : a);
 
 function capped(header, lines, footer, tokens = T.maxTokens) {
   const budget = tokens * 4; // characters, the same estimate used everywhere
@@ -522,23 +532,43 @@ export function answerFileContext(proj, name, paths, now = Date.now(), o = {}) {
   index(proj);
   const pre = o.prefix || '';
   const lines = [];
-  let any = false;
+  const asked = []; // [label, file id or undefined, outside?]
   for (const p of paths.slice(0, 10)) {
-    if (p && !relPath(proj.root, p)) { lines.push(`- \`${p}\`: outside ${name}; KevMind only answers for repos inside the session's folder.`); continue; }
+    if (p && !relPath(proj.root, p)) { asked.push([p, undefined, true]); continue; }
     const f = fileOf(proj, p);
-    const label = pre + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]);
+    if (!asked.some((a) => a[1] !== undefined && a[1] === f)) asked.push([pre + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]), f, false]);
+  }
+  const ids = new Set(asked.map((a) => a[1]).filter((f) => f !== undefined));
+  const parts = new Map([...ids].map((f) => [f, partners(proj, f, now)]));
+  // Two asked files that change together: said once, with the stronger direction's evidence from each source.
+  const pairs = new Map();
+  for (const [f, list] of parts) {
+    for (const x of list) {
+      if (!ids.has(x.f)) continue;
+      const k = [Math.min(f, x.f), Math.max(f, x.f)].join('|');
+      const pr = pairs.get(k) || { a: Math.min(f, x.f), b: Math.max(f, x.f), s: null, g: null };
+      pr.s = stronger(pr.s, x.s);
+      pr.g = stronger(pr.g, x.g);
+      pairs.set(k, pr);
+    }
+  }
+  for (const pr of pairs.values()) lines.push(`- \`${pre}${proj.files[pr.a]}\` and \`${pre}${proj.files[pr.b]}\` usually change together (${ev(pr)})`);
+  let any = pairs.size > 0;
+  for (const [label, f, outside] of asked) {
+    if (outside) { lines.push(`- \`${label}\`: outside ${name}; KevMind only answers for repos inside the session's folder.`); continue; }
     if (f === undefined) { lines.push(`- \`${label}\`: no data (never read or edited in recorded sessions, not in git history).`); continue; }
-    const parts = partners(proj, f, now).slice(0, T.maxItems);
+    const others = parts.get(f).filter((x) => !ids.has(x.f)).slice(0, T.maxItems);
     const reads = readFirst(proj, f, now).slice(0, T.maxItems);
     const h = history(proj, f, now);
     const hot = h.git.fixes >= T.hotspotFixCommits ? `often fixed: ${h.git.fixes} of ${h.git.changes} commits touching it are fixes (git)` : '';
-    if (!parts.length && !reads.length && !hot) {
+    if (!others.length && !reads.length && !hot) {
+      if (parts.get(f).length) continue; // its only pattern is the pair above
       lines.push(`- \`${label}\`: no pattern above the thresholds (edited in ${plural(h.editEpisodes, 'episode')} on ${plural(h.editDays, 'day')}, ${plural(h.git.changes, 'commit')}).`);
       continue;
     }
     any = true;
     lines.push(`- \`${label}\`:`);
-    for (const x of parts) lines.push(`  - changes with \`${pre}${proj.files[x.f]}\` (${ev(x)})`);
+    for (const x of others) lines.push(`  - changes with \`${pre}${proj.files[x.f]}\` (${ev(x)})`);
     for (const x of reads) lines.push(`  - usually read first: \`${pre}${proj.files[x.f]}\` (${epEv(x)})`);
     if (hot) lines.push(`  - ${hot}`);
   }

@@ -162,10 +162,16 @@ process.stdin.on('data', (chunk) => {
     if (!line) continue;
     let msg;
     try { msg = JSON.parse(line); } catch { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); continue; }
-    handle(msg).then(
+    const p = handle(msg).then(
       (result) => { if (msg.id !== undefined && result !== undefined) send({ jsonrpc: '2.0', id: msg.id, result }); },
       (e) => { if (msg.id !== undefined) send({ jsonrpc: '2.0', id: msg.id, error: { code: e.code || -32603, message: e.message } }); },
-    );
+    ).finally(() => pending.delete(p));
+    pending.add(p);
   }
 });
-process.stdin.on('end', () => process.exit(0));
+// When the client closes stdin, answer what was already asked, then exit.
+const pending = new Set();
+process.stdin.on('end', async () => {
+  await Promise.allSettled(pending);
+  process.stdout.write('', () => process.exit(0));
+});

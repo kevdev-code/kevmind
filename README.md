@@ -111,7 +111,7 @@ Each file belongs to the git repo that holds it. If you run Claude at a repo's r
 
 Every answer:
 
-- cites its source and counts, such as "episodes: 4 on 3 days, last 2026-10-21" or "git: 6 of 9 commits"; episode evidence ranks above git;
+- cites its source and counts on one line, episodes first, such as "changes with `b.ts` (episodes: 5 on 2 days; git: 7 of 12 commits; last 2026-10-21)". Dates and days are in your machine's local time zone. Two files you ask about that change together are reported once, as "usually change together";
 - stays under about 400 tokens;
 - says "No data:" instead of guessing. Nothing is served below fixed thresholds, for example "edited together in at least 3 episodes on 2 different days and in half the episodes that edited the file", "read first in at least 3 episodes" or "the same failure in at least 2 episodes on 2 days, with the same fix twice". All thresholds live in `src/experience.js`.
 

@@ -110,7 +110,7 @@ Cada archivo pertenece al repositorio git que lo contiene. Si corres Claude en l
 
 Cada respuesta:
 
-- cita su fuente y sus conteos, como "episodes: 4 on 3 days" o "git: 6 of 9 commits"; la evidencia de episodios va antes que la de git;
+- cita su fuente y sus conteos en una sola línea, primero los episodios, como "changes with `b.ts` (episodes: 5 on 2 days; git: 7 of 12 commits; last 2026-10-21)". Las fechas y los días usan la zona horaria local de tu computadora. Dos archivos consultados que cambian juntos se reportan una sola vez, como "usually change together";
 - se queda por debajo de unos 400 tokens;
 - dice "No data:" en vez de adivinar. Nada por debajo de umbrales fijos se entrega, por ejemplo "editados juntos en al menos 3 episodios, en 2 días distintos y en la mitad de los episodios que editaron el archivo", "leído antes en al menos 3 episodios" o "el mismo fallo en al menos 2 episodios en 2 días, con el mismo arreglo dos veces". Todos los umbrales están en `src/experience.js`.
 

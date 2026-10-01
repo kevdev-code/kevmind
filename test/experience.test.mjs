@@ -45,7 +45,7 @@ test('one long session on one day never qualifies; the same pattern on a second 
   assert.match(one, /edited in 5 episodes on 1 day/);
 
   turn(agg, root, 'long', NOW - 2 * DAY, { edits: ['a.ts', 'b.ts'] }); // same session, a later day
-  assert.match(answerFileContext(p, 'P', ['a.ts'], NOW), /changes with `b\.ts` \(episodes: 6 on 2 days, last \d{4}-\d\d-\d\d\)/);
+  assert.match(answerFileContext(p, 'P', ['a.ts'], NOW), /changes with `b\.ts` \(episodes: 6 on 2 days; last \d{4}-\d\d-\d\d\)/);
   assert.deepEqual(gate(p, NOW), { episodes: 6, days: 2, commits: 0, gitOk: false });
 });
 
@@ -214,4 +214,46 @@ test('work on a nested repo is filed under that repo, with episodes that follow 
   const m = measure(front, NOW);
   assert.deepEqual([m.calls, m.withSuggestions, m.followed], [1, 1, 1]);
   assert.equal(measure(projOf(agg, root), NOW).calls, 0);
+});
+
+test('a hub file still counts as a partner when it goes with the file far more often than with everything', () => {
+  // style.css is edited in 7 of 12 episodes (a hub, over 40%), but in 4 of the 4 that edit state.js.
+  const root = tmp();
+  const agg = emptyAggregate();
+  for (let i = 0; i < 4; i++) turn(agg, root, 'x', NOW - (i + 1) * DAY, { edits: ['state.js', 'style.css'] });
+  for (let i = 0; i < 3; i++) turn(agg, root, 'x', NOW - (i + 5) * DAY, { edits: ['style.css', `page${i}.html`] });
+  for (let i = 0; i < 5; i++) turn(agg, root, 'x', NOW - (i + 8) * DAY, { edits: [`other${i}.js`] });
+  const p = projOf(agg, root);
+  assert.match(answerFileContext(p, 'P', ['state.js'], NOW), /changes with `style\.css` \(episodes: 4 on 4 days; last/);
+
+  // A hub that goes with the file only about as often as with everything stays out: 8 of 12, and 2 of 3 here.
+  const flat = emptyAggregate();
+  for (let i = 0; i < 2; i++) turn(flat, root, 'y', NOW - (i + 1) * DAY, { edits: ['a.ts', 'hub.css'] });
+  turn(flat, root, 'y', NOW - 3 * DAY, { edits: ['a.ts'] });
+  for (let i = 0; i < 6; i++) turn(flat, root, 'y', NOW - (i + 4) * DAY, { edits: ['hub.css', `x${i}.ts`] });
+  for (let i = 0; i < 3; i++) turn(flat, root, 'y', NOW - (i + 10) * DAY, { edits: [`y${i}.ts`] });
+  assert.ok(!/hub\.css/.test(answerFileContext(projOf(flat, root), 'P', ['a.ts'], NOW)));
+});
+
+test('two asked files that change together are reported once, with both sources on one line', { skip: !hasGit() && 'needs git' }, async () => {
+  const root = tmp();
+  const run = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore', windowsHide: true });
+  run('-c', 'init.defaultBranch=main', 'init');
+  const commit = (files, msg) => {
+    for (const f of files) fs.appendFileSync(path.join(root, f), msg + '\n');
+    run('add', '-A');
+    run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', msg);
+  };
+  for (let i = 0; i < 4; i++) commit(['state.js', 'style.css'], `ui ${i}`);
+  for (let i = 0; i < 18; i++) commit([`f${i}.js`], `chore ${i}`);
+  const agg = emptyAggregate();
+  const now = Date.now();
+  for (let i = 0; i < 3; i++) turn(agg, root, 's', now - (i + 1) * DAY, { edits: ['state.js', 'style.css'] });
+  const p = projOf(agg, root);
+  await refreshGit(p, now);
+  const text = answerFileContext(p, 'P', ['style.css', 'state.js'], now);
+  const together = text.match(/usually change together/g) || [];
+  assert.equal(together.length, 1, text);
+  assert.match(text, /- `state\.js` and `style\.css` usually change together \(episodes: 3 on 3 days; git: 4 of 4 commits; last \d{4}-\d\d-\d\d\)/);
+  assert.ok(!/changes with `st/.test(text), 'the pair is not repeated under each file');
 });
