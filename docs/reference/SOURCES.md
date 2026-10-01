@@ -14,4 +14,4 @@ Carter (1831–1897), via Wikimedia Commons. They were traced once into the outl
 | `Gray718-front.png` | Gray718's right half and its mirror image: a symmetric coronal outline | derived |
 | `Gray725-top.png` | Gray725 and its mirror image: both hemispheres from above | derived |
 
-The side view's region map (`SHAPE`) was traced from a reference illustration chosen by the owner that is not in this folder. `SHAPE_PD` is the same map traced from Gray 728 (lobes, cerebellum) with the brainstem from the 1892 plate, mapped onto Gray 728 by the cerebrum's bounding box; the prototype shows it with `?side=pd` until one is chosen.
+The side view's region map (`SHAPE`) is traced from Gray 728 (the lobes by color, and the cerebellum), with the brainstem traced from the 1892 plate and mapped onto Gray 728 by the cerebrum's bounding box.
