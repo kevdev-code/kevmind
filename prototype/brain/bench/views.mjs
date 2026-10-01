@@ -1,8 +1,8 @@
 // The brain from six fixed views (left, right, top, front, back and the 3/4 opening view), at ~600 and ~3,000 nodes:
 // a screenshot of each, the outline measured in it, and one contact sheet per size. Each sheet also overlays the
-// public-domain plates in docs/reference/ on the front, back and top views at 50%, next to the plates themselves.
-//   [REF=<side-view image, front at the left> REF_BOX=x0,y0,x1,y1] node bench/views.mjs <outDir>
-// REF adds the same for the left view. The overlays are shot with the shell 2.5 times as bright, so its outline reads.
+// public-domain plates in docs/reference/ on the left, front, back and top views at 50%, next to the plates themselves.
+//   node bench/views.mjs <outDir>
+// The overlays are shot with the shell 2.5 times as bright, so its outline reads.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -25,17 +25,13 @@ const VIEWS = [
 // Plates over views: which part of our outline each one is matched to (one scale, centers aligned), and its own
 // bounding box in pixels.
 const OVERLAYS = [
+  { view: 'Left', title: 'Left over Gray 728 (lobes; the side map was traced from it)', plates: [{ file: 'Gray728.png', w: 500, h: 348, box: [16, 19, 497, 313], part: 'cer' }] },
   { view: 'Front', title: 'Front over Gray 718 (coronal section, right half mirrored)', plates: [{ file: 'Gray718-front.png', w: 630, h: 590, box: [8, 78, 621, 559], part: 'cer' }] },
   { view: 'Back', title: 'Back over Gray 718 (cerebrum) and Gray 703 (cerebellum)', plates: [{ file: 'Gray718-front.png', w: 630, h: 590, box: [8, 78, 621, 559], part: 'cer' }, { file: 'Gray703.png', w: 600, h: 350, box: [5, 48, 585, 332], part: 'cbl' }] },
   { view: 'Top', title: 'Top over Gray 725 (left hemisphere from above, mirrored)', plates: [{ file: 'Gray725-top.png', w: 494, h: 600, box: [10, 9, 483, 599], part: 'cer' }] },
 ];
 fs.mkdirSync(out, { recursive: true });
-if (process.env.REF) {
-  const ext = path.extname(process.env.REF), b = (process.env.REF_BOX || '20,112,955,873').split(',').map(Number);
-  fs.copyFileSync(process.env.REF, path.join(out, 'reference' + ext));
-  OVERLAYS.unshift({ view: 'Left', title: 'Left over the side reference', plates: [{ file: 'reference' + ext, w: 980, h: 980, box: b, part: 'all', local: true }] });
-}
-for (const o of OVERLAYS) for (const pl of o.plates) if (!pl.local) fs.copyFileSync(path.join(REFS, pl.file), path.join(out, pl.file));
+for (const o of OVERLAYS) for (const pl of o.plates) fs.copyFileSync(path.join(REFS, pl.file), path.join(out, pl.file));
 
 const server = spawn(process.execPath, [path.join(HERE, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore', windowsHide: true });
 process.on('exit', () => { try { server.kill(); } catch {} });
