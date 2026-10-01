@@ -11,6 +11,86 @@ const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: tr
 const note = (name, description, body, type = 'project') =>
   `---\nname: ${name}\ndescription: "${description}"\nmetadata:\n  node_type: memory\n  type: ${type}\n  modified: 2026-09-01T10:00:00.000Z\n---\n\n${body}\n`;
 
+const gitIn = (dir) => {
+  const run = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore', windowsHide: true });
+  return {
+    init: () => run('-c', 'init.defaultBranch=main', 'init'),
+    commitAll: (msg) => { run('add', '-A'); run('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', msg); },
+  };
+};
+
+// A workspace like OdonMind: a root repository with backend/ and frontend/ as their own repositories (ignored by
+// the root), a CLAUDE.md at the root that every one of them inherits, and memory notes for the root project.
+// Each line of the root CLAUDE.md tests one rule; `expect` lists what must be flagged and where.
+export function buildWorkspaceFixture(dir) {
+  const home = path.join(dir, 'home');
+  const root = path.join(dir, 'Workspace');
+  const backend = path.join(root, 'backend');
+  const frontend = path.join(root, 'frontend');
+  write(path.join(home, '.claude', 'CLAUDE.md'), '# User\n');
+
+  write(path.join(backend, 'src', 'app.ts'), 'export {};\n');
+  write(path.join(backend, 'src', 'db', 'tenantContext.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'service', 'types', 'user.types.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'data', 'rolePermissions.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'lib', 'formatDate.ts'), 'export {};\n');
+  write(path.join(frontend, 'CLAUDE.md'), '# Frontend\n\nHelpers live in `src/helpers/gone-helper.ts`.\n');
+  write(path.join(root, 'docs', 'guide.md'), '# Guide\n');
+  write(path.join(root, '.gitignore'), 'backend/\nfrontend/\n');
+  write(path.join(root, 'CLAUDE.md'), [
+    '# Workspace',                                                                                  // 1
+    '',                                                                                             // 2
+    'Frontend types live in `service/types/user.types.ts` and `data/rolePermissions.ts`.',          // 3: found under frontend/src
+    'The API starts in `backend/src/app.ts`.',                                                      // 4: found in the backend repo
+    'There is **no** `middleware/tenantContext.ts`. Tenant context lives in `db/tenantContext.ts`.', // 5: negated, then found
+    'Old code in `backend/src/gone.ts` must be ported.',                                            // 6: MISSING
+    'See [the guide](docs/guide.md) and [the old guide](docs/old-guide.md).',                      // 7: link found, link MISSING
+    'El archivo `backend/src/legacy.ts` ya no existe.',                                             // 8: negated (Spanish)
+    '',                                                                                             // 9
+    "**Don't:**",                                                                                   // 10
+    '- import from `src/legacy/old-api.ts`',                                                        // 11: in a Don't list
+    '',                                                                                             // 12
+    '## Conventions',                                                                               // 13
+    '',                                                                                             // 14
+    "| Do | Don't |",                                                                               // 15
+    '|---|---|',                                                                                    // 16
+    '| use `backend/src/app.ts` | edit `src/generated/schema.ts` |',                                // 17: Don't column
+    '- ❌ never touch `src/old/thing.ts`',                                                         // 18: ❌ item
+    '',                                                                                             // 19
+    'Work happens on the backend branch `test/integration-harness`.',                              // 20: a branch, not a folder
+    '',                                                                                             // 21
+    '| Was written | Reality |',                                                                    // 22
+    '|---|---|',                                                                                    // 23
+    '| Service `doctors.service.ts` | `backend/src/app.ts` |',                                      // 24: stale column
+    '| Key file `backend/src/middleware/tenantContext.ts` | Does not exist |',                       // 25: negation elsewhere on the line
+    '',                                                                                             // 26
+    'Se borraron `.claude/worktrees/old-wt` y nada más.',                                           // 27: Spanish removal verb
+    'Fixed in a1b2c3d on `test/old-branch`, then merged.',                                         // 28: a deleted branch in a known namespace
+    'Scratch output went to `.claude/worktrees/gone-wt` that week.',                               // 29: MISSING folder, despite no git talk
+  ].join('\n') + '\n');
+  write(path.join(backend, 'test', 'app.test.ts'), 'export {};\n'); // makes "test" a known folder name
+  write(path.join(root, '.claude', 'settings.local.json'), '{}\n');   // and ".claude", as in a real project
+
+  if (hasGit()) {
+    for (const repo of [backend, frontend]) { const g = gitIn(repo); g.init(); g.commitAll('init'); }
+    execFileSync('git', ['branch', 'test/integration-harness'], { cwd: backend, stdio: 'ignore', windowsHide: true });
+    const g = gitIn(root);
+    g.init();
+    g.commitAll('init');
+  }
+
+  // The root project's memory: a note citing a file that moved.
+  const memDir = path.join(home, '.claude', 'projects', slugOf(root), 'memory');
+  write(path.join(memDir, 'MEMORY.md'), '- [Dates](dates.md) — where date formatting lives\n');
+  write(path.join(memDir, 'dates.md'), note('dates', 'Date formatting', [
+    'Dates are formatted in `frontend/src/core/utils/formatDate.ts`.', // line 10: now at frontend/src/lib/formatDate.ts
+    'Imported as `@/core/utils/formatDate`.',                          // line 11: extensionless, same file
+  ].join('\n')));
+
+  const projects = [{ root, name: 'Workspace' }, { root: backend, name: 'backend' }, { root: frontend, name: 'frontend' }];
+  return { home, root, backend, frontend, memDir, projects, git: hasGit() };
+}
+
 export function hasGit() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore', windowsHide: true }); return true; } catch { return false; }
 }

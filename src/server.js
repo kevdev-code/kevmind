@@ -225,6 +225,7 @@ function memoryApi(state) {
     const promise = scanProject(p.root, {
       reads: { since: usage.since ?? Date.now(), items: usage.reads },
       loaded: latest ? latest.instructions : [],
+      projects: projects(), // so a file shared by several projects reports its problems once, where it lives
     }).then((r) => ({ ...r, key, source: p.source }));
     cache.set(key, { at: Date.now(), promise });
     promise.catch(() => cache.delete(key));

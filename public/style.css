@@ -117,6 +117,14 @@ body.view-memory .layout { display: none; }
 .mem-issue-text { min-width: 0; }
 .mem-issue-text small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin-top: 2px; }
 .mem-none, .mem-info { color: var(--muted); font-size: 12px; padding: 2px 2px 6px; }
+.mem-shared-list { margin-bottom: 12px; }
+.mem-shared { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--muted); font-size: 13px; padding: 2px 0 4px; overflow-wrap: anywhere; }
+button.link { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.mem-paths { margin-top: 6px; font-size: 12px; }
+.mem-paths summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.mem-paths ul { margin: 6px 0 2px; display: flex; flex-direction: column; gap: 3px; }
+.mem-paths li { overflow-wrap: anywhere; }
+.mem-paths .moved { color: var(--info); }
 .copy-fix { flex: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; }
 .copy-fix:hover { border-color: var(--accent); color: var(--accent); }
 .copy-fix.done { border-color: var(--ok); color: var(--ok); }

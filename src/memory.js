@@ -120,7 +120,9 @@ export function listProjects({ cwds = new Map(), home = os.homedir() } = {}) {
 
 // reads: { since, items: [{ ts, root, path }] } from KevMind's events (Read tool calls).
 // loaded: [{ path, reason, type }] from the latest InstructionsLoaded events of this project's sessions.
-export async function scanProject(root, { home = os.homedir(), now = Date.now(), reads = null, loaded = [] } = {}) {
+// projects: [{ root, name }] every known project, so a file shared by several (a parent folder's CLAUDE.md)
+// has its problems reported once, under the project it lives in.
+export async function scanProject(root, { home = os.homedir(), now = Date.now(), reads = null, loaded = [], projects = [] } = {}) {
   root = path.resolve(root);
   const problems = [];
   const display = (p) => {
@@ -131,17 +133,31 @@ export async function scanProject(root, { home = os.homedir(), now = Date.now(),
     if (!relHome.startsWith('..') && !path.isAbsolute(relHome)) return '~/' + slash(relHome);
     return slash(p);
   };
-  const ctx = { root, home, display, problems, add: (tier, code, file, params, fix) => problems.push({ tier, code, file, params, fix }) };
+  const known = projects.map((p) => ({ key: keyOf(p.root), root: path.resolve(p.root), name: p.name || path.basename(p.root) }));
+  // The deepest known project that contains a file, when that is not the one being scanned.
+  const ownerOf = (file) => {
+    let best = null;
+    for (const p of known) {
+      const rel = path.relative(p.root, path.dirname(file));
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+      if (!best || p.root.length > best.root.length) best = p;
+    }
+    return best && best.key !== keyOf(root) ? best : null;
+  };
+  const ctx = { root, home, display, problems, ownerOf, add: (tier, code, file, params, fix) => problems.push({ tier, code, file, params, fix }) };
 
   const instructions = await scanInstructions(ctx, loaded);
   const memory = await scanAutoMemory(ctx);
   const serena = await scanSerena(ctx);
   linkNotes(ctx, memory.notes, serena.notes);
 
+  // Paths cited in a file are resolved from that file's own workspace: the nearest git root above it.
+  // Notes live outside the project, so theirs is the project root. User-level files cite nothing project-specific.
+  const own = (i) => i.scope !== 'worktree' && i.scope !== 'user' && i.scope !== 'managed' && !i.ownedBy;
   const sources = [
-    ...instructions.filter((i) => i.scope !== 'worktree').map((i) => ({ owner: i, text: i.text })),
-    ...memory.notes.map((n) => ({ owner: n, text: n.text })),
-    ...serena.notes.map((n) => ({ owner: n, text: n.text })),
+    ...instructions.filter(own).map((i) => ({ owner: i, text: i.text, base: gitRootOf(i.path), fileDir: path.dirname(i.path) })),
+    ...memory.notes.map((n) => ({ owner: n, text: n.text, base: root, fileDir: root })),
+    ...serena.notes.map((n) => ({ owner: n, text: n.text, base: root, fileDir: root })),
   ];
   const git = await checkCitations(ctx, sources);
   lastReads(ctx, memory.notes, reads, now);
@@ -178,7 +194,7 @@ function managedPaths() {
 }
 
 async function scanInstructions(ctx, loaded) {
-  const { root, home, display, add } = ctx;
+  const { root, home, display, add, ownerOf } = ctx;
   const list = [];
   const byKey = new Map();
   const take = async (file, scope, load, importedBy = null) => {
@@ -186,8 +202,9 @@ async function scanInstructions(ctx, loaded) {
     if (byKey.has(k)) return null;
     const text = await readText(file);
     if (text === null) return null;
+    const owner = scope === 'user' || scope === 'managed' ? null : ownerOf(file);
     const item = {
-      path: file, display: display(file), scope, load, importedBy,
+      path: file, display: display(file), scope, load, importedBy, ownedBy: owner ? { key: owner.key, name: owner.name } : null,
       bytes: Buffer.byteLength(text), lines: lineCount(text), tokens: tokensOf(text), observed: false, text,
     };
     byKey.set(k, item);
@@ -227,12 +244,15 @@ async function scanInstructions(ctx, loaded) {
     for (const ref of importsOf(item.text)) {
       const target = resolveImport(ref, item.path, home);
       if (!(await isFile(target))) {
-        add('problem', 'broken_import', item.display, { target: ref },
-          `In ${item.display}, the import @${ref} points to a file that does not exist (${display(target)}). Fix the path or remove the import.`);
+        if (!item.ownedBy) {
+          add('problem', 'broken_import', item.display, { target: ref },
+            `In ${item.display}, the import @${ref} points to a file that does not exist (${display(target)}). Fix the path or remove the import.`);
+        }
         continue;
       }
       if (depth >= IMPORT_HOPS) continue;
       const added = await take(target, 'import', item.load, item.display);
+      if (added && item.ownedBy) added.ownedBy = item.ownedBy; // what a shared file imports belongs to its owner too
       if (added) queue.push({ item: added, depth: depth + 1 });
     }
   }
@@ -248,6 +268,13 @@ async function scanInstructions(ctx, loaded) {
 
   const rootFile = byKey.get(keyOf(path.join(root, 'CLAUDE.md')));
   for (const i of list) {
+    if (i.ownedBy) {
+      // Reported once, under the project the file lives in; here, just say it is shared.
+      if (i.scope === 'import') continue;
+      const inside = !path.relative(root, i.path).startsWith('..');
+      add('info', inside ? 'nested_project' : 'inherits', i.display, { project: i.ownedBy.name, key: i.ownedBy.key }, null);
+      continue;
+    }
     if (i.scope !== 'worktree' && i.lines > TARGET_LINES) {
       add('warning', 'instructions_oversized', i.display, { lines: i.lines, tokens: i.tokens },
         `${i.display} has ${i.lines} lines, over the documented 200-line target, and costs about ${i.tokens} tokens of context (estimate)${i.load === 'startup' ? ' at every session start' : ' whenever it loads'}. ` +
@@ -465,29 +492,139 @@ function linkNotes(ctx, memoryNotes, serenaNotes) {
 
 // ---- cited code files ----------------------------------------------------------------------------------------
 
-function citedPaths(text, topDirs, home) {
-  const raw = [];
-  for (const m of text.matchAll(/`([^`\n]+)`/g)) raw.push(m[1]);
-  const prose = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ');
-  for (const m of prose.matchAll(/(?:^|[\s(["'])((?:[A-Za-z]:)?[\w.@~-]*[\\/][\w.@[\]\\/-]+)/g)) raw.push(m[1]);
-  const out = new Set();
-  for (let t of raw) {
-    t = t.trim().replace(/^[[('"]+/, '').replace(/[\]'"),.;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '').replace(/\\/g, '/').replace(/\/+$/, '');
-    if (!t || t.length > 200 || /\s|:\/\/|[*{}<>$|]/.test(t) || t.includes('node_modules')) continue;
-    if (/^@[^/]/.test(t) || t === '@') continue; // an @import (checked on its own) or an npm scope, not a cited file
-    if (t.startsWith('/') && !t.startsWith(slash(home))) continue; // a URL path such as /api/x, not a file on disk
-    if (t.startsWith('./')) t = t.slice(2);
-    if (t.startsWith('~/')) t = slash(path.join(home, t.slice(2)));
-    const segs = t.split('/');
-    const base = segs[segs.length - 1];
-    const hasExt = EXT.test(t) && base.replace(EXT, '').length > 0;
-    if (hasExt && base.startsWith('.')) continue;                          // ".d.ts", ".eslintrc.json": an extension or a dotfile
-    if (/(^|[-_])(x|xx|foo|bar|example)(\.|$)/i.test(base)) continue;       // placeholders such as x.test.ts
-    if (!hasExt && segs.every((s) => topDirs.has(s))) continue;            // prose such as "backend/frontend"
-    const abs = /^[A-Za-z]:\//.test(t) || t.startsWith('/');
-    if (abs ? hasExt : hasExt || (t.startsWith('@/') && t.length > 2) || (t.includes('/') && topDirs.has(segs[0]))) out.add(t);
+// A mention in a negated sentence ("there is no x.ts", "ya no existe") is not a claim that the file exists.
+// Removal and move words count too: a sentence that says a file was deleted or moved isn't claiming it is there.
+const NEG_RE = /(?:^|[^\p{L}'’])(?:no|not|never|nunca|removed|deleted|purged|moved|renamed|doesn['’]t|don['’]t|do not|does not|no longer|ya no|(?:eliminad|borrad|purgad|movid|renombrad)[oa]s?|(?:elimin|borr)(?:ó|aron|amos|é))(?![\p{L}])/iu;
+const DONT_RE = /^[\s#>*_|-]*(?:❌|✗|✘|🚫)?\s*(?:don['’]?t|do not|avoid|never|evitar|no hacer|nunca|prohibido)\b/iu;
+// A sentence about git: with a branch-namespace prefix ("test/", "feat/"), a mention is a branch, even a deleted one.
+const GIT_TALK_RE = /\b(?:branch(?:es)?|ramas?|cherry-pick|rebase|merge|checkout|commit|develop)\b|\b[0-9a-f]{7,40}\b/i;
+// Table columns that hold the stale side of a comparison ("Was written | Reality"): their paths aren't claims either.
+const STALE_COL_RE = /^\s*(?:was written|wrong|incorrect|claimed|before|old|outdated|antes|incorrect[oa]|err[oó]ne[oa]|dec[ií]a)\b/iu;
+const DO_RE = /^[\s#>*_|-]*(?:✅|✓|✔)?\s*(?:do|haz|s[ií])\b(?!\s+not)/iu;
+const ITEM_RE = /^\s*(?:[-*+]|\d+[.)])\s/;
+const FENCE_RE = /^\s*(?:```|~~~)/;
+const TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}/;
+
+// The path a token names, normalized, or null when it doesn't look like a cited file.
+function acceptPath(t, topDirs, home) {
+  t = t.trim().replace(/^[[('"]+/, '').replace(/[\]'"),.;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!t || t.length > 200 || /\s|:\/\/|[*{}<>$|#]/.test(t) || t.includes('node_modules')) return null;
+  if (/^@[^/]/.test(t) || t === '@') return null; // an @import (checked on its own) or an npm scope, not a cited file
+  if (t.startsWith('/') && !t.startsWith(slash(home))) return null; // a URL path such as /api/x, not a file on disk
+  if (t.startsWith('./')) t = t.slice(2);
+  if (t.startsWith('~/')) t = slash(path.join(home, t.slice(2)));
+  const segs = t.split('/');
+  const base = segs[segs.length - 1];
+  const hasExt = EXT.test(t) && base.replace(EXT, '').length > 0;
+  if (hasExt && base.startsWith('.')) return null;                          // ".d.ts", ".eslintrc.json": an extension or a dotfile
+  if (/(^|[-_])(x|xx|foo|bar|example)(\.|$)/i.test(base)) return null;       // placeholders such as x.test.ts
+  if (!hasExt && segs.every((s) => topDirs.has(s))) return null;            // prose such as "backend/frontend"
+  const abs = /^[A-Za-z]:\//.test(t) || t.startsWith('/');
+  return (abs ? hasExt : hasExt || (t.startsWith('@/') && t.length > 2) || (t.includes('/') && topDirs.has(segs[0]))) ? t : null;
+}
+
+// Every path a Markdown text cites, with the lines it is cited on. Skipped: code blocks, mentions in a negated
+// sentence or table cell, items under a "Don't" heading or label, cells in a "Don't" column, and ❌ items.
+function citations(text, topDirs, home) {
+  const found = new Map();
+  const record = (p, line, gitTalk) => {
+    if (!found.has(p)) found.set(p, { path: p, lines: new Set(), gitTalk: false });
+    found.get(p).lines.add(line);
+    if (gitTalk) found.get(p).gitTalk = true;
+  };
+  // Scans one paragraph (lines joined with spaces) for paths; sentences end at . ! ? before a space, or at a |.
+  const scan = (parts, negatedAll, dontCols, row = false) => {
+    let text = '';
+    const starts = [];
+    for (const p of parts) {
+      if (text) text += ' ';
+      starts.push({ at: text.length, line: p.line });
+      text += p.text;
+    }
+    const lineAt = (at) => { let n = starts[0].line; for (const s of starts) if (s.at <= at) n = s.line; return n; };
+    const blank = (s, i, len) => s.slice(0, i) + ' '.repeat(len) + s.slice(i + len);
+    const toks = [];
+    let mask = text;
+    for (const m of text.matchAll(/\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g)) {
+      toks.push({ t: m[1], at: m.index + m[0].indexOf(m[1]) });
+      mask = blank(mask, m.index, m[0].length);
+    }
+    for (const m of mask.matchAll(/`([^`]+)`/g)) {
+      toks.push({ t: m[1], at: m.index + 1 });
+      mask = blank(mask, m.index, m[0].length);
+    }
+    for (const m of mask.matchAll(/(?:^|[\s(["'])((?:[A-Za-z]:)?[\w.@~-]*[\\/][\w.@[\]\\/-]+)/g)) toks.push({ t: m[1], at: m.index + m[0].length - m[1].length });
+    for (const tok of toks) {
+      const p = acceptPath(tok.t, topDirs, home);
+      if (!p || negatedAll) continue;
+      let start = 0;
+      let end = text.length;
+      for (const m of text.matchAll(/[.!?](?=\s)|\|/g)) {
+        if (m.index < tok.at) start = m.index + 1; else if (m.index >= tok.at + tok.t.length - 1) { end = m.index; break; }
+      }
+      // Table cells are numbered like the header's: the first cell after the leading "|" is 0.
+      if (dontCols && dontCols.has((text.slice(0, tok.at).match(/\|/g) || []).length - 1)) continue;
+      // Negated if a negation sits in the same sentence; in a table row, anywhere on the row ("| x.ts | Does not exist |").
+      // Prose keeps to the sentence, so "There is no a.ts. It lives in b.ts." still checks b.ts.
+      const context = row ? text : text.slice(start, end);
+      const rel = tok.at - (row ? 0 : start);
+      const around = context.slice(0, rel) + ' ' + context.slice(rel + tok.t.length);
+      if (NEG_RE.test(around)) continue;
+      record(p, lineAt(tok.at), GIT_TALK_RE.test(around));
+    }
+  };
+
+  const lines = text.split(/\r?\n/);
+  let fence = false;
+  let dont = false;
+  let dontCols = null;
+  let para = null;
+  const flush = () => { if (para) scan(para.parts, para.negated, null); para = null; };
+  lines.forEach((raw, i) => {
+    const line = raw.replace(/\s+$/, '');
+    const n = i + 1;
+    if (FENCE_RE.test(line)) { flush(); fence = !fence; return; }
+    if (fence) return;
+    if (!line.trim()) { flush(); dontCols = null; return; }
+    if (/^\s*\|/.test(line)) {
+      flush();
+      if (TABLE_SEP_RE.test(line)) return;
+      if (TABLE_SEP_RE.test(lines[i + 1] || '')) { // header row: which columns are the "Don't" side
+        dontCols = new Set(line.split('|').slice(1).map((c, k) => (DONT_RE.test(c) || STALE_COL_RE.test(c) ? k : -1)).filter((k) => k >= 0));
+        return;
+      }
+      scan([{ line: n, text: line }], dont || /^\s*\|\s*(?:❌|✗|✘|🚫)/.test(line), dontCols, true);
+      return;
+    }
+    dontCols = null;
+    const trimmed = line.trim();
+    const heading = /^#{1,6}\s/.test(trimmed);
+    const label = heading || (trimmed.length <= 48 && (/:\s*(?:\*\*|__)?$/.test(trimmed) || /^(?:\*\*|__).+(?:\*\*|__):?$/.test(trimmed)));
+    if (label) {
+      flush();
+      if (DONT_RE.test(trimmed)) dont = true; else if (heading || DO_RE.test(trimmed)) dont = false;
+      scan([{ line: n, text: line }], dont, null);
+      return;
+    }
+    if (ITEM_RE.test(line) || !para) {
+      flush();
+      para = { parts: [], negated: dont || /^\s*(?:[-*+]|\d+[.)])?\s*(?:❌|✗|✘|🚫)/.test(line) };
+    }
+    para.parts.push({ line: n, text: line });
+  });
+  flush();
+  return [...found.values()]
+    .map((c) => ({ path: c.path, lines: [...c.lines].sort((a, b) => a - b), gitTalk: c.gitTalk }))
+    .sort((a, b) => a.lines[0] - b.lines[0] || a.path.localeCompare(b.path));
+}
+
+// The nearest folder at or above a file that is a git repository root, else the file's folder.
+function gitRootOf(file) {
+  const dir = path.dirname(file);
+  for (let d = dir; ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return d;
+    if (path.dirname(d) === d) return dir;
   }
-  return [...out];
 }
 
 // Does a git file list hold this path, either exactly or as the end of a longer path? Notes often cite paths
@@ -539,60 +676,117 @@ async function gitListing(dir) {
   return res;
 }
 
-// Each cited path is checked in the working tree and on the default branch of the project's repositories
-// (the root plus any direct subfolder that is its own git repository).
-async function checkCitations(ctx, sources) {
-  const { root, home, add } = ctx;
-  const repos = [root];
-  for (const e of await entries(root)) if (e.isDirectory() && (await exists(path.join(root, e.name, '.git')))) repos.push(path.join(root, e.name));
-  const listings = new Map();
-  const topDirs = new Set();
-  for (const r of repos) {
-    for (const e of await entries(r)) if (e.isDirectory()) topDirs.add(e.name);
-    if (await exists(path.join(r, '.git'))) listings.set(r, await gitListing(r));
-  }
-  const status = new Map();
-  const check = async (p) => {
-    if (status.has(p)) return status.get(p);
-    let working = false;
-    let branch = listings.size ? false : null;
-    if (/^[A-Za-z]:\//.test(p) || p.startsWith('/')) {
-      working = await exists(p);
-      branch = null;
-    } else {
-      const rel = p.startsWith('@/') ? 'src/' + p.slice(2) : p;
-      const variants = EXT.test(rel) ? [rel] : GUESS_EXT.map((x) => rel + x);
-      for (const r of repos) for (const v of variants) if (!working && (await exists(path.join(r, v)))) working = true;
-      for (const [r, l] of listings) {
-        // A path that starts with a subproject's folder ("backend/src/...") is that repository's "src/...".
-        const name = path.basename(r);
-        const forms = r !== root && rel.startsWith(name + '/') ? [rel.slice(name.length + 1), rel] : [rel];
-        if (!working && l.head && forms.some((f) => listed(l.head, f))) working = true; // tracked files stand in for a search of the working tree
-        if (l.def && forms.some((f) => listed(l.def, f))) branch = true;
-      }
-      if (!working && !listings.size && !p.includes('/')) working = null; // a bare filename can't be located without git
+// A citing file's workspace: its git root, every git repository up to two levels inside it (backend/,
+// frontend/, ...), and the src/ folder of each. Paths are looked up in all of them.
+async function workspace(base, cache) {
+  const k = keyOf(base);
+  if (cache.has(k)) return cache.get(k);
+  const repos = [];
+  const visit = async (dir, depth) => {
+    if (await exists(path.join(dir, '.git'))) repos.push({ dir, rel: slash(path.relative(base, dir)), listing: await gitListing(dir) });
+    if (depth >= 2) return;
+    for (const e of await entries(dir)) {
+      if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) await visit(path.join(dir, e.name), depth + 1);
     }
-    const s = { working, branch };
-    status.set(p, s);
-    return s;
   };
+  await visit(base, 0);
+  const roots = [base, ...repos.map((r) => r.dir).filter((d) => keyOf(d) !== k)];
+  const dirs = [...roots];
+  for (const d of roots) if (await exists(path.join(d, 'src'))) dirs.push(path.join(d, 'src'));
+  const topDirs = new Set();
+  for (const d of dirs) for (const e of await entries(d)) if (e.isDirectory()) topDirs.add(e.name);
+  const branches = new Set();
+  for (const r of repos) for (const b of await branchNames(r.dir)) branches.add(b);
+  const namespaces = new Set([...branches].filter((b) => b.includes('/')).map((b) => b.split('/')[0]));
+  const ws = { base, repos, dirs, topDirs, branches, namespaces };
+  cache.set(k, ws);
+  return ws;
+}
 
-  for (const { owner, text } of sources) {
+// Branch names (local and remote) read from .git as plain files: "test/integration-harness" may be a branch, not a folder.
+async function branchNames(repoDir) {
+  const gitDir = path.join(repoDir, '.git');
+  const names = new Set();
+  const walk = async (dir, prefix) => {
+    for (const e of await entries(dir)) {
+      if (e.isDirectory()) await walk(path.join(dir, e.name), `${prefix}${e.name}/`);
+      else names.add(prefix + e.name);
+    }
+  };
+  await walk(path.join(gitDir, 'refs', 'heads'), '');
+  for (const e of await entries(path.join(gitDir, 'refs', 'remotes'))) if (e.isDirectory()) await walk(path.join(gitDir, 'refs', 'remotes', e.name), '');
+  for (const m of ((await readText(path.join(gitDir, 'packed-refs'))) || '').matchAll(/ refs\/(?:heads|remotes\/[^/\s]+)\/(\S+)/g)) names.add(m[1]);
+  names.delete('HEAD');
+  return names;
+}
+
+// Where a cited path is: in the working tree and/or on the default branch, anywhere in the workspace.
+// Not found there but a file with the same name exists elsewhere: "moved" candidates, a low-confidence guess.
+async function locate(ws, p, fileDir) {
+  if (/^[A-Za-z]:\//.test(p) || p.startsWith('/')) {
+    const ok = await exists(p);
+    return { working: ok, branch: null, found: ok, moved: [] };
+  }
+  const rel = p.startsWith('@/') ? 'src/' + p.slice(2) : p;
+  const variants = EXT.test(rel) ? [rel] : GUESS_EXT.map((x) => rel + x);
+  let working = false;
+  for (const d of [fileDir, ...ws.dirs]) {
+    for (const v of variants) if (!working && (await exists(path.join(d, v)))) working = true;
+  }
+  let branch = ws.repos.length ? false : null;
+  for (const r of ws.repos) {
+    // A path that starts with a repository's folder ("backend/src/...") is that repository's "src/...".
+    const forms = r.rel && rel.startsWith(r.rel + '/') ? [rel.slice(r.rel.length + 1), rel] : [rel];
+    if (!working && r.listing.head && forms.some((f) => listed(r.listing.head, f))) working = true; // tracked files stand in for a search of the working tree
+    if (r.listing.def && forms.some((f) => listed(r.listing.def, f))) branch = true;
+  }
+  const found = working || branch === true;
+  let moved = [];
+  if (!found) {
+    // Same file name elsewhere; an extensionless import such as "@/core/utils/formatDate" tries the usual extensions.
+    const last = rel.slice(rel.lastIndexOf('/') + 1);
+    const names = EXT.test(rel) ? [last] : ['.ts', '.tsx', '.js', '.jsx', '.mjs'].map((x) => last + x);
+    const hits = new Set();
+    for (const r of ws.repos) {
+      for (const l of [r.listing.def, r.listing.head]) for (const n of names) for (const f of l?.byBase.get(n) || []) hits.add((r.rel ? r.rel + '/' : '') + f);
+    }
+    moved = [...hits].slice(0, 3);
+  }
+  if (!found && !ws.repos.length && !p.includes('/')) working = null; // a bare filename can't be located without git
+  return { working, branch, found, moved };
+}
+
+async function checkCitations(ctx, sources) {
+  const { home, add, display } = ctx;
+  const cache = new Map();
+  const where = (list) => list.map((c) => `- ${c.path} (line${c.lines.length > 1 ? 's' : ''} ${c.lines.join(', ')})${c.to?.length ? `, maybe now ${c.to.join(' or ')}` : ''}`).join('\n');
+  for (const { owner, text, base, fileDir } of sources) {
+    const ws = await workspace(base, cache);
+    const scope = display(base) === '.' ? 'this project' : display(base);
     const missing = [];
+    const moved = [];
     owner.cites = [];
-    for (const p of citedPaths(text, topDirs, home)) {
-      const s = await check(p);
-      owner.cites.push({ path: p, ...s });
-      if (s.working === false && s.branch !== true) missing.push(p);
+    for (const c of citations(text, ws.topDirs, home)) {
+      // A branch name, not a folder: an existing branch, or a branch-namespace name in a sentence about git.
+      if (!EXT.test(c.path) && (ws.branches.has(c.path) || (c.gitTalk && ws.namespaces.has(c.path.split('/')[0])))) continue;
+      const s = await locate(ws, c.path, fileDir);
+      owner.cites.push({ path: c.path, lines: c.lines, working: s.working, branch: s.branch, moved: s.moved });
+      if (s.found || s.working === null) continue;
+      (s.moved.length ? moved : missing).push({ path: c.path, lines: c.lines, to: s.moved });
     }
     if (missing.length) {
-      const list = missing.slice(0, 8).join(', ') + (missing.length > 8 ? `, and ${missing.length - 8} more` : '');
-      add('warning', 'cited_file_missing', owner.display, { count: missing.length, cited: missing.slice(0, 3).join(', ') },
-        `${owner.display} cites ${missing.length === 1 ? 'a file that no longer exists' : `${missing.length} files that no longer exist`} in the working tree or on the default branch: ${list}. ` +
+      add('warning', 'cited_file_missing', owner.display, { count: missing.length, cited: missing.slice(0, 3).map((m) => m.path).join(', '), items: missing },
+        `${owner.display} cites ${missing.length === 1 ? 'a path' : `${missing.length} paths`} that exist nowhere in ${scope}, neither in the working tree nor on the default branch:\n${where(missing)}\n` +
         'For each one, find where the code lives now and update the path, or rewrite the passage if the code was removed on purpose.');
     }
+    if (moved.length) {
+      add('suggestion', 'possibly_moved', owner.display, { count: moved.length, cited: moved[0].path, items: moved },
+        `${owner.display} cites ${moved.length === 1 ? 'a path that is' : `${moved.length} paths that are`} not where it says, but a file with the same name exists elsewhere in ${scope}:\n${where(moved)}\n` +
+        'This is a low-confidence guess from file names. Check whether each is the same file and, if so, update the path.');
+    }
   }
-  return [...listings].map(([dir, l]) => ({ repo: ctx.display(dir), ref: l.ref }));
+  const mine = await workspace(ctx.root, cache);
+  return mine.repos.map((r) => ({ repo: r.rel || '.', ref: r.listing.ref }));
 }
 
 // ---- reading history and overlaps ----------------------------------------------------------------------------

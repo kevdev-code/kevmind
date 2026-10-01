@@ -9,6 +9,7 @@ let memReport = null;
 let memError = null;
 let memTimer = null;
 const memOpen = new Set(); // rows whose details are expanded
+const memPathsOpen = new Set(); // problem rows whose list of paths is expanded, kept across refreshes
 
 try { if (localStorage.getItem(VIEW_KEY) === 'memory' && !focus) view = 'memory'; } catch { /* storage unavailable */ }
 if (params.get('view') === 'memory' && !focus) view = 'memory';
@@ -54,6 +55,7 @@ function selectMemProject(key) {
   memKey = key;
   memReport = null;
   memOpen.clear();
+  memPathsOpen.clear();
   renderMemoryView();
   loadMemory();
 }
@@ -109,14 +111,21 @@ function renderBudget(r) {
     <div class="budget-legend">${r.startup.parts.map((x) => `<span><i class="b-${esc(x.label)}"></i>${esc(T.memPart[x.label])} ${esc(fmtK(x.tokens))}</span>`).join('')}</div>`;
 }
 
+const SHARED = new Set(['inherits', 'nested_project']);
+
 function renderProblems(r) {
   const tiers = ['problem', 'warning', 'suggestion'];
-  const info = r.problems.filter((p) => p.tier === 'info');
+  // Files shared with another project: one line each, with a way to go where their issues are listed.
+  const shared = r.problems.filter((p) => SHARED.has(p.code)).map((p) => `<li class="mem-shared">
+      <span>${esc(T.memInfo[p.code]({ ...p.params, file: p.file }))}</span>
+      <button type="button" class="link" data-goto="${esc(p.params.key)}">${esc(T.memSee(p.params.project))}</button>
+    </li>`).join('');
+  const info = r.problems.filter((p) => p.tier === 'info' && !SHARED.has(p.code));
   const html = tiers.map((tier) => {
     const list = r.problems.map((p, i) => ({ p, i })).filter(({ p }) => p.tier === tier);
     const notes = tier === 'suggestion' ? info.map((p) => `<li class="mem-info">${esc(T.memInfo[p.code]?.(p.params) || p.code)}</li>`).join('') : '';
     const rows = list.map(({ p, i }) => `<li class="mem-issue ${tier}">
-        <div class="mem-issue-text">${esc(T.memProblem[p.code]?.(p.params) || p.code)}<small>${esc(p.file || '')}</small></div>
+        <div class="mem-issue-text">${esc(T.memProblem[p.code]?.(p.params) || p.code)}<small>${esc(p.file || '')}</small>${pathList(p)}</div>
         ${p.fix ? `<button type="button" class="copy-fix" data-fix="${i}">${esc(T.memCopyFix)}</button>` : ''}
       </li>`).join('');
     return `<section class="mem-group">
@@ -124,10 +133,30 @@ function renderProblems(r) {
       <ul>${rows || `<li class="mem-none">${esc(T.memNoneTier)}</li>`}${notes}</ul>
     </section>`;
   }).join('');
-  $('memProblems').innerHTML = html;
+  $('memProblems').innerHTML = (shared ? `<ul class="mem-shared-list">${shared}</ul>` : '') + html;
 }
 
+// Every path behind a "missing" or "moved" row, with the lines it is cited on, so each can be checked.
+function pathList(p) {
+  const items = p.params?.items;
+  if (!items?.length) return '';
+  const key = `${p.code}|${p.file}`;
+  return `<details class="mem-paths" data-key="${esc(key)}"${memPathsOpen.has(key) ? ' open' : ''}>
+    <summary>${esc(T.memShowPaths(items.length))}</summary>
+    <ul>${items.map((it) => `<li><code>${esc(it.path)}</code> <span class="muted">${esc(T.memLines(it.lines))}</span>${
+      it.to?.length ? ` <span class="moved">${esc(T.memMaybe)} ${it.to.map((t) => `<code>${esc(t)}</code>`).join(' · ')}</span>` : ''}</li>`).join('')}</ul>
+  </details>`;
+}
+
+$('memProblems').addEventListener('toggle', (e) => {
+  const d = e.target.closest?.('details.mem-paths');
+  if (!d) return;
+  if (d.open) memPathsOpen.add(d.dataset.key); else memPathsOpen.delete(d.dataset.key);
+}, true);
+
 $('memProblems').addEventListener('click', async (e) => {
+  const go = e.target.closest('button[data-goto]');
+  if (go) { selectMemProject(go.dataset.goto); return; }
   const b = e.target.closest('button[data-fix]');
   if (!b || !memReport) return;
   const text = memReport.problems[Number(b.dataset.fix)]?.fix;

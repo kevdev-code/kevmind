@@ -32,9 +32,11 @@ test('every problem type is found once, nothing secret leaks, and estimates are 
 
   const missing = r.problems.find((p) => p.code === 'cited_file_missing');
   assert.equal(missing.params.cited, 'src/old.ts', 'src/app.ts exists, src/committed-only.ts is on the default branch');
+  assert.deepEqual(missing.params.items, [{ path: 'src/old.ts', lines: [11], to: [] }], 'every flagged path, with the line it is cited on (8 frontmatter lines, a blank, then the body)');
   if (git) {
     const alpha = r.memory.notes.find((n) => n.stem === 'alpha');
-    assert.deepEqual(alpha.cites.find((c) => c.path === 'src/committed-only.ts'), { path: 'src/committed-only.ts', working: false, branch: true });
+    const c = alpha.cites.find((x) => x.path === 'src/committed-only.ts');
+    assert.deepEqual([c.working, c.branch], [false, true]);
     assert.deepEqual(r.git.map((g) => g.ref), ['main']);
   }
   assert.equal(r.problems.find((p) => p.code === 'never_read').file.endsWith('dates-b.md'), true);
