@@ -1,6 +1,6 @@
 // Records the prototype for review: headless Edge on the real GPU, DevTools screencast frames resampled to a constant
 // frame rate, encoded with ffmpeg (not a dependency: pass its path in FFMPEG).
-//   FFMPEG=<ffmpeg.exe> node bench/record.mjs <outDir> [url-query] [fromS] [toS]
+//   FFMPEG=<ffmpeg.exe> [ORBIT=<s>] node bench/record.mjs <outDir> [url-query] [fromS] [toS]
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -29,7 +29,17 @@ await p.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStor
 await p.send('Page.startScreencast', { format: 'png', maxWidth: W, maxHeight: H, everyNthFrame: 1 });
 const start = Date.now();
 await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html${query}` });
-await sleep(Number(toS) * 1000 + 500);
+// ORBIT=<s>: at that second, drag the brain a half turn and let it coast, then Fit brings it back.
+if (process.env.ORBIT) {
+  await sleep(Number(process.env.ORBIT) * 1000);
+  const m = (type, x, y) => p.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+  await m('mousePressed', 700, 420);
+  for (let k = 1; k <= 24; k++) { await m('mouseMoved', 700 - k * 14, 420 + k * 2); await sleep(25); }
+  await m('mouseReleased', 364, 468);
+  await sleep(5000);
+  await p.eval("document.getElementById('fitBtn').click()");
+}
+await sleep(Math.max(0, Number(toS) * 1000 + 500 - (Date.now() - start)));
 await p.send('Page.stopScreencast');
 e.close();
 
