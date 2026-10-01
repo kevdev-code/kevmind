@@ -9,6 +9,11 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // gpu: 'hw' = the machine's GPU through ANGLE/D3D11, 'swiftshader' = WebGL rendered on the CPU (worst case).
 export async function launch({ port = 9333, gpu = 'hw', width = 1440, height = 900, headless = true } = {}) {
+  // Throwaway profiles: callers exit right after close(), so each launch sweeps those left by earlier runs.
+  for (const d of fs.readdirSync(os.tmpdir())) {
+    const p = path.join(os.tmpdir(), d);
+    if (d.startsWith('kevmind-brain-edge-')) try { if (Date.now() - fs.statSync(p).mtimeMs > 600000) fs.rmSync(p, { recursive: true, force: true }); } catch {}
+  }
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'kevmind-brain-edge-'));
   const flags = gpu === 'swiftshader'
     ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
@@ -16,6 +21,9 @@ export async function launch({ port = 9333, gpu = 'hw', width = 1440, height = 9
   const proc = spawn(EDGE, [...(headless ? ['--headless=new'] : []), `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
     `--window-size=${width},${height}`, '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1',
     '--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
+    // A fresh profile still signs into the Windows account and syncs its extensions, whose welcome tabs take the
+    // foreground a few seconds in and throttle the page to 1 fps: no sync, no extensions.
+    '--disable-sync', '--disable-extensions', '--no-default-browser-check',
     ...flags, 'about:blank'], { stdio: 'ignore', windowsHide: true });
   for (let i = 0; i < 100; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await sleep(100); } }
   const browser = await Session.connect((await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl);
