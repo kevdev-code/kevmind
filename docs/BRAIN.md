@@ -1,6 +1,6 @@
-# Phase 4: the brain view (proposal and prototype)
+# Phase 4: the brain view (prototype)
 
-Status 2026-10-01: a standalone prototype for review. Nothing in the dashboard changed; integration waits for your OK.
+Status 2026-10-01: iteration 2 of a standalone prototype, for review. Nothing in the dashboard changed; integration waits for your OK. The design rules are in [DESIGN.md, section 7](../DESIGN.md).
 
 ```bash
 node prototype/brain/serve.mjs
@@ -8,143 +8,114 @@ node prototype/brain/serve.mjs
 
 Then open http://127.0.0.1:4798/ (test port; `?nodes=3000` for the stress case, `?speed=2` for a faster replay). The data is synthetic and labeled so on the page.
 
-Recording: [docs/media/brain-prototype.mp4](media/brain-prototype.mp4) (33 s of the replay at 1280 x 800, recorded in headless Edge on the real GPU with `prototype/brain/bench/record.mjs`).
+Recording: [docs/media/brain-prototype.mp4](media/brain-prototype.mp4) (33 s of the replay at 1280 x 800 with an orbit halfway through, recorded in headless Edge on the real GPU with `prototype/brain/bench/record.mjs`).
+
+## Decisions (owner, 2026-10-01)
+
+- Renderer: raw WebGL2. three.js isn't worth 2.1 MB for the same shaders.
+- Agent beams in color (cyan, chartreuse, lilac), each with a white core and its numbered label, so they never pass for a region color. No orange.
+- Keep the tools area in the cerebellum and the "notes citing code" links, as long as they come from real data.
+- The brain's well stays dark in the light theme.
+- Idle is fully still by default.
+- The working project is brighter and the others drop to half; the camera easing toward it is the "Follow" control.
+- SwiftShader (Chrome's GPU running on the CPU) is the accepted stand-in for an integrated GPU for now.
 
 ## What it shows
 
-**Synthetic data shaped like your projects.** `demo-clinic` is OdonMind-sized (its real memory report: 51 notes, 4 instruction files, 1 Serena note, nested repos): 49 memory notes (10 feedback, 37 project, 2 reference) plus `MEMORY.md`, 3 instruction files plus the shared `~/.claude/CLAUDE.md`, 1 Serena note, 346 touched files across nested `frontend/` and `backend/` repos, and 7 tools. Two smaller projects (`demo-shop`, `demo-kevmind`) make 597 nodes and 773 links in all. The stress case adds clinic-shaped projects up to 3,068 nodes and 4,021 links (10 projects). Names are invented. Generator: `prototype/brain/data.js`.
+**Synthetic data shaped like your projects.** `demo-clinic` is OdonMind-sized (its real memory report: 51 notes, 4 instruction files, 1 Serena note, nested repos): 49 memory notes plus `MEMORY.md`, 3 instruction files plus the shared `~/.claude/CLAUDE.md`, 1 Serena note, 346 touched files across nested `frontend/` and `backend/` repos, and 7 tools. With `demo-shop` and `demo-kevmind`: 597 nodes and 773 links. The stress case adds clinic-shaped projects up to 3,068 nodes and 4,021 links (10 projects). Names are invented. Generator: `prototype/brain/data.js`.
 
-**A replay of one working session:** Claude reads its instructions and memory, launches three parallel subagents (Explore, general-purpose, code-reviewer) that read, edit, run tests (one fails, then passes) and think, then Claude edits and runs the tests again. 57 s of activity, 12 s of stillness, then it loops.
+**A replay of one working session:** Claude reads its instructions and memory, launches three parallel subagents (Explore, general-purpose, code-reviewer) that read, edit, run tests (one fails, then passes) and think (with thinking-token counts), then Claude edits and runs the tests again. 57 s of activity, 12 s of stillness, then it loops.
 
-**The brain.** A lateral view facing right, drawn as an outline with the three main fissures (chrome, never particles, so nothing decorative passes for data). Each lobe holds one kind of knowledge, and inside it each region is a project's folder or kind of note:
+**A 3D brain.** Proportions of a real one: about 1.4 : 1 : 1.05 (length : width : height with the cerebellum), checked by `test/brain-prototype.test.mjs`. Two hemispheres touch along a shallow midline fissure; the frontal lobe is rounded forward, the temporal lobe bulges down and forward along the side, the occipital sits at the back, a small cerebellum is tucked under it, the brainstem goes down from the center. The surface is a particle shell (13,000 points) with sulci carved into it (the lateral fissure rising toward the back, the central sulcus and its neighbors, the superior temporal and parieto-occipital sulci), softer gyri between them, and fine parallel folia on the cerebellum, that turns with the scene; behind it, a dim static starfield and a vignette. Shell and stars are decoration: never interactive, never counted, never picked. It opens at a 3/4 side view, like your inspiration, framed so the whole shell fits with a margin (on a phone too).
 
-| Lobe | What lives there | Why |
+Each lobe holds one kind of knowledge, in both hemispheres, and inside it each region is a project's folder or kind of note, as a 3D volume:
+
+| Lobe | Color | What lives there |
 |---|---|---|
-| Prefrontal | `CLAUDE.md` files and imports, feedback notes | rules and plans |
-| Frontal | docs (`*.md` outside memory) | |
-| Parietal | server and logic code | |
-| Occipital | interface code (`frontend/`, components, CSS, `*.tsx`) | the visual cortex |
-| Temporal | auto memory (`MEMORY.md` and notes), Serena notes | memory |
-| Cerebellum | tests and tools (Bash, Grep, Agent, MCP servers) | checks and coordination |
-| Brainstem | infrastructure: config, migrations, Docker, `package.json` | |
+| Prefrontal | amber | `CLAUDE.md` files and imports, feedback notes |
+| Frontal | green | docs |
+| Parietal (top, back) | violet | server and logic code |
+| Occipital (back) | azure | interface code |
+| Temporal (low, on the side) | pink | auto memory (`MEMORY.md` and notes), Serena notes |
+| Cerebellum (under the back) | teal | tests and tools (Bash, Grep, Agent, MCP servers) |
+| Brainstem | orange | infrastructure: config, migrations, Docker, `package.json` |
 
-A file's lobe comes from its path alone (`lobeOfPath` in `data.js`, covered by `test/brain-prototype.test.mjs`).
+A file's lobe comes from its path alone (`lobeOfPath` in `data.js`). Regions go to the hemisphere with less load in their lobe, preferring their project's side, so projects keep a side when they can and a single project still fills both.
 
-**Nodes.** Shape names the type (diamond: instruction file, triangle: memory note, square: Serena note, dot: code file, ring: tool), so type never depends on color. Size and brightness follow activity (reads + 2 x edits for files, uses for tools, tokens and links for notes). Crowded lobes get dimmer, smaller stars so additive light doesn't burn out to white.
+**Colors.** The lobe colors are categorical, the brain view's one exemption from DESIGN.md's one-hue-per-meaning rule, confined to the well (the rail's Regions legend is their key). Regions shift slightly around their lobe's hue. Activity never passes for a region: it is always white-cored and labeled. Agent beams and heads carry a white core and the chip "#1 Explore · reads …"; the node an agent lands on flashes white and gets a ring in DESIGN.md's state colors (read blue, edit pink, error red, command gray); a touched node keeps a whitened core that cools at 1, 5 and 15 minutes; selection is violet.
 
-**Links.** Links between notes, `MEMORY.md` index entries, `@imports`, notes citing code (the memory report's `cites`), files changed together (dashed: a statistic, from episodes and git), and read-before-edit. All hairlines at low alpha; the focused node's links light up in violet.
+**Nodes** are neuron sprites: a small shape per type (diamond instruction, triangle memory note, square Serena note, dot code file, ring tool) with up to four short dendrites and a soft halo in the region color, sized by activity. **Links** are curved, glowing fibers colored from one region to the other, low base opacity; links between regions follow one shared lane per pair of lobes (through the lobes they join, dipping toward the core inside a hemisphere and crossing the midline high between hemispheres, like the corpus callosum), so they gather into bundles; co-change links are dashed (a statistic); links around recently touched nodes brighten. **Beams** are glowing tubes (a white core in a wide halo of the agent's hue) that arc over the surface from where an agent was to the file it now reads or edits, the chip riding the head. **The lit lobe:** where agents work, the lobe glows in its color and cools with the embers. "Thinks" sends a ripple through nearby nodes in the agent's color. **Depth:** perspective, size attenuation, and fog (far is smaller, dimmer, greyer).
 
-**Live activity.**
-- Each agent is a comet in its own color that travels from the node it was on to the file it now reads, edits or runs (Bash and Agent are tool nodes), with a chip riding along: "#2 general-purpose · edits appointments.test.ts".
-- On arrival the node ignites in the kind's color from DESIGN.md (read blue, edit pink, error red, command gray) with a ring, then keeps an ember of that color that cools in steps at 1, 5 and 15 minutes.
-- The lobe where agents are working glows softly (brighter, not a hue), and the glow cools with the embers after they leave: the "where is the work" answer at a glance.
-- "Thinks" sends a ripple through the stars around the agent, in the agent's color.
-- While a session works, its project is brighter and the other projects drop to half (your answer to the scope question).
-- Idle is fully still: the loop stops. I didn't add breathing because it would keep the GPU and the compositor busy for nothing (see the numbers).
+**Labels:** one per lobe, inside the brain on the side facing the camera: the lobe small on top, under it its groups in their region colors, most important first (where agents work, the focused node's region, the working project, then size), names deduplicated, "+n" for the rest. They sit on a dark backing, never under the panels, and agent chips move around them rather than cover them.
 
-**Color rules.** Kinds keep DESIGN.md's hues; violet stays selection and focus only; commands are a neutral gray, so white means Claude only. Subagents get the three widest gaps between the state hues (cyan 200, chartreuse 117, magenta 320, each 31-45 degrees from any state hue); a fourth parallel subagent reuses cyan and its chip number tells them apart. Every color has a word next to it in the chip and in the agents panel. Nodes themselves are neutral ink-violet; color on a node always means a recent action.
+**The activity trace** (bottom left): an EEG-like line of events and a band of thinking tokens over the last 5 minutes, from the replay's events only, with a word on its own row above the line: thinking, working or idle. It scrolls every 2 s while something happened in the last 30 s, then stays still.
 
-**Interaction.** Hover a star for its name, type, project, path and stats (reads, edits, tokens, links, and "edited 3 min ago" or "last touched 4 d ago"). Click to focus it: its neighbors stay lit, everything else dims, and a card lists the neighbors by link type as buttons (the keyboard path through the graph; Esc clears). Search (`/`) dims non-matches and lists the top 8; Enter focuses the first and moves keyboard focus into its neighbor list. Filters for projects, node types and link types. Drag to turn (limited to about 40 degrees, so the lateral reading holds), Shift-drag or right-drag to move, wheel or buttons to zoom.
+**Camera:** full 360-degree orbit (pitch stops short of the poles), inertia when you let go, zoom toward the cursor, Shift-drag or right-drag to pan. The bar: zoom in and out, Fit (back to the opening view; with a node focused, the camera also steps aside by half the card so the card never covers the brain), Re-layout (lays out again what the filters show, behind a short fade), Follow (the camera eases toward where agents work and back to the whole brain when the session is idle) and Auto-rotate (slow turn while idle). Follow and Auto-rotate are off by default.
 
-**Switches.** "Animations" in the well's corner: off draws single static frames (one per change, no loop at all, no comets or rings, embers still show). It starts off under `prefers-reduced-motion` unless you turned it on. The choice is remembered.
+**Interaction:** hover a node for its name, type, lobe, project, path and stats; click to focus it (neighbors lit, the rest dimmed, a card lists the neighbors as buttons, the keyboard path through the graph); search with `/` (Enter focuses the first match and moves keyboard focus into its neighbors; Esc clears); filters for projects, node types and link types.
 
-**Chrome.** Header, rail, segmented controls, switch and panels are DESIGN.md's (same tokens, 12 px floor, sentence case, no shadows). The well is a night window that stays dark in the light theme too, because the glow is additive light and needs a dark ground. Glows, gradients and depth live only inside the well. English and Spanish. Below 900 px the rail folds into a closed "Filters" disclosure above the well; below 520 px the chips shrink to a dot and "#n" (the agents panel keeps the verbs). Labels hide wherever a chip or a resting agent sits on them, and on phones lobe labels show only their meaning ("memory", "interface").
+**Switches and chrome:** "Animations" off (the default under `prefers-reduced-motion`) draws single static frames: beams land at once, no rings, ripples or inertia. Header, rail and controls are DESIGN.md's. English and Spanish. Below 900 px the rail folds into a "Filters" disclosure, below 640 px the trace shrinks to its word and line and moves with the camera bar under the title, below 520 px chips shrink to "#n".
 
-## Renderer options (measured)
+## Renderer: raw WebGL2 (decided)
 
-Same scene for all three: 3,068 nodes, 4,021 links (and a 9,000-link variant), outline, haze, four comets with trails, rings, think ripples, and the camera turning every frame so every frame is a full redraw. Headless Edge 154 at 1440 x 900, driven over CDP (`prototype/brain/bench/run.mjs renderers`). three.js ran the prototype's own shaders as `RawShaderMaterial`s, so its GPU work is identical and the difference is three.js itself.
+Measured on the iteration-1 scene at commit `e753723` (same 3,068 nodes and 4,021 links, full redraw every frame; reproduce with `git checkout e753723 -- prototype/brain`):
 
-| 3,068 nodes, 4,021 links, full redraw every frame | Canvas 2D | Raw WebGL2 (`gl.js`) | three.js 0.186 |
+| | Canvas 2D | Raw WebGL2 | three.js 0.186 |
 |---|---|---|---|
-| Renderer code to ship | 6.6 KB (2.3 KB gzip) | 18 KB (6.1 KB gzip) | 2,121 KB (417 KB gzip), plus the same shaders |
-| npm package (today 98 KB packed, 308 KB unpacked) | +7 KB | +18 KB | +2.1 MB |
-| First frame, including layout | 262 ms | 311 ms | 338 ms (513 ms on SwiftShader) |
-| **RTX 3080 Ti, 30 fps cap** | | | |
-| frames per second | 30 | 30 | 30 |
-| script per frame | 3.85 ms | 0.19 ms | 0.25 ms |
-| main thread busy | 18.7% | 1.9% | 1.9% |
-| renderer process, all threads | 33% | 16% | 15% |
-| GPU process | 68% | 5% | 5% |
-| GPU 3D engine (Windows counter) | 9.1% | 3.4% | 3.0% |
-| JS heap | 3.1 MB | 3.3 MB | 6.3 MB |
-| **RTX 3080 Ti, uncapped** | 47 fps | 120 fps (display limit) | 120 fps |
-| GPU time per frame (timer query) | not measurable | 1.0 ms | 0.4-0.9 ms |
-| **SwiftShader, 30 fps cap** | 0.4 fps | 28.8 fps | 28.8 fps |
-| GPU process (cores x 100) | 1,547% | 843% | 840% |
-| GPU time per frame | | 17.4 ms | 17.2 ms |
-| **9,000 links**: 3080 Ti uncapped / SwiftShader capped | 39 / 0.2 fps | 120 / 28.8 fps | 120 / 28.8 fps |
+| Code to ship | 6.6 KB | 18 KB | 2,121 KB (417 KB gzip) |
+| RTX 3080 Ti, 30 fps: script per frame / GPU process | 3.85 ms / 68% | 0.19 ms / 5% | 0.25 ms / 5% |
+| RTX 3080 Ti uncapped | 47 fps | 120 fps (display limit) | 120 fps |
+| SwiftShader, 30 fps cap | 0.4 fps | 28.8 fps | 28.8 fps |
 
-Percentages are of one CPU core, over 12 s windows at the cap and 8 s uncapped. "GPU process" is Edge's GPU process CPU time; with SwiftShader that process *is* the GPU, so its CPU time is the rendering cost.
+three.js ran the same shaders, so it costs the same per frame; it would only add 2.1 MB to a package that is 0.3 MB today. Canvas 2D fails the budget. The renderer today is `gl.js`, 22 KB (7.5 KB gzip).
 
-**SVG** was not measured: 7,000 animated DOM nodes repainting at 30 fps is out of budget by construction.
+## Performance (iteration 2)
 
-**Recommendation: raw WebGL2.** It costs the same per frame as three.js at under 1% of the size: the brain is points, lines and sprites with custom shaders, so three.js would only wrap a `RawShaderMaterial` and add 2.1 MB to a package that is 0.3 MB today. Canvas 2D fails the budget: 3.9 ms of script per frame and 68% of a core in the GPU process on a fast machine, and under 1 fps on SwiftShader. The cost of raw WebGL is ~400 lines of GL code to own (`gl.js`) and a "needs WebGL 2" message for the rare browser without it.
-
-**2.5D, not a full 3D brain.** The prototype is a lateral view with real depth (perspective, depth fade, a limited turn). A free-orbit 3D brain would need a closed 3D surface, depth-sorted labels, and would lose the stable lateral reading where lobe labels sit in the same place every time. I don't think it's worth it.
-
-**One optimization found by measuring.** On the software GPU, 4x MSAA was more than half of a frame and links were the largest layer. The renderer now draws the static layers (ground, outline, haze, links) with MSAA into a cache and redraws that only when the camera, filters, focus or project emphasis change; animation frames copy the cache and draw the stars and comets on top (stars antialias in their own shader). With the camera still, which is the normal state while agents work:
-
-| GPU time per frame | camera moving | camera still (cached) |
-|---|---|---|
-| RTX 3080 Ti | 0.9-1.0 ms | 0.2-0.3 ms |
-| SwiftShader | 16.2 ms | 3.3-3.7 ms |
-
-At 30 fps on SwiftShader that is the GPU process going from 836% to 261% of a core.
-
-## The prototype's own numbers
-
-The prototype page itself (`run.mjs proto`): 30 fps cap, the replay running, camera still, 1440 x 900.
+Headless Edge 154 at 1440 x 900, 30 fps cap, `prototype/brain/bench/run.mjs`. Percentages are of one CPU core.
 
 | | 597 nodes, RTX 3080 Ti | 3,068 nodes, RTX 3080 Ti | 3,068 nodes, SwiftShader |
 |---|---|---|---|
-| First frame after navigation (data, layout, GL setup) | 151 ms | 301 ms | 289 ms |
-| **Replay, animations on**: frames per second | 30.0 | 30.0 | 28.8 |
-| main thread | 2.5% | 2.7% | 2.8% |
-| renderer process | 4.8% | 5.1% | 5.3% |
-| GPU process | 4.0% | 3.9% | 265% |
-| GPU 3D engine | 1.5% | 1.6% | n/a |
-| **Hidden tab** (another tab in front): frames | 0 | 0 | 0 |
-| main thread / GPU process | 0% / 0% | 0% / 0.1% | 0% / 0.4% |
-| **Another view shown** (Live): frames | 0 | 0 | 0 |
-| **Animations off**, replay running: frames per second | 0.8 | 0.9 | 0.7 |
-| main thread / GPU process | 0.1% / 0.4% | 0.2% / 0.5% | 0.2% / 29% |
-| **Idle** (replay over, effects settled): frames per second | 0.07 | 0.07 | 0.07 |
-| main thread / GPU process | 0% / 0% | 0% / 0% | 0% / 0.6% |
-| JS heap | 1.7-3.9 MB | 3.7-7.7 MB | 2.7-4.8 MB |
+| First frame after navigation (data, layout, shell, GL setup) | 246 ms | 320 ms | 367 ms |
+| **Replay, camera still**: frames per second | 30.0 | 30.0 | 24.9 |
+| main thread / GPU process | 3.2% / 4.5% | 2.8% / 3.9% | 2.6% / 556% |
+| GPU 3D engine | 1.6% | 2.0% | n/a |
+| **Auto-rotate** (camera moving every frame): frames per second | 30.0 | 29.9 | 24.6 |
+| main thread / GPU process | 2.7% / 4.8% | 3.0% / 4.7% | 1.9% / 1,653% |
+| **Follow** during the replay: frames per second | 4.8 | 5.2 | 12.2 |
+| **Hidden tab** / **another view**: frames | 0 / 0 | 0 / 0 | 0 / 0 |
+| **Animations off**, replay running: frames per second | 0.9 | 1.1 | 1.1 |
+| **Idle** (replay over, effects settled): frames, main thread | 0, 0% | 0, 0.1% | 0, 0.1% |
+| JS heap | 2.3-12.3 MB | 2.8-8.9 MB | 2.8-4.0 MB |
 
-- Animations off draws one static frame per change (an event lands, a filter changes), with no loop in between.
-- Idle draws one frame every 15 s while embers are still cooling (up to 15 minutes after the last action), then nothing.
-- With SwiftShader the GPU process also composites the whole page in software, so it shows 13-29% even with zero or few brain frames.
-- Labels and chips are DOM over the canvas. Two things I measured and fixed: per-label compositor layers and opacity fades on labels cost ~170% of a core on SwiftShader (labels now sit in one layer and hide instantly under a chip); the lobe glow first rebuilt the cached layer on every change (now at most every 2 s).
-- For comparison, the Live view costs about 0.2% CPU with the tab hidden (`docs/ROADMAP.md`) and measured 0.37% of the main thread while a session works in the 0.4.0 benchmark.
+- **What moves costs, what doesn't is cached.** The static layers (ground and stars, shell, haze, fibers) are drawn once into a cache and redrawn only when the camera, filters, focus or the lit lobes change (0.5 rebuilds per second during the replay); each frame copies the cache and draws the nodes, beams and rings on top.
+- **Fibers have two levels of detail.** On SwiftShader the fibers dominate a moving frame and their cost grows with curve segments, not with pixels (measured: halving their width changed nothing). While the camera moves they draw straight (one segment); the smooth curves (14 segments between regions) return the moment it stops. That took SwiftShader's auto-rotate from 4.9 to 24 fps; on the RTX it makes no difference.
+- **Follow** only draws while the camera eases toward where the work moved.
+- **Idle** draws one frame every 15 s while touched nodes are still cooling (up to 15 minutes after the last action), then nothing; none fell in these 12 s windows.
+- **Iteration 1 vs 2 on SwiftShader, replay:** 265% → 556% of a core: the neuron sprites are bigger and draw dendrites, beams are wide glowing tubes, and the bundled fibers take 14 segments each to curve smoothly (SwiftShader pays per segment; the last review round alone cost about 2 fps and took "Animations off" from 135% to 234% of a core while the replay runs, since each event redraws the cache). On the RTX all of it stays at ~4%.
+- Two benchmark artifacts, fixed: the first Windows GPU-counter query of a run stalls the browser's frames for several seconds (the benchmark warms it up in a throwaway launch); and a fresh Edge profile still signs into the Windows account and syncs its extensions, whose welcome tabs take the foreground a few seconds in and throttle the measured page to 1 fps at random. The harness now launches Edge with sync and extensions off.
 
-## What I couldn't measure
+## Integrated GPUs: SwiftShader is the stand-in
 
-This machine has no integrated GPU enabled: the Ryzen 9 9950X3D's Radeon graphics is off and only the RTX 3080 Ti shows up. So I measured the real GPU and SwiftShader (Chrome's GPU on the CPU) as a stricter-than-integrated worst case: the cached path holds 28.8 of 30 fps there at 3,000 nodes, with 3.5 ms of GPU work per frame. My expectation is that an Intel or AMD iGPU does this point-and-line workload faster than SwiftShader on 16 cores, but that is an expectation, not a measurement. Running `node prototype/brain/bench/run.mjs proto out.json` on a laptop with an iGPU would settle it before integrating. Headless Edge also skips the final present to a window, so a real window adds a little compositor work.
+This machine has no integrated GPU enabled (the Ryzen 9 9950X3D's Radeon graphics is off; only the RTX 3080 Ti shows up), so the numbers above use SwiftShader, which you accepted as the stand-in. SwiftShader is harsher than an integrated GPU in a specific way: it pays per triangle on the CPU, which a real GPU does in hardware. At 3,000 nodes it holds 25 fps on the replay and while rotating, using many CPU cores to do it. Running `node prototype/brain/bench/run.mjs out.json` on a laptop with an integrated GPU would replace the stand-in with real numbers before integrating.
 
 ## Design review (Impeccable 4.4)
 
-Your inspiration images were the pinned direction (no concept round). The finish reviewer, a separate agent with screenshots at 1440 x 900 and 390 px, dark, light and Spanish, returned **fix** with 8 items; one batch resolved 7 (agent hues, labels under chips, the phone view, the lit lobe, the cerebellum drawing, copy and plurals, the brief), and a second batch resolved the 3 regressions it found. Its last open item, the temporal and occipital lobes not filling to the rim, I fixed after the final verdict (regions now take their lobe's shape), so that change was checked by me in screenshots, not by the reviewer. A documenter pass (report only) prepared the DESIGN.md "Brain view" text and design.json entries to paste at integration; it also flagged two things to settle then: the prototype's breakpoints (900 and 520 px) against the dashboard's (720, 900, 1100), and the agents panel's compact status chip (12 px instead of 14).
+Iteration 2: your inspiration and the iteration-2 list were the pinned direction (no concept round). Two review rounds. The first returned **fix** with 8 items, all resolved: the shell read as an egg on a stem (now sulci, a temporal bulge and a separate cerebellum), the ground was too black (now an indigo night), fibers fanned into hubs (now shared lanes per pair of lobes), beams were thin (now glowing tubes), Fit didn't frame the brain and the focus card covered it, the copy said "star" and node shapes were too small at Fit, and phones had no trace. The second and last round returned **fix** with two items, both fixed afterward without a third review: the lanes bent at hard angles (now fewer control points and 14 segments per curve) and the focus card covered the agents panel (now it stops above it). Known and minor: where a bundle is active its stacked light can saturate toward white, close to the white core that marks activity; and the lateral fissure is faint at Fit.
 
-## Decisions for you
-
-1. **Agent colors.** Comets in gap hues (cyan, chartreuse, magenta) with words beside them, or neutral comets told apart by their numbered chips only? The gaps are 31-45 degrees wide, so cyan sits nearer read blue and magenta nearer edit pink than I'd like; the chips carry the meaning either way. An orange fourth hue was dropped in review: it read as "needs you" amber.
-2. **Two additions beyond your list.** A tools region in the cerebellum (where "runs a command" lands; sized by real tool counts) and "notes citing code" links (real data from the memory report). Keep both?
-3. **Light theme.** The well stays dark. The alternative is a second, non-additive palette for light, which looks flatter.
-4. **Idle.** Fully still (chosen) rather than slow breathing.
-5. **Active project.** Brighter, others at half. Camera easing toward it is not built; I'd only add it as an opt-in "follow" button.
+Iteration 1: your inspiration images were the pinned direction (no concept round). The reviewer returned **fix** with 8 items, all resolved over two batches.
 
 ## Integration plan (after your OK)
 
 1. Server: `GET /api/brain?key=<project>|all` builds the graph from what KevMind already has: the memory report (instructions and imports, notes, `MEMORY.md` index, links, cites, Serena), the experience aggregate (touched files with reads and edits from episodes, co-change pairs from episodes and git through `partners`, read-before-edit through `readFirst`, with the existing thresholds), and tool counts from the logs. Cached per project and rebuilt when those change. Read-only, like the Memory tab.
-2. Client: `public/brain.js` (the renderer from `gl.js` plus the view) behind a third view button. Live activity from the existing `/stream` events: `read`, `edit`, `command`, `error`, `thinks`, `agent_start`, `agent_done` map one-to-one to the replay's kinds. Layout runs on load (about 40 ms at 600 nodes and 170 ms at 3,000 in Node) or in a worker if real projects get bigger.
-3. DESIGN.md: a "Brain view" section with the night tokens, the agent hues and the rules above.
-4. The benchmark and `test/brain-prototype.test.mjs` move with it; the CDP harness replaces the scratch one noted in the roadmap.
+2. Client: `public/brain.js` (the renderer from `gl.js` plus the view) behind a third view button. Live activity from the existing `/stream` events: `read`, `edit`, `command`, `error`, `thinks`, `agent_start`, `agent_done` map one-to-one to the replay's kinds; the trace uses the event rate and the transcript's thinking tokens. Layout runs on load (about 50 ms at 600 nodes and 160 ms at 3,000 in Node) or in a worker if real projects get bigger.
+3. Settle the breakpoints with the dashboard's (720, 900, 1,100 px) and move the brain's tokens from `prototype/brain/style.css` into `public/style.css`.
+4. The benchmark and `test/brain-prototype.test.mjs` move with it.
 
 ## Files
 
-- `prototype/brain/index.html`, `style.css`, `app.js`: the page (view, labels, chips, filters, focus, search, replay, frame loop).
-- `prototype/brain/gl.js`: the WebGL2 renderer (shaders, cached static layers, matrices).
-- `prototype/brain/data.js`, `layout.js`: synthetic data, replay, brain geometry and layout.
+- `prototype/brain/index.html`, `style.css`, `app.js`: the page (camera, labels, chips, trace, filters, focus, search, replay, frame loop).
+- `prototype/brain/gl.js`: the WebGL2 renderer (ground and stars, neuron sprites, fibers and beams, dust and glow sprites, the static-layer cache, matrices).
+- `prototype/brain/layout.js`: lobes, hemispheres, 3D layout, the particle shell.
+- `prototype/brain/data.js`: synthetic data and the replay.
 - `prototype/brain/serve.mjs`: static server on 127.0.0.1.
-- `prototype/brain/bench/`: CDP harness (`cdp.mjs`), renderer scene (`scene.html`, `scene.js`, `r-canvas.js`, `r-three.js`), `run.mjs`, `breakdown.mjs`, `shot.mjs`, `record.mjs`. three.js is not vendored; `BRAIN_THREE=<three/build>` points the benchmark at a local copy.
+- `prototype/brain/bench/`: `cdp.mjs` (DevTools driver), `run.mjs` (the numbers above), `shot.mjs`, `record.mjs`.
