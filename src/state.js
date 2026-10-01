@@ -5,6 +5,7 @@ const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const MAX_EVENTS = 300;
+export const MAX_ALERTS = 50; // per session, newest kept: a long session with many conflicts must not grow memory
 const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
 // Claude Code injects its own messages through UserPromptSubmit wrapped in one of these tags.
@@ -43,6 +44,7 @@ export class State {
         tools: {},
         alerts: [],
         agentSeq: 0,
+        eventSeq: 0, // every event gets the next number, so the page can key its rows
       };
       this.sessions.set(id, s);
     }
@@ -147,6 +149,7 @@ export class State {
 
   // Keeps events in time order: transcript lines can arrive later than the hook events of the same moment.
   push(s, ev) {
+    ev.seq = s.eventSeq = (s.eventSeq || 0) + 1;
     const evs = s.events;
     let i = evs.length;
     while (i > 0 && evs[i - 1].ts > ev.ts) i--;
@@ -161,6 +164,7 @@ export class State {
     if (kind === 'edit') {
       if (f.lastEditBy && f.lastEditBy !== actor.id && ts - f.lastEditAt < CONFLICT_WINDOW_MS) {
         s.alerts.push({ ts, kind: 'conflict', a: actor.id, b: f.lastEditBy, file: baseName(file) });
+        if (s.alerts.length > MAX_ALERTS) s.alerts.splice(0, s.alerts.length - MAX_ALERTS);
       }
       f.edits++;
       f.lastEditBy = actor.id;
@@ -299,7 +303,7 @@ export class State {
     }
     return {
       ...rest, status: stale ? 'idle' : s.status, agents,
-      files: Object.values(s.files), tools: Object.values(s.tools), alerts: s.alerts.slice(-20),
+      files: Object.values(s.files), tools: Object.values(s.tools), alerts: s.alerts.slice(),
     };
   }
 
