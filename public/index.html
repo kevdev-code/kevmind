@@ -12,6 +12,10 @@
     <div class="brand">
       <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="var(--accent)"/><circle cx="11" cy="13" r="3" fill="#fff"/><circle cx="21" cy="13" r="3" fill="#fff"/><circle cx="16" cy="21" r="3" fill="#fff"/><path d="M11 13L21 13L16 21Z" stroke="#fff" stroke-width="1.2" fill="none"/></svg>
       <span>KevMind</span>
+      <div class="views" role="group" aria-label="View">
+        <button type="button" data-view="live" data-i18n="viewLive"></button>
+        <button type="button" data-view="memory" data-i18n="viewMemory"></button>
+      </div>
     </div>
     <div class="top-right">
       <div class="conn" id="conn"><span class="dot"></span><span id="connText" data-i18n="connecting"></span></div>
@@ -82,7 +86,49 @@
     </aside>
   </main>
 
+  <!-- Memory tab: read-only report on what Claude Code and Serena remember about a project -->
+  <main class="memory-view" id="memoryView" hidden>
+    <aside class="panel mem-projects">
+      <h2 data-i18n="memProjects"></h2>
+      <ul id="memProjectList"></ul>
+      <details id="memOtherWrap" hidden>
+        <summary><span data-i18n="memOther"></span> <small id="memOtherCount"></small></summary>
+        <ul id="memOtherList"></ul>
+      </details>
+      <p class="empty small" id="memNoProjects" data-i18n="memNoProjects" hidden></p>
+    </aside>
+    <section class="mem-main">
+      <div class="panel">
+        <div class="now-head">
+          <div>
+            <div class="project" id="memName">—</div>
+            <div class="muted" id="memRoot"></div>
+          </div>
+          <span class="muted" id="memUpdated"></span>
+        </div>
+        <div id="memBudget" class="budget"></div>
+      </div>
+      <div class="panel">
+        <h2 data-i18n="memIssues"></h2>
+        <div id="memProblems"></div>
+      </div>
+      <div class="panel">
+        <h2 data-i18n="memInstructions"></h2>
+        <div id="memInstructions" class="mem-table"></div>
+      </div>
+      <div class="panel">
+        <h2><span data-i18n="memClaude"></span> <small id="memClaudeDir"></small></h2>
+        <div id="memNotes" class="mem-table"></div>
+      </div>
+      <div class="panel">
+        <h2><span data-i18n="memSerena"></span> <small id="memSerenaDir"></small></h2>
+        <div id="memSerena" class="mem-table"></div>
+      </div>
+    </section>
+  </main>
+
   <script src="i18n.js"></script>
   <script src="app.js"></script>
+  <script src="memory.js"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { State, baseName } from './state.js';
 import { Tailer } from './transcript.js';
+import { listProjects, scanProject, projectRoot } from './memory.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -71,6 +72,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   }
   tailTranscripts();
   const tailTimer = setInterval(tailTranscripts, 1000);
+  const memory = memoryApi(state);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -105,6 +107,17 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       clients.add(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 20000);
       req.on('close', () => { clearInterval(ping); clients.delete(res); });
+      return;
+    }
+
+    if (url.pathname === '/api/health') return json(res, { ok: true, dev, detached, bootId, pid: process.pid });
+
+    if (url.pathname === '/api/memory') return json(res, { projects: memory.projects() });
+    if (url.pathname === '/api/memory/project') {
+      memory.report(url.searchParams.get('key')).then(
+        (r) => (r ? json(res, r) : json(res, { error: 'unknown project' }, 404)),
+        (err) => json(res, { error: String(err?.message || err) }, 500),
+      );
       return;
     }
 
@@ -169,6 +182,56 @@ export function clearAll() {
 }
 
 export const isDemoEvent = (e) => String(e?.session_id || '').startsWith('demo-') || baseName(e?.cwd || '') === 'demo-kevmind';
+
+// Memory tab data. The project list and "last read" come from the whole event log (not only the 24 h in memory),
+// read incrementally; what loaded comes from the InstructionsLoaded events of the project's latest session.
+function memoryApi(state) {
+  const usage = { offset: 0, rest: '', since: null, cwds: new Map(), reads: [] };
+  const refresh = () => {
+    let size;
+    try { size = fs.statSync(LOG_FILE).size; } catch { return; }
+    if (size < usage.offset) Object.assign(usage, { offset: 0, rest: '', since: null, cwds: new Map(), reads: [] });
+    if (size === usage.offset) return;
+    const fd = fs.openSync(LOG_FILE, 'r');
+    const buf = Buffer.alloc(size - usage.offset);
+    fs.readSync(fd, buf, 0, buf.length, usage.offset);
+    fs.closeSync(fd);
+    usage.offset = size;
+    const lines = (usage.rest + buf.toString('utf8')).split('\n');
+    usage.rest = lines.pop();
+    for (const line of lines) {
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      const e = o.e || {};
+      usage.since = Math.min(usage.since ?? o.ts, o.ts);
+      if (e.cwd) usage.cwds.set(e.cwd, Math.max(usage.cwds.get(e.cwd) || 0, o.ts));
+      if (e.hook_event_name === 'PreToolUse' && e.tool_name === 'Read' && e.cwd && e.tool_input?.file_path) {
+        usage.reads.push({ ts: o.ts, root: projectRoot(e.cwd), path: e.tool_input.file_path });
+      }
+    }
+  };
+  const projects = () => { refresh(); return listProjects({ cwds: usage.cwds }); };
+  const cache = new Map();
+  const report = async (key) => {
+    const p = projects().find((x) => x.key === key);
+    if (!p) return null;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < 5000) return hit.promise;
+    let latest = null;
+    for (const s of state.sessions.values()) {
+      if (!s.instructions?.length || !s.cwd || projectRoot(s.cwd)?.toLowerCase() !== p.root.toLowerCase()) continue;
+      if (!latest || s.lastAt > latest.lastAt) latest = s;
+    }
+    const promise = scanProject(p.root, {
+      reads: { since: usage.since ?? Date.now(), items: usage.reads },
+      loaded: latest ? latest.instructions : [],
+    }).then((r) => ({ ...r, key, source: p.source }));
+    cache.set(key, { at: Date.now(), promise });
+    promise.catch(() => cache.delete(key));
+    return promise;
+  };
+  return { projects, report };
+}
 
 function json(res, obj, code = 200) {
   res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));

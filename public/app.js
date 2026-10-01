@@ -62,6 +62,7 @@ function setLang(next) {
   applyStatic();
   renderSessions();
   renderSession();
+  if (typeof renderMemoryView === 'function') renderMemoryView();
 }
 
 function applyStatic() {

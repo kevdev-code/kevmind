@@ -23,7 +23,7 @@ KevMind · watch Claude Code work in real time
   kevmind                      Start the dashboard at http://localhost:${port}
   kevmind start --background   Start it detached: it keeps running after this terminal closes
   kevmind stop                 Stop the running dashboard
-  kevmind restart              Stop it if running, then start it again the same way
+  kevmind restart [--dev]      Stop it if running, then start it again the same way (--dev adds file watching)
   kevmind clear                Delete demo sessions from the stored events
   kevmind clear --all          Delete all stored data (asks first; --yes skips the question)
   kevmind install [--force]    Add the hooks to ~/.claude/settings.json (refuses when the plugin is installed)
@@ -32,7 +32,8 @@ KevMind · watch Claude Code work in real time
 
   Flags: --dev (reload the page when public/ changes)  --background (detach; output in server.log)
   Dev:   npm run dev [-- --background]   Also restarts the server when src/ or bin/ change
-  Env:   KEVMIND_PORT (port, 4777), KEVMIND_HOME (data dir, ~/.kevmind)
+  Env:   KEVMIND_PORT (port, 4777), KEVMIND_HOME (data dir, ~/.kevmind),
+         KEVMIND_AUTOSTART=0 (don't let the hook start the server at session start)
 `;
 
 switch (cmd) {
@@ -43,8 +44,12 @@ switch (cmd) {
     console.log((await stop()) ? '\n  ✓ KevMind stopped.\n' : '\n  KevMind is not running.\n');
     break;
   case 'restart': {
+    // Same launch mode as before; --dev / --background add to it (e.g. to bring an auto-started server into dev mode).
     const was = await stop();
-    await start(was ? launchOf(was) : { dev, background });
+    const launch = was ? launchOf(was) : { dev, background };
+    if (dev) launch.dev = true;
+    if (background) launch.background = true;
+    await start(launch);
     break;
   }
   case 'clear': {

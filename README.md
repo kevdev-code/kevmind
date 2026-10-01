@@ -18,6 +18,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **Conflict alerts**: when two agents edit the same file less than 5 minutes apart.
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
+- **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
 
 The dashboard is available in English and Spanish (toggle in the top-right corner).
 
@@ -62,6 +63,8 @@ To remove them: `npx kevmind uninstall`.
 
 Use one option, not both: with the plugin and the manual hooks installed together, every event would arrive twice. `kevmind install` refuses when it finds the plugin installed (`--force` overrides), and if you installed the hooks manually, run `npx kevmind uninstall` before installing the plugin. The server also drops an exact repeat of an event that arrives within 3 seconds, as a safety net.
 
+You don't have to keep it running yourself: when a Claude Code session starts and nothing answers on the port, the hook starts the dashboard in the background, with no window, and returns at once. Set `KEVMIND_AUTOSTART=0` to turn that off.
+
 `npx kevmind start --background` starts it detached, so it keeps running after you close the terminal (output in `~/.kevmind/server.log`). `npx kevmind stop` closes the running dashboard; `npx kevmind restart` closes it if it's running and starts it again the same way it was started.
 
 ### Try it without Claude Code
@@ -91,6 +94,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 - The server only listens on `127.0.0.1`.
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
+- The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`.
 
 ## Configuration
 
@@ -99,6 +103,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 | `KEVMIND_PORT` | `4777`        | Dashboard port     |
 | `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
 | `KEVMIND_DEV`  | unset         | `1` reloads the open page when a file in `public/` changes (set by `npm run dev`) |
+| `KEVMIND_AUTOSTART` | on       | `0` stops the hook from starting the dashboard at session start |
 
 ## Recording a demo
 

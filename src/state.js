@@ -273,6 +273,13 @@ export class State {
         this.push(s, { ts, kind: 'session_end', actor: 'main', detail: p.reason || '' });
         break;
 
+      // Which instruction files actually loaded, for the Memory tab. Not a feed event.
+      case 'InstructionsLoaded':
+        if (!p.file_path) break;
+        (s.instructions ||= []).push({ ts, path: p.file_path, type: p.memory_type || null, reason: p.load_reason || null });
+        if (s.instructions.length > 200) s.instructions.splice(0, s.instructions.length - 200);
+        break;
+
       default:
         return null;
     }
@@ -280,7 +287,7 @@ export class State {
   }
 
   summary(s, now = Date.now()) {
-    const { pending, agentSeq, transcript, ...rest } = s;
+    const { pending, agentSeq, transcript, instructions, ...rest } = s;
     const stale = isStale(s, now);
     // Drop duplicate agent aliases (same object registered under its real id).
     const seen = new Set();
