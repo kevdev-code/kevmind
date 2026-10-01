@@ -7,6 +7,7 @@ let memProjects = [];
 let memKey = null;
 let memReport = null;
 let memExp = null; // the Experience panel's data: what the MCP tools would serve, and how calls went
+let expToggleError = null; // why the last on/off change failed, if it did
 let memError = null;
 let memTimer = null;
 const memOpen = new Set(); // rows whose details are expanded
@@ -266,14 +267,20 @@ function renderTables(r) {
 function renderExperience(x) {
   const el = $('memExperience');
   if (!x) { el.innerHTML = ''; return; }
-  if (!x.known) { el.innerHTML = `<p class="empty small">${esc(T.expUnknown)}</p>`; return; }
+  const t = x.tools || { on: false, source: 'default' };
+  const toggle = `<div class="exp-switch">
+      <label><input type="checkbox" id="expToggle"${t.on ? ' checked' : ''}> <b>${esc(T.expToggle)}</b></label>
+      <span class="muted">${esc(T.expSource[t.source] || '')} · ${esc(T.expNextSession)}</span>
+      ${expToggleError ? `<span class="exp-err">${esc(T.expToggleError(expToggleError))}</span>` : ''}
+    </div>`;
+  if (!x.known) { el.innerHTML = `${toggle}<p class="empty small">${esc(T.expUnknown)}</p>`; return; }
   const { gate, coChange, readFirst, failures, hotspots } = x.preview;
   const th = x.thresholds;
   const m = x.measure;
   const ok = (b) => `<b class="${b ? 'ok' : 'off'}">${esc(b ? T.expMet : T.expNotYet)}</b>`;
   const list = (items, fn) => (items.length ? `<ul class="exp-list">${items.map((i) => `<li>${fn(i)}</li>`).join('')}</ul>` : `<p class="empty small">${esc(T.expNone)}</p>`);
   const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
-  el.innerHTML = `
+  el.innerHTML = `${toggle}
     <div class="exp-gate">
       <div>${esc(T.expEpisodes(gate.episodes, gate.days))} ${ok(x.preview.episodePairs > 0)}</div>
       ${x.preview.episodePairs ? '' : `<div class="muted">${esc(x.preview.nearest
@@ -301,6 +308,20 @@ function renderExperience(x) {
     ${m.last.length ? `<ul class="exp-list">${m.last.map((c) => `<li><code>${esc(c.tool)}</code> ${esc(new Date(c.ts).toLocaleString(lang))} · ≈ ${c.tokens} tok${c.noData ? ` · ${esc(T.expNoDataShort)}` : ''}${
       c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`;
 }
+
+// The on/off switch writes KevMind's own ~/.kevmind/config.json through the server (not Claude's settings).
+$('memExperience').addEventListener('change', async (e) => {
+  if (e.target.id !== 'expToggle') return;
+  try {
+    const r = await fetch('/api/tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: e.target.checked }) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (memExp) memExp.tools = await r.json();
+    expToggleError = null;
+  } catch (err) {
+    expToggleError = err.message;
+  }
+  renderExperience(memExp);
+});
 
 // A table whose rows expand to show metadata, headings, links and cited files (never the note's body).
 function table(head, rows) {

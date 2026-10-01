@@ -10,6 +10,7 @@ import { Tailer } from './transcript.js';
 import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
 import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
+import { writeConfig, experienceTools, pluginOption } from './config.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -125,6 +126,22 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
         (r) => (r ? json(res, r) : json(res, { error: 'unknown project' }, 404)),
         (err) => json(res, { error: String(err?.message || err) }, 500),
       );
+      return;
+    }
+    // The Experience panel's switch: KevMind's own config.json, read by mcp/server.js at the next session start.
+    // JSON only and same origin only, so another web page can't flip it (a cross-site JSON POST needs CORS).
+    if (req.method === 'POST' && url.pathname === '/api/tools') {
+      const origin = req.headers.origin;
+      if (!LOCAL.has(req.socket.remoteAddress) || !/^application\/json\b/.test(req.headers['content-type'] || '') || (origin && origin !== `http://${req.headers.host}`)) return res.writeHead(403).end();
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy(); });
+      req.on('end', () => {
+        let on;
+        try { on = JSON.parse(body).on; } catch { /* handled below */ }
+        if (typeof on !== 'boolean') return json(res, { error: 'expected {"on": true|false}' }, 400);
+        writeConfig(DATA_DIR, { experienceTools: on });
+        json(res, experienceTools(DATA_DIR, pluginOption()));
+      });
       return;
     }
     if (url.pathname === '/api/experience') {
@@ -281,9 +298,10 @@ function experienceKeeper() {
   const panel = async (key) => {
     await tick();
     const proj = agg.projects[key];
-    if (!proj) return { known: false, thresholds: THRESHOLDS };
+    const tools = experienceTools(DATA_DIR, pluginOption());
+    if (!proj) return { known: false, tools, thresholds: THRESHOLDS };
     const now = Date.now();
-    return { known: true, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
+    return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
   };
   return { panel, stop: () => clearInterval(timer) };
 }

@@ -2,8 +2,8 @@
 // KevMind experience: a stdio MCP server (JSON-RPC, one message per line) that tells Claude what this project's
 // history shows: past Claude Code sessions recorded by KevMind, and git. History only, no code parsing.
 // It reads ~/.kevmind/experience.json, kept current by the dashboard, plus any log lines newer than that file,
-// and never writes anything (test/experience-readonly.test.mjs). Off unless KEVMIND_EXPERIENCE is true, which the
-// plugin sets from its "experience_tools" option. Logs go to stderr; stdout carries protocol messages only.
+// and never writes anything (test/experience-readonly.test.mjs). Off unless ~/.kevmind/config.json or the plugin's
+// "experience_tools" option turns it on (src/config.js). Logs go to stderr; stdout carries protocol messages only.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,10 +12,13 @@ import {
   emptyAggregate, revive, updateFromLogs, refreshGit, projectAt, repoFor, answerFileContext, answerFileHistory, answerKnownFailures, THRESHOLDS,
 } from '../src/experience.js';
 import { projectRoot, keyOf } from '../src/memory.js';
+import { experienceTools } from '../src/config.js';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
-const ENABLED = /^(1|true|yes|on)$/i.test(process.env.KEVMIND_EXPERIENCE || '');
 const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
+// On when ~/.kevmind/config.json says so ("kevmind tools on" or the dashboard toggle) or, when that file doesn't
+// say, when the plugin option does. Read once: a change takes effect in the next Claude Code session.
+const ENABLED = experienceTools(DATA_DIR, process.env.KEVMIND_EXPERIENCE).on;
 const AGG_FILE = path.join(DATA_DIR, 'experience.json');
 const ROOT = projectRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
 const NAME = path.basename(ROOT);
@@ -132,7 +135,7 @@ async function handle(msg) {
     case 'tools/list':
       return { tools: ENABLED ? TOOLS : [] };
     case 'tools/call': {
-      if (!ENABLED) return { content: [{ type: 'text', text: 'KevMind experience tools are turned off (plugin option "experience_tools").' }], isError: true };
+      if (!ENABLED) return { content: [{ type: 'text', text: 'KevMind experience tools are turned off. Turn them on with "kevmind tools on" or in the Experience panel of the dashboard.' }], isError: true };
       try {
         return { content: [{ type: 'text', text: await call(params?.name, params?.arguments) }] };
       } catch (e) {

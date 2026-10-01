@@ -89,7 +89,15 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 
 ## Experience tools for Claude (optional)
 
-KevMind can also answer Claude's questions about a project's history, through three MCP tools built into the plugin. They are **off by default**; turn them on in `/config` under the kevmind plugin ("Experience tools for Claude").
+KevMind can also answer Claude's questions about a project's history, through three MCP tools built into the plugin. They are **off by default**. Turn them on with
+
+```bash
+npx kevmind tools on
+```
+
+or with the switch at the top of the **Experience** panel in the dashboard's Memory tab. `kevmind tools off` turns them off, and `kevmind tools status` shows whether they're on and where that comes from. The setting lives in `~/.kevmind/config.json` and takes effect in the next Claude Code session. While they're off, Claude sees no tools from KevMind, so they cost no context.
+
+As an alternative, the plugin has an "Experience tools for Claude" option (`experience_tools`) in `/config`. KevMind's own setting wins when both are set, so "off" is always respected.
 
 - `file_context(paths)`: files that usually change or get read together with the given ones.
 - `file_history(path)`: how many work episodes read and edited a file, by which agent types, and how often git changed or fixed it.

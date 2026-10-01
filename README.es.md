@@ -88,7 +88,15 @@ Combínalos para grabar un solo proyecto: `http://localhost:4777/?project=KevMin
 
 ## Herramientas de experiencia para Claude (opcional)
 
-KevMind también puede responder preguntas de Claude sobre la historia de un proyecto, con tres herramientas MCP incluidas en el plugin. Vienen **apagadas**; actívalas en `/config`, en el plugin kevmind ("Experience tools for Claude").
+KevMind también puede responder preguntas de Claude sobre la historia de un proyecto, con tres herramientas MCP incluidas en el plugin. Vienen **apagadas**. Actívalas con
+
+```bash
+npx kevmind tools on
+```
+
+o con el interruptor arriba del panel **Experiencia**, en la pestaña Memoria del panel. `kevmind tools off` las apaga y `kevmind tools status` muestra si están activas y de dónde viene ese ajuste. El ajuste se guarda en `~/.kevmind/config.json` y se aplica en la siguiente sesión de Claude Code. Mientras están apagadas, Claude no ve ninguna herramienta de KevMind, así que no gastan contexto.
+
+Como alternativa, el plugin tiene la opción "Experience tools for Claude" (`experience_tools`) en `/config`. Cuando ambos están definidos gana el ajuste de KevMind, así que "apagado" siempre se respeta.
 
 - `file_context(paths)`: archivos que suelen cambiar o leerse junto con los indicados.
 - `file_history(path)`: en cuántos episodios de trabajo se leyó y editó un archivo, con qué tipos de agente, y cuántas veces git lo cambió o lo corrigió.

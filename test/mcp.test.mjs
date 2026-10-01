@@ -95,6 +95,24 @@ test('initialize, tools/list and tools/call over stdio', async () => {
   await c.close();
 });
 
+test('config.json decides over the plugin option: off stays off, on turns them on', async () => {
+  const { dir, a } = home();
+  const tools = async (env) => {
+    const c = client({ KEVMIND_HOME: dir, CLAUDE_PROJECT_DIR: a, ...env });
+    await c.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+    const names = (await c.rpc('tools/list')).result.tools.map((t) => t.name);
+    await c.close();
+    return names;
+  };
+  fs.writeFileSync(path.join(dir, 'config.json'), '{"experienceTools": false}');
+  assert.deepEqual(await tools({ KEVMIND_EXPERIENCE: 'true' }), [], 'the plugin option cannot override "off"');
+  fs.writeFileSync(path.join(dir, 'config.json'), '{"experienceTools": true}');
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'false' })).length, 3);
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: '' })).length, 3);
+  fs.rmSync(path.join(dir, 'config.json'));
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'true' })).length, 3, 'without the file, the plugin option decides');
+});
+
 test('with the option off, the server lists no tools and refuses calls', async () => {
   const { dir, a } = home();
   const c = client({ KEVMIND_HOME: dir, CLAUDE_PROJECT_DIR: a, KEVMIND_EXPERIENCE: 'false' });

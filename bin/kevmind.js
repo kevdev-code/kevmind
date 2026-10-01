@@ -30,6 +30,7 @@ KevMind · watch Claude Code work in real time
   kevmind install [--force]    Add the hooks to ~/.claude/settings.json (refuses when the plugin is installed)
   kevmind uninstall            Remove KevMind's hooks
   kevmind demo                 Start the dashboard and simulate a sample session
+  kevmind tools on|off|status  Turn the experience tools for Claude on or off, or show their state and its source
 
   Flags: --dev (reload the page when public/ changes)  --background (detach; output in server.log)
   Dev:   npm run dev [-- --background]   Also restarts the server when src/ or bin/ change
@@ -100,6 +101,20 @@ switch (cmd) {
       await runDemo(port, Number(args[0]) || 1);
       console.log('  ✓ Demo finished. The dashboard stays open (Ctrl+C to quit).');
     });
+    break;
+  }
+  case 'tools': {
+    // The experience tools for Claude: KevMind's own switch, in config.json. It wins over the plugin option.
+    const { writeConfig, experienceTools, optionState, pluginOption, configFile } = await import('../src/config.js');
+    const sub = args[0] || 'status';
+    if (sub === 'on' || sub === 'off') writeConfig(DATA_DIR, { experienceTools: sub === 'on' });
+    else if (sub !== 'status') fail('Usage: kevmind tools on | off | status');
+    const option = pluginOption();
+    const st = experienceTools(DATA_DIR, option);
+    const from = { config: `config file (${configFile(DATA_DIR)})`, plugin: 'plugin option "experience_tools"', default: 'default (nothing set)' }[st.source];
+    console.log(`\n  Experience tools: ${st.on ? 'on' : 'off'}\n  Source: ${from}`);
+    if (st.source === 'config' && optionState(option) !== null) console.log(`  Plugin option: ${optionState(option) ? 'on' : 'off'} (the config file wins)`);
+    console.log(`\n  Changes take effect in the next Claude Code session.\n`);
     break;
   }
   case '-h': case '--help': case 'help':

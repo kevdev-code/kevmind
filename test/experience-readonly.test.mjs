@@ -31,3 +31,8 @@ test('experience.js runs git only as `git log`, through one guarded helper', () 
   for (const m of code.experience.matchAll(/gitRead\([^,]+,\s*\[\s*'([\w-]+)'/g)) assert.equal(m[1], 'log');
   assert.ok(!/execFile/.test(code.mcp), 'the MCP server itself never runs a process');
 });
+
+test('the MCP server only reads KevMind\'s config: it imports nothing that writes it', () => {
+  const imported = /import\s*\{([^}]*)\}\s*from\s*'\.\.\/src\/config\.js'/.exec(code.mcp)?.[1] || '';
+  assert.ok(!/writeConfig/.test(imported) && !/\bwriteConfig\b/.test(code.mcp));
+});

@@ -118,6 +118,9 @@ body.view-memory .layout { display: none; }
 .mem-issue-text small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin-top: 2px; }
 .mem-none, .mem-info { color: var(--muted); font-size: 12px; padding: 2px 2px 6px; }
 .mem-shared-list { margin-bottom: 12px; }
+.exp-switch { font-size: 13px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 12px; }
+.exp-switch label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.exp-switch .exp-err { color: var(--warn); }
 .exp-gate { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
 .exp-gate b.ok { color: var(--ok); }
 .exp-gate b.off { color: var(--warn); }
