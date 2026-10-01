@@ -179,6 +179,9 @@ window.I18N = {
     actionsN: (n) => `${n} action${n === 1 ? '' : 's'}`,
     memTally: { problem: (n) => (n === 1 ? 'problem' : 'problems'), warning: (n) => (n === 1 ? 'warning' : 'warnings'), suggestion: (n) => (n === 1 ? 'suggestion' : 'suggestions') },
     memAllClear: 'All clear: no problems, warnings or suggestions.',
+    showClosed: (n) => `Show closed (${n})`,
+    hideClosed: 'Hide closed',
+    noTitle: 'Untitled session',
   },
 
   es: {
@@ -357,5 +360,8 @@ window.I18N = {
     actionsN: (n) => `${n} ${n === 1 ? 'acción' : 'acciones'}`,
     memTally: { problem: (n) => (n === 1 ? 'problema' : 'problemas'), warning: (n) => (n === 1 ? 'advertencia' : 'advertencias'), suggestion: (n) => (n === 1 ? 'sugerencia' : 'sugerencias') },
     memAllClear: 'Todo en orden: sin problemas, advertencias ni sugerencias.',
+    showClosed: (n) => `Mostrar cerradas (${n})`,
+    hideClosed: 'Ocultar cerradas',
+    noTitle: 'Sesión sin título',
   },
 };

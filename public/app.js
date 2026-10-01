@@ -215,6 +215,9 @@ const timeFmt = () => (fmtCache[lang] ||= {
 });
 const hhmmss = (ts) => timeFmt().s.format(ts);
 const hhmm = (ts) => timeFmt().m.format(ts);
+const dayFmt = () => (fmtCache['d' + lang] ||= new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'short' }));
+// A start time today reads "08:12"; on another day "30 sep 22:10".
+const startOf = (ts, today = new Date().toDateString()) => (new Date(ts).toDateString() === today ? hhmm(ts) : `${dayFmt().format(ts)} ${hhmm(ts)}`);
 const fmtMin = (m) => { m = Math.max(0, Math.round(m)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 const fmtMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
@@ -231,8 +234,14 @@ const sessionStatus = (s) => (isStale(s) ? 'idle' : s.status);
 const agentStatus = (a, s) => (isStale(s) && (a.status === 'running' || a.status === 'working') ? 'idle' : a.status);
 const isLive = (st) => st === 'running' || st === 'working';
 
-// ---------- sessions: keyed buttons, updated in place ----------
-const sessionRows = new Map();
+// ---------- sessions: grouped by project, keyed buttons updated in place ----------
+// Groups are ordered by their latest activity. The selected session's project opens by itself (and stays open
+// until you close it); closed sessions older than 2 h fold under "Show closed (N)" inside their group.
+const CLOSED_AFTER_MS = 2 * 60 * 60 * 1000;
+const sessionRows = new Map();  // session id -> row
+const groupEls = new Map();     // project -> group
+const groupOpen = new Map();    // project -> open, once decided (by you, or by selecting one of its sessions)
+const closedOpen = new Set();   // projects whose closed sessions are shown
 function sessionRow(id) {
   const li = document.createElement('li');
   li.innerHTML = '<button type="button"><span class="dot"></span><span class="name"></span><span class="meta"></span></button>';
@@ -240,6 +249,26 @@ function sessionRow(id) {
   btn.dataset.id = id;
   return { li, btn, dot: btn.children[0], name: btn.children[1], meta: btn.children[2] };
 }
+function sessionGroup(project) {
+  const li = document.createElement('li');
+  li.className = 'group';
+  li.innerHTML = '<button type="button" class="ghead"><span class="chev" aria-hidden="true"></span><span class="gname"></span><span class="count"></span></button>' +
+    '<ul class="list"></ul><button type="button" class="more gclosed"></button><ul class="list"></ul>';
+  const [head, list, closedBtn, closedList] = li.children;
+  head.dataset.group = project;
+  closedBtn.dataset.closed = project;
+  return { li, head, name: head.children[1], count: head.children[2], list, closedBtn, closedList };
+}
+// Rows in this order inside ul: moves only what is out of place.
+function placeRows(ul, rows) {
+  let prev = null;
+  for (const r of rows) {
+    const want = prev ? prev.nextSibling : ul.firstChild;
+    if (r.li !== want) ul.insertBefore(r.li, want);
+    prev = r.li;
+  }
+}
+const sessionTitle = (s) => s.title || (s.firstPrompt ? (s.firstPrompt.length > 42 ? s.firstPrompt.slice(0, 40).trimEnd() + '…' : s.firstPrompt) : T.noTitle);
 function renderSessions() {
   const names = [...new Set(sessions.map((s) => s.project))].sort((a, b) => a.localeCompare(b));
   if (projectFilter && !names.includes(projectFilter)) names.push(projectFilter);
@@ -249,28 +278,68 @@ function renderSessions() {
   const visible = visibleSessions();
   setHidden($('noSessions'), visible.length > 0);
   if (!visible.length) patchHTML($('noSessions'), sessions.length ? esc(T.noProjectSessions) : T.noSessions);
-  const list = $('sessionList');
-  const seen = new Set();
-  let prev = null;
-  for (const s of visible) {
-    let r = sessionRows.get(s.id);
-    if (!r) { r = sessionRow(s.id); sessionRows.set(s.id, r); }
-    seen.add(s.id);
-    const st = sessionStatus(s);
-    setClass(r.dot, 'dot ' + st);
-    setText(r.name, s.project);
-    setText(r.meta, `${T.status[st] || st} · ${T.ago(secondsSince(s.lastAt))}`);
-    setAttr(r.btn, 'aria-current', String(s.id === selectedId));
-    if (r.btn.title !== (s.cwd || '')) r.btn.title = s.cwd || '';
-    const want = prev ? prev.nextSibling : list.firstChild;
-    if (r.li !== want) list.insertBefore(r.li, want);
-    prev = r.li;
+  const now = Date.now();
+  const today = new Date(now).toDateString();
+  const byProject = new Map();
+  for (const s of visible) (byProject.get(s.project) || byProject.set(s.project, []).get(s.project)).push(s);
+  const latest = (list) => Math.max(...list.map((s) => s.lastAt));
+  const groups = [...byProject].sort((a, b) => latest(b[1]) - latest(a[1]));
+  const selProject = (current?.id === selectedId ? current?.project : null) || sessions.find((s) => s.id === selectedId)?.project;
+  if (selProject && !groupOpen.has(selProject)) groupOpen.set(selProject, true);
+  const root = $('sessionList');
+  const seenGroups = new Set();
+  const seenRows = new Set();
+  let prevGroup = null;
+  for (const [project, list] of groups) {
+    let g = groupEls.get(project);
+    if (!g) { g = sessionGroup(project); groupEls.set(project, g); }
+    seenGroups.add(project);
+    const open = groupOpen.get(project) === true;
+    setAttr(g.head, 'aria-expanded', String(open));
+    setText(g.name, project);
+    setText(g.count, list.length);
+    const recent = [];
+    const closed = [];
+    for (const s of list) {
+      let r = sessionRows.get(s.id);
+      if (!r) { r = sessionRow(s.id); sessionRows.set(s.id, r); }
+      seenRows.add(s.id);
+      const st = sessionStatus(s);
+      const live = st === 'working' || st === 'waiting';
+      setClass(r.dot, 'dot ' + st);
+      setText(r.name, sessionTitle(s));
+      // Start and duration change at most once a minute; the status word only for sessions that need a look.
+      const dur = fmtMin(((live ? now : s.lastAt) - s.startedAt) / 60000);
+      const startKey = `${lang}|${today}|${s.startedAt}`; // the start label changes only with the language or at midnight
+      if (r.startKey !== startKey) { r.startKey = startKey; r.start = startOf(s.startedAt, today); }
+      setText(r.meta, `${live ? (T.status[st] || st) + ' · ' : ''}${r.start} · ${dur}`);
+      setAttr(r.btn, 'aria-current', String(s.id === selectedId));
+      const tip = `${s.title || s.firstPrompt || T.noTitle}\n${T.status[st] || st} · ${s.cwd || ''}`;
+      if (r.btn.title !== tip) r.btn.title = tip;
+      (st === 'ended' && now - s.lastAt > CLOSED_AFTER_MS && s.id !== selectedId ? closed : recent).push(r);
+    }
+    placeRows(g.list, recent);
+    placeRows(g.closedList, closed);
+    const showClosed = closedOpen.has(project);
+    setHidden(g.list, !open);
+    setHidden(g.closedBtn, !open || !closed.length);
+    setText(g.closedBtn, showClosed ? T.hideClosed : T.showClosed(closed.length));
+    setAttr(g.closedBtn, 'aria-expanded', String(showClosed));
+    setHidden(g.closedList, !open || !showClosed || !closed.length);
+    const want = prevGroup ? prevGroup.nextSibling : root.firstChild;
+    if (g.li !== want) root.insertBefore(g.li, want);
+    prevGroup = g.li;
   }
-  for (const [id, r] of sessionRows) if (!seen.has(id)) { r.li.remove(); sessionRows.delete(id); }
+  for (const [id, r] of sessionRows) if (!seenRows.has(id)) { r.li.remove(); sessionRows.delete(id); }
+  for (const [p, g] of groupEls) if (!seenGroups.has(p)) { g.li.remove(); groupEls.delete(p); }
 }
 $('sessionList').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-id]');
-  if (b) select(b.dataset.id);
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.id) return select(b.dataset.id);
+  if (b.dataset.group !== undefined) groupOpen.set(b.dataset.group, b.getAttribute('aria-expanded') !== 'true');
+  if (b.dataset.closed !== undefined) { if (closedOpen.has(b.dataset.closed)) closedOpen.delete(b.dataset.closed); else closedOpen.add(b.dataset.closed); }
+  renderSessions();
 });
 
 function renderSession() {
@@ -455,6 +524,23 @@ function renderFeed(s) {
   if (added) lastFeedAdd = now;
 }
 
+// File names, with just enough of the parent path to tell apart files that share a name:
+// "src/memory.js" and "mcp/memory.js", but plain "app.js" when it is the only one.
+function shortPaths(paths) {
+  const parts = paths.map((p) => String(p).split(/[\\/]/).filter(Boolean));
+  const names = parts.map((p) => p[p.length - 1] || '');
+  for (let k = 2; ; k++) {
+    const seen = new Map();
+    names.forEach((n, i) => (seen.get(n) || seen.set(n, []).get(n)).push(i));
+    let grew = false;
+    for (const same of seen.values()) {
+      if (same.length < 2) continue;
+      for (const i of same) if (parts[i].length >= k) { names[i] = parts[i].slice(-k).join('/'); grew = true; }
+    }
+    if (!grew) return names;
+  }
+}
+
 // ---------- right rail: rewritten only when its HTML changes ----------
 const WARN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>';
 function renderSide(s) {
@@ -482,7 +568,8 @@ function renderSide(s) {
 
   const files = s.files.slice().sort((a, b) => (b.edits * 3 + b.reads) - (a.edits * 3 + a.reads)).slice(0, 8);
   const max = Math.max(1, ...files.map((f) => f.reads + f.edits));
-  patchHTML($('files'), files.map((f) => `<li title="${esc(f.path)}"><span class="fn">${esc(f.path.split(/[\\/]/).pop())}</span>` +
+  const labels = shortPaths(files.map((f) => f.path));
+  patchHTML($('files'), files.map((f, i) => `<li title="${esc(f.path)}"><span class="fn">${esc(labels[i])}</span>` +
     `<span class="fc">${esc(T.fileStats(f.reads, f.edits))}</span><span class="fbar"><i class="r" style="width:${((f.reads / max) * 100).toFixed(1)}%"></i>` +
     `<i class="e" style="width:${((f.edits / max) * 100).toFixed(1)}%"></i></span></li>`).join('') || `<li class="empty">${esc(T.nothingYet)}</li>`);
 

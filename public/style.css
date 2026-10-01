@@ -108,6 +108,19 @@ select.filter { width: 100%; padding: 6px 8px; border: 1px solid var(--border); 
 .list .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .meta { grid-column: 2; color: var(--text-3); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list button[aria-current="true"] .meta { color: var(--text-2); }
+.list button:focus-visible, .ghead:focus-visible { outline-offset: -2px; } /* inside the rail's scroll box */
+
+/* sessions grouped by project: a small header with a count, rows under it, closed ones folded */
+.groups > li + li { margin-top: var(--sp-2); }
+.ghead { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; text-align: left; }
+.ghead:hover { color: var(--text); background: var(--raised); }
+.ghead .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ghead .count { font-weight: 500; }
+.chev { width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform var(--dur-1) var(--ease-out); flex: none; }
+.ghead[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.group .list { margin-top: 2px; }
+.sessions .list .name { font-weight: 500; }
+.gclosed { display: block; margin: 4px 0 2px 26px; font-size: var(--fs-xs); }
 
 /* ---------- now: status leads ---------- */
 .now { display: flex; flex-direction: column; gap: var(--sp-3); }
@@ -283,6 +296,23 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .mem-dl ul { margin: 0; padding-left: 16px; list-style: disc; }
 table.cites { width: auto; }
 table.cites tr.missing td { color: var(--waiting); }
+
+/* App shell (wide screens): the header stays, the page never scrolls, each column scrolls on its own and the
+   activity feed scrolls inside its panel. Narrower screens keep the normal page scroll. */
+@media (min-width: 1101px) {
+  body:not(.view-memory) { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  body:not(.view-memory) .layout { flex: 1 1 0; min-height: 0; width: 100%; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+  body:not(.view-memory) .layout > * { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  body:not(.view-memory) .center { padding-bottom: 2px; }
+  body:not(.view-memory) .feed-panel { flex: 1 0 320px; display: flex; flex-direction: column; min-height: 320px; }
+  body:not(.view-memory) .feed { flex: 1 1 0; min-height: 0; max-height: none; }
+  .sessions select.filter { position: sticky; top: 0; z-index: 1; }
+}
+@media (min-width: 901px) {
+  body.view-memory { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  body.view-memory .memory-view { flex: 1 1 0; min-height: 0; width: 100%; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+  body.view-memory .memory-view > * { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+}
 
 /* ?focus=latest: the session list goes away and the main panels take its width */
 body.focus .sessions { display: none; }
