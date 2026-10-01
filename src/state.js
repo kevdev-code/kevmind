@@ -188,7 +188,9 @@ export class State {
         const sys = systemDetail(p.prompt);
         if (sys) { this.push(s, { ts, kind: 'system', actor: 'system', detail: sys }); break; }
         s.prompts++;
-        this.push(s, { ts, kind: 'prompt', actor: 'user', detail: cleanPrompt(p.prompt) });
+        const prompt = cleanPrompt(p.prompt);
+        if (!s.firstPrompt && prompt) s.firstPrompt = prompt.slice(0, 80); // names the session until it has a title
+        this.push(s, { ts, kind: 'prompt', actor: 'user', detail: prompt });
         break;
       }
 
@@ -312,7 +314,7 @@ export class State {
       .sort((a, b) => b.lastAt - a.lastAt)
       .map((s) => ({
         id: s.id, project: s.project, cwd: s.cwd, status: isStale(s, now) ? 'idle' : s.status,
-        lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts,
+        lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts, title: s.title || null, firstPrompt: s.firstPrompt || null,
       }));
   }
 }
@@ -350,7 +352,8 @@ function systemDetail(text) {
 }
 
 // Strip Claude Code's internal tags (e.g. <pasted_content id="x">) from the prompt text.
-function cleanPrompt(text) {
+// Prompt text without tags or extra whitespace, short. Also cleans titles from the transcript.
+export function cleanPrompt(text) {
   return String(text || '')
     .replace(/<\/?[a-z_][\w-]*(\s[^>]*)?>/gi, '')
     .replace(/\s+/g, ' ')

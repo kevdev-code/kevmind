@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { redact } from '../hooks/redact.js';
+import { cleanPrompt } from './state.js';
 
 const EXCERPT = 200;
 const CHUNK = 1 << 20; // read 1 MB at a time, so a big transcript never sits in memory whole
@@ -94,6 +95,19 @@ export class Tailer {
     const ts = Date.parse(o.timestamp) || Date.now();
     if (o.type === 'assistant') this.assistant(f, o, ts);
     else if (o.type === 'user') this.user(f, o, ts);
+    else if (f.actor === 'main' && (o.type === 'custom-title' || o.type === 'last-prompt')) this.title(o);
+  }
+
+  // The session's name in the sessions rail: a custom title when it has one, otherwise its latest prompt.
+  // Redacted, without tags, at most 80 characters.
+  title(o) {
+    const custom = o.type === 'custom-title';
+    if (!custom && this.s.titleFrom === 'custom') return;
+    const t = cleanPrompt(redact(String((custom ? o.customTitle : o.lastPrompt) || ''))).slice(0, 80);
+    if (!t || (t === this.s.title && (this.s.titleFrom === 'custom') === custom)) return;
+    this.s.title = t;
+    this.s.titleFrom = custom ? 'custom' : 'prompt';
+    this.changed = true;
   }
 
   // One content block per line; lines of one API call share message.id and repeat the same usage.

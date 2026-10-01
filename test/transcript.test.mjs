@@ -107,3 +107,24 @@ test('events land in time order even when the transcript is read after later hoo
   assert.deepEqual(ts, [...ts].sort((x, y) => x - y));
   assert.equal(s.events.at(-1).kind, 'stop');
 });
+
+test('the session title: a custom title wins over the latest prompt, redacted and short; the first prompt is kept', () => {
+  const { main, st, s, tailer } = setup();
+  st.apply({ session_id: 'sess', cwd: '/p/Proj', hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>done</task-notification>' }, Date.now());
+  st.apply({ session_id: 'sess', cwd: '/p/Proj', hook_event_name: 'UserPromptSubmit', prompt: 'Fix the   login\n flow' }, Date.now());
+  st.apply({ session_id: 'sess', cwd: '/p/Proj', hook_event_name: 'UserPromptSubmit', prompt: 'And now the tests' }, Date.now());
+  assert.equal(st.list()[0].firstPrompt, 'Fix the login flow', 'system messages skipped, whitespace collapsed, the first prompt kept');
+  tailer.tick();
+  assert.equal(st.list()[0].title, null, 'no title records yet');
+
+  fs.appendFileSync(main, line({ type: 'last-prompt', lastPrompt: `deploy with ${KEY} please`, leafUuid: 'u1', sessionId: 'sess' }));
+  tailer.tick();
+  assert.equal(s.title, 'deploy with ••• please');
+  fs.appendFileSync(main, line({ type: 'custom-title', customTitle: 'Billing refunds', sessionId: 'sess' }) +
+    line({ type: 'last-prompt', lastPrompt: 'a later prompt', leafUuid: 'u2', sessionId: 'sess' }));
+  tailer.tick();
+  assert.equal(st.list()[0].title, 'Billing refunds', 'a later prompt does not replace a custom title');
+  fs.appendFileSync(main, line({ type: 'custom-title', customTitle: 'x'.repeat(200), sessionId: 'sess' }));
+  tailer.tick();
+  assert.equal(s.title.length, 80);
+});
