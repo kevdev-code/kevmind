@@ -3,3 +3,5 @@ node_modules/
 *.log
 
 docs/inspiration/
+# Impeccable design-tool state (critique snapshots, live mode, design.json sidecar)
+.impeccable/
