@@ -10,19 +10,19 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 ## What it shows
 
-- **Sessions** from the last 24 h, per project, with their status (working, idle, needs your OK).
+- **Sessions** from the last 24 h, per project, with their status (working, idle, needs your OK). When a session needs your OK, the browser tab says so even when you are looking at another one: the title starts with "⏸ Needs your OK" and the icon gets an amber dot. No sounds, no notifications.
 - **Parallel agents**: a timeline of Claude and every subagent it launches, with each one's action count.
 - **Live activity**: every read, edit, command, search and MCP call as it happens.
 - **Most-touched files**: how often each file was read and edited.
 - **Tools**: uses, errors and average duration.
-- **Conflict alerts**: when two agents edit the same file less than 5 minutes apart.
+- **Conflict alerts**: when two agents edit the same file less than 5 minutes apart, grouped by file and pair of agents; the latest three are shown, with "show all".
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 - **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
 
-The dashboard is available in English and Spanish (toggle in the top-right corner).
+The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width.
 
-It's lightweight: plain HTML and CSS, no 3D, no GPU. Zero dependencies; just Node 18+.
+It's lightweight: plain HTML and CSS with system fonts, no 3D, no GPU. Zero dependencies; just Node 18+. It renders only what changed, does no work while idle, and stops rendering while its tab is hidden. The design system is documented in [DESIGN.md](DESIGN.md).
 
 ## Install
 

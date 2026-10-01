@@ -10,19 +10,19 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 
 ## Qué muestra
 
-- **Sesiones** de las últimas 24 h, por proyecto, con su estado (trabajando, en espera, espera tu OK).
+- **Sesiones** de las últimas 24 h, por proyecto, con su estado (trabajando, en espera, espera tu OK). Cuando una sesión espera tu OK, la pestaña del navegador lo dice aunque estés en otra: el título empieza con "⏸ Necesita tu OK" y el ícono lleva un punto ámbar. Sin sonidos ni notificaciones.
 - **Agentes en paralelo**: línea de tiempo de Claude y cada subagente que lanza, con cuántas acciones hizo cada uno.
 - **Actividad en vivo**: cada lectura, edición, comando, búsqueda y llamada MCP al instante.
 - **Archivos más tocados**: cuántas veces se leyó y editó cada uno.
 - **Herramientas**: usos, errores y tiempo promedio.
-- **Alertas de conflicto**: cuando dos agentes editan el mismo archivo con menos de 5 minutos de diferencia.
+- **Alertas de conflicto**: cuando dos agentes editan el mismo archivo con menos de 5 minutos de diferencia, agrupadas por archivo y par de agentes; se ven las tres más recientes, con "ver todas".
 - **Qué dice y qué piensa Claude**: extractos cortos de sus respuestas y de sus resúmenes de razonamiento legibles, leídos de la transcripción de la sesión, con un botón para ocultar los pensamientos. Si razonó pero no devolvió nada legible, el panel lo dice con la cantidad de tokens.
 - **Tokens**: entrada, salida y caché (lectura/escritura) por sesión y por agente, contados una vez por llamada. Sin estimaciones de costo: los precios cambian.
 - **Pestaña Memoria**: lo que Claude Code y Serena recuerdan de cada proyecto, con los problemas primero. Cubre los `CLAUDE.md` y sus importaciones, la memoria automática de Claude y las notas de Serena. Muestra cuánto contexto se carga al inicio de cada sesión, y marca enlaces e importaciones rotos, notas que faltan en `MEMORY.md`, un `MEMORY.md` que pasa el límite de 200 líneas / 25 KB, archivos de instrucciones demasiado largos, rutas desactualizadas, copias en worktrees, notas grandes, posibles duplicados y notas que ninguna sesión lee. Cada problema tiene un botón "Copiar prompt de arreglo" para pegar en Claude Code. KevMind nunca edita esos archivos.
 
-El panel está en inglés y español (botón arriba a la derecha).
+El panel está en inglés y español, con tema oscuro y claro (sigue al sistema, o elige uno con el interruptor arriba a la derecha), y funciona en el ancho de un teléfono.
 
-Es ligero: HTML y CSS normales, sin 3D ni GPU. Sin dependencias; solo Node 18 o superior.
+Es ligero: HTML y CSS normales con fuentes del sistema, sin 3D ni GPU. Sin dependencias; solo Node 18 o superior. Solo dibuja lo que cambió, no trabaja mientras está en reposo y deja de dibujar cuando su pestaña está oculta. El sistema de diseño está en [DESIGN.md](DESIGN.md).
 
 ## Instalación
 
