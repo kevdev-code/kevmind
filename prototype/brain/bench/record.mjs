@@ -41,7 +41,7 @@ if (process.env.ORBIT) {
 }
 await sleep(Math.max(0, Number(toS) * 1000 + 500 - (Date.now() - start)));
 await p.send('Page.stopScreencast');
-e.close();
+await e.close();
 
 // Resample to a constant frame rate between fromS and toS (seconds after navigation).
 const dir = path.join(outDir, 'frames');

@@ -51,7 +51,7 @@ async function sample(e, p, seconds) {
 
 // Warm-up launch, thrown away.
 // The first Windows GPU-counter query of a run also stalls the browser's frames for a while, so it happens here.
-{ const w = await launch({ port: 9373 }); const p = await w.open('about:blank'); await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay` }); await sleep(2000); await gpuUtil((await cpuTimes(w.browser)).pids.GPU, 3); await sleep(4000); w.close(); await sleep(800); }
+{ const w = await launch({ port: 9373 }); const p = await w.open('about:blank'); await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay` }); await sleep(2000); await gpuUtil((await cpuTimes(w.browser)).pids.GPU, 3); await sleep(4000); await w.close(); await sleep(800); }
 
 const results = { runs: [] };
 const ONLY = process.env.ONLY; // e.g. ONLY=hw:0 to rerun one configuration
@@ -111,7 +111,7 @@ for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 3000]].filt
   await p.eval('__brain.setAutoRotate(false)');
   results.runs.push(run);
   try { other.ws.close(); } catch {}
-  e.close();
+  await e.close();
   await sleep(800);
 }
 fs.writeFileSync(out, JSON.stringify(results, null, 2));

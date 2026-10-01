@@ -17,5 +17,5 @@ try {
   const shot = await p.send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(out, Buffer.from(shot.data, 'base64'));
   console.log('wrote', out);
-} finally { e.close(); }
+} finally { await e.close(); }
 process.exit(0);

@@ -14,6 +14,8 @@ export async function launch({ port = 9333, gpu = 'hw', width = 1440, height = 9
     const p = path.join(os.tmpdir(), d);
     if (d.startsWith('kevmind-brain-edge-')) try { if (Date.now() - fs.statSync(p).mtimeMs > 600000) fs.rmSync(p, { recursive: true, force: true }); } catch {}
   }
+  // A browser from an earlier launch may still hold the port: connecting to it would measure the wrong GPU mode.
+  for (let i = 0; i < 100; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); await sleep(100); } catch { break; } }
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'kevmind-brain-edge-'));
   const flags = gpu === 'swiftshader'
     ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
@@ -37,7 +39,13 @@ export async function launch({ port = 9333, gpu = 'hw', width = 1440, height = 9
       await s.send('Emulation.setFocusEmulationEnabled', { enabled: true });
       return s;
     },
-    close() { try { browser.ws.close(); } catch {} try { proc.kill(); } catch {} },
+    // The browser closes itself: the launcher process hands off to it and exits, so killing the launcher left Edge
+    // running, holding the port for the next launch. Await it before exiting.
+    async close() {
+      await Promise.race([browser.send('Browser.close').catch(() => {}), sleep(1500)]);
+      try { browser.ws.close(); } catch {}
+      try { proc.kill(); } catch {}
+    },
   };
 }
 
