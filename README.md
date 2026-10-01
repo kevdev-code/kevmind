@@ -92,16 +92,18 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 KevMind can also answer Claude's questions about a project's history, through three MCP tools built into the plugin. They are **off by default**; turn them on in `/config` under the kevmind plugin ("Experience tools for Claude").
 
 - `file_context(paths)`: files that usually change or get read together with the given ones.
-- `file_history(path)`: how often sessions read and edited a file, by which agent types, and how often git changed or fixed it.
+- `file_history(path)`: how many work episodes read and edited a file, by which agent types, and how often git changed or fixed it.
 - `known_failures(command)`: failures this project has seen before, and what came before the next success.
 
-The evidence comes from two places: KevMind's own record of past Claude Code sessions, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
+The evidence comes from two places: KevMind's own record of past Claude Code work, counted in work episodes, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
+
+A work episode is one prompt turn that ends with at least one edit; without prompts, a block of activity separated from the next by more than 30 minutes. Compactions and system messages don't start a new one, so one long session still yields many episodes. Every pattern also has to show up on at least 2 different days, so something that only repeats inside one conversation never qualifies. Each insight has its own threshold; there is no project-wide minimum besides the 20 commits git needs.
 
 Every answer:
 
-- cites its source and counts, such as "sessions: 3 of 4, last 2026-10-21" or "git: 6 of 9 commits"; session evidence ranks above git;
+- cites its source and counts, such as "episodes: 4 on 3 days, last 2026-10-21" or "git: 6 of 9 commits"; episode evidence ranks above git;
 - stays under about 400 tokens;
-- says "No data:" instead of guessing. Nothing is served below fixed thresholds, for example "edited together in at least 3 sessions on 2 different days and in half the sessions that edited the file". All thresholds live in `src/experience.js`.
+- says "No data:" instead of guessing. Nothing is served below fixed thresholds, for example "edited together in at least 3 episodes on 2 different days and in half the episodes that edited the file", "read first in at least 3 episodes" or "the same failure in at least 2 episodes on 2 days, with the same fix twice". All thresholds live in `src/experience.js`.
 
 KevMind only reports history. It never parses code, indexes symbols or writes memory, so it works alongside Serena (for code structure) and Claude's auto memory. The answers come from `~/.kevmind/experience.json`, which the dashboard keeps up to date, and typically take under 40 ms.
 

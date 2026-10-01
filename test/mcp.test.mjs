@@ -77,7 +77,7 @@ test('initialize, tools/list and tools/call over stdio', async () => {
   const r = await c.rpc('tools/call', { name: 'file_context', arguments: { paths: ['a.ts', 'only-in-b.ts'] } });
   const ms = performance.now() - t0;
   const text = r.result.content[0].text;
-  assert.match(text, /changes with `b\.ts` \(sessions: 4 of 4/);
+  assert.match(text, /changes with `b\.ts` \(episodes: 4 on 4 days/);
   assert.match(text, /`only-in-b\.ts`: no data/, 'project B is invisible from project A');
   assert.ok(text.length / 4 <= 400);
   assert.ok(ms < 1000, `first call took ${ms.toFixed(0)} ms`);

@@ -275,15 +275,18 @@ function renderExperience(x) {
   const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
   el.innerHTML = `
     <div class="exp-gate">
-      <div>${esc(T.expSessions(gate.sessions, gate.days, th.minSessions, th.minSessionDays))} ${ok(gate.sessionOk)}</div>
+      <div>${esc(T.expEpisodes(gate.episodes, gate.days))} ${ok(x.preview.episodePairs > 0)}</div>
+      ${x.preview.episodePairs ? '' : `<div class="muted">${esc(x.preview.nearest
+        ? T.expNearest(x.preview.nearest.a, x.preview.nearest.b, x.preview.nearest.n, x.preview.nearest.days, th.coEditEpisodes, th.minDays)
+        : T.expNoEpisodes(th.coEditEpisodes, th.minDays))}</div>`}
       <div>${esc(T.expCommits(gate.commits, th.minGitCommits))} ${ok(gate.gitOk)}</div>
       <p class="muted">${esc(T.expHowTo)}</p>
     </div>
     <h3 class="exp-h">${esc(T.expWouldServe)}</h3>
     <div class="exp-grid">
-      <section><h4>${esc(T.expCoChange)}</h4>${list(coChange, (p) => `<code>${esc(p.a)}</code> + <code>${esc(p.b)}</code><small>${esc([p.s && T.expBySessions(p.s.n, p.s.of, p.s.last), p.g && T.expByGit(p.g.n, p.g.of, p.g.last)].filter(Boolean).join(' · '))}</small>`)}</section>
-      <section><h4>${esc(T.expReadFirst)}</h4>${list(readFirst, (p) => `<code>${esc(p.first)}</code> → <code>${esc(p.file)}</code><small>${esc(T.expBySessions(p.n, p.of))}</small>`)}</section>
-      <section><h4>${esc(T.expFailures)}</h4>${list(failures, (f) => `<code>${esc(f.fam)}</code> ${esc(f.sig)}<small>${esc(T.expFix(f.sessions, f.fix.n, f.fix.name))}</small>`)}</section>
+      <section><h4>${esc(T.expCoChange)}</h4>${list(coChange, (p) => `<code>${esc(p.a)}</code> + <code>${esc(p.b)}</code><small>${esc([p.s && T.expByEpisodes(p.s.n, p.s.days, p.s.last), p.g && T.expByGit(p.g.n, p.g.of, p.g.last)].filter(Boolean).join(' · '))}</small>`)}</section>
+      <section><h4>${esc(T.expReadFirst)}</h4>${list(readFirst, (p) => `<code>${esc(p.first)}</code> → <code>${esc(p.file)}</code><small>${esc(T.expByEpisodes(p.n, p.days))}</small>`)}</section>
+      <section><h4>${esc(T.expFailures)}</h4>${list(failures, (f) => `<code>${esc(f.fam)}</code> ${esc(f.sig)}<small>${esc(T.expFix(f.episodes, f.days, f.fix.n, f.fix.name))}</small>`)}</section>
       <section><h4>${esc(T.expHotspots)}</h4>${list(hotspots, (h) => `<code>${esc(h.file)}</code><small>${esc(T.expHot(h.changes, h.fixes))}</small>`)}</section>
     </div>
     <h3 class="exp-h">${esc(T.expUse)}</h3>

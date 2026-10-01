@@ -2,6 +2,10 @@
 // project's git history shows, aggregated so the MCP tools answer in milliseconds. History only: no code parsing,
 // no symbols, no indexing. Read-only: test/experience-readonly.test.mjs fails if this module could write anything
 // or run git with anything but `log`. The dashboard server is what persists the aggregate (experience.json).
+//
+// The unit of session evidence is the work episode, not the session, because one long session can hold days of
+// work: a user prompt turn that ends with at least one edit, or, in a session without prompts, a block of activity
+// separated from the next by more than 30 minutes. Compactions and system-injected prompts don't start one.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -9,20 +13,19 @@ import { projectRoot, keyOf, tokensOf } from './memory.js';
 
 // Every threshold in one place. An insight below its threshold is never served.
 export const THRESHOLDS = {
-  windowDays: 90,          // session evidence older than this is ignored
-  minSessions: 10,         // session evidence counts once a project has this many sessions...
-  minSessionDays: 7,       // ...spread over at least this many days
-  minGitCommits: 20,       // git evidence counts once the window holds this many commits
-  coEditSessions: 3,       // edited together in at least this many sessions
-  coEditDays: 2,           // ...on at least this many different days
-  coEditShare: 0.5,        // ...and in at least this share of the sessions that edited the file
-  readFirstSessions: 3,    // read before the file's first edit in at least this many sessions
-  readFirstShare: 0.6,     // ...and this share of its edit sessions
-  hubShare: 0.4,           // a file in more than this share of sessions or commits says nothing as a partner
-  hubMinSample: 10,        // (the hub rule applies once there are this many sessions or commits)
-  failureSessions: 2,      // the same failure (command family + error) in at least this many sessions
+  windowDays: 90,          // episodes older than this are ignored
+  episodeGapMs: 30 * 60_000, // in a session without prompts, this much silence starts a new episode
+  minDays: 2,              // every episode-based insight must repeat on at least this many different days
+  coEditEpisodes: 3,       // edited together in at least this many episodes...
+  coEditShare: 0.5,        // ...and in at least this share of the episodes that edited the file
+  readFirstEpisodes: 3,    // read before the file's first edit in at least this many episodes...
+  readFirstShare: 0.6,     // ...and this share of its edit episodes
+  failureEpisodes: 2,      // the same failure (command family + error) in at least this many episodes
   fixRepeats: 2,           // the same fix before the next success at least this many times
   fixWindowMs: 15 * 60_000,
+  hubShare: 0.4,           // a file in more than this share of episodes or commits says nothing as a partner
+  hubMinSample: 10,        // (the hub rule applies once there are this many episodes or commits)
+  minGitCommits: 20,       // git evidence counts once the window holds this many commits
   gitMaxCommits: 2000,
   gitMaxDays: 365,
   gitMaxFilesPerCommit: 30, // bigger commits are refactors or imports, not co-change evidence
@@ -39,6 +42,8 @@ const READ_TOOLS = new Set(['Read', 'NotebookRead']);
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const NO_MATCH_OK = new Set(['grep', 'rg', 'egrep', 'fgrep', 'diff', 'cmp', 'test', '[']); // exit 1 means "no match", not a failure
 const RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'docker', 'cargo', 'go', 'python', 'python3', 'pip', 'make', 'node', 'deno', 'dotnet', 'mvn', 'gradle', 'php', 'composer']);
+// Claude Code's own messages arrive through UserPromptSubmit too; they don't start an episode.
+const SYSTEM_PROMPT_RE = /^\s*<(task-notification|bash-notification|bash-stdout|bash-stderr|system-reminder|command-message|local-command-stdout)[\s>]/i;
 // Lockfiles, generated and binary files: they change with everything, or are outputs, so they say nothing as partners.
 const LOCK_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Cargo\.lock|poetry\.lock|Gemfile\.lock|go\.sum)$|\.min\.(js|css)$|\.map$|(^|\/)(dist|build|out|coverage|generated|__generated__|graphify-out)\/|\.(pdf|png|jpe?g|gif|webp|ico|svgz|zip|gz|tgz|7z|rar|woff2?|ttf|otf|eot|mp[34]|mov|exe|dll|so|dylib|class|jar|pyc|wasm|bin)$/i;
 const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|revert|arregl\w*|correg\w*|corrig\w*)\b/i;
@@ -61,18 +66,22 @@ export function logFiles(dataDir) {
 
 // ---- the aggregate -------------------------------------------------------------------------------------------
 // projects[key] = { root, name, files: [relative path], sessions: { id: session }, fams: [], sigs: [], git }
-// session = { first, last, r: {file: first read ts}, e: {file: first edit ts}, ed: [[ts, file]],
+// session = { first, last, prompted, eps: [episode] }
+// episode = { start, last, r: {file: first read ts}, e: {file: first edit ts}, ed: [[ts, file]],
 //   rc: {file: reads}, ec: {file: edits}, ag: {file: [agent types]}, runs: [[ts, fam, ok, sig]],
 //   calls: [[ts, tool, tokens, noData, [files], ms]] }
+// An episode without edits is kept (for reads, calls and measurement) but never counted as evidence.
 
-export const emptyAggregate = () => ({ version: 2, at: 0, logs: {}, projects: {} });
+export const emptyAggregate = () => ({ version: 3, at: 0, logs: {}, projects: {} });
+
+const hidden = (obj, key, value) => Object.defineProperty(obj, key, { value, enumerable: false, writable: true, configurable: true });
 
 // Lookup tables are rebuilt on load and never saved.
 function index(proj) {
   if (!proj._fi) {
-    Object.defineProperty(proj, '_fi', { value: new Map(proj.files.map((f, i) => [f, i])), enumerable: false, writable: true });
-    Object.defineProperty(proj, '_fam', { value: new Map(proj.fams.map((f, i) => [f, i])), enumerable: false, writable: true });
-    Object.defineProperty(proj, '_sig', { value: new Map(proj.sigs.map((f, i) => [f, i])), enumerable: false, writable: true });
+    hidden(proj, '_fi', new Map(proj.files.map((f, i) => [f, i])));
+    hidden(proj, '_fam', new Map(proj.fams.map((f, i) => [f, i])));
+    hidden(proj, '_sig', new Map(proj.sigs.map((f, i) => [f, i])));
   }
   return proj;
 }
@@ -129,15 +138,35 @@ function responseText(r) {
   return blocks.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('\n');
 }
 
+const newEpisode = (ts) => ({ start: ts, last: ts, r: {}, e: {}, ed: [], rc: {}, ec: {}, ag: {}, runs: [], calls: [] });
+const hasActivity = (ep) => ep.ed.length || ep.runs.length || ep.calls.length || Object.keys(ep.r).length;
+
+// The episode an event belongs to. A real user prompt opens a new one; in a session that never had a prompt,
+// more than 30 minutes of silence does. Compactions and system-injected prompts never do.
+function episodeFor(s, ts, e) {
+  const cur = s.eps[s.eps.length - 1];
+  if (e.hook_event_name === 'UserPromptSubmit') {
+    if (SYSTEM_PROMPT_RE.test(String(e.prompt || ''))) return cur || (s.eps.push(newEpisode(ts)), s.eps[0]);
+    s.prompted = true;
+    if (cur && !hasActivity(cur)) { cur.start = ts; return cur; }
+    s.eps.push(newEpisode(ts));
+    return s.eps[s.eps.length - 1];
+  }
+  if (!cur || (!s.prompted && ts - cur.last > THRESHOLDS.episodeGapMs)) s.eps.push(newEpisode(ts));
+  return s.eps[s.eps.length - 1];
+}
+
 // Applies one logged hook event to the aggregate.
 export function ingest(agg, e, ts) {
   if (!e || !e.session_id || !e.cwd) return;
   const proj = projectOf(agg, e.cwd);
   if (!proj) return;
   if (proj._ctx) proj._ctx = null; // new evidence: the next query recomputes
-  const s = (proj.sessions[e.session_id] ||= { first: ts, last: ts, r: {}, e: {}, ed: [], rc: {}, ec: {}, ag: {}, runs: [], calls: [] });
+  const s = (proj.sessions[e.session_id] ||= { first: ts, last: ts, prompted: false, eps: [] });
   if (ts < s.first) s.first = ts;
   if (ts > s.last) s.last = ts;
+  const ep = episodeFor(s, ts, e);
+  if (ts > ep.last) ep.last = ts;
   const tool = e.tool_name || '';
   const ev = e.hook_event_name;
 
@@ -146,14 +175,14 @@ export function ingest(agg, e, ts) {
     if (!rel) return;
     const f = fileId(proj, rel);
     const agent = e.agent_type || (e.agent_id ? 'subagent' : 'main');
-    if (!(s.ag[f] ||= []).includes(agent)) s.ag[f].push(agent);
+    if (!(ep.ag[f] ||= []).includes(agent)) ep.ag[f].push(agent);
     if (READ_TOOLS.has(tool)) {
-      if (!(f in s.r)) s.r[f] = ts;
-      s.rc[f] = (s.rc[f] || 0) + 1;
+      if (!(f in ep.r)) ep.r[f] = ts;
+      ep.rc[f] = (ep.rc[f] || 0) + 1;
     } else {
-      if (!(f in s.e)) s.e[f] = ts;
-      s.ec[f] = (s.ec[f] || 0) + 1;
-      if (s.ed.length < 2000) s.ed.push([ts, f]);
+      if (!(f in ep.e)) ep.e[f] = ts;
+      ep.ec[f] = (ep.ec[f] || 0) + 1;
+      if (ep.ed.length < 2000) ep.ed.push([ts, f]);
     }
     return;
   }
@@ -164,14 +193,14 @@ export function ingest(agg, e, ts) {
     if (!ok && /Exit code 1\b/.test(String(e.error || '')) && NO_MATCH_OK.has(fam.split(' ')[0])) ok = true;
     const famId = intern(proj, 'fams', '_fam', fam);
     const sigId = ok ? -1 : intern(proj, 'sigs', '_sig', errorSignature(e.error));
-    if (s.runs.length < 2000) s.runs.push([ts, famId, ok ? 1 : 0, sigId]);
+    if (ep.runs.length < 2000) ep.runs.push([ts, famId, ok ? 1 : 0, sigId]);
     return;
   }
   const m = MCP_TOOL_RE.exec(tool);
   if (m && (ev === 'PostToolUse' || ev === 'PostToolUseFailure')) {
     const text = responseText(e.tool_response);
     const files = [...new Set([...text.matchAll(/`([^`\n]+)`/g)].map((x) => x[1]).filter((p) => /[\w-]\.\w+$|\//.test(p)))].slice(0, 20);
-    s.calls.push([ts, m[1], tokensOf(text), text.startsWith(NO_DATA) ? 1 : 0, files.map((p) => fileId(proj, p)), e.duration_ms || 0]);
+    ep.calls.push([ts, m[1], tokensOf(text), text.startsWith(NO_DATA) ? 1 : 0, files.map((p) => fileId(proj, p)), e.duration_ms || 0]);
   }
 }
 
@@ -212,12 +241,17 @@ function readRange(file, start, end) {
 
 function prune(agg, now) {
   const cut = now - THRESHOLDS.windowDays * DAY;
-  for (const proj of Object.values(agg.projects)) for (const [id, s] of Object.entries(proj.sessions)) if (s.last < cut) delete proj.sessions[id];
+  for (const proj of Object.values(agg.projects)) {
+    for (const [id, s] of Object.entries(proj.sessions)) {
+      s.eps = s.eps.filter((ep) => ep.last >= cut);
+      if (!s.eps.length) delete proj.sessions[id];
+    }
+  }
 }
 
-// Rebuilds lookup tables after JSON.parse.
+// Rebuilds lookup tables after JSON.parse. Older formats are rebuilt from the logs.
 export function revive(agg) {
-  if (!agg || agg.version !== 2 || !agg.projects) return emptyAggregate(); // older formats are rebuilt from the logs
+  if (!agg || agg.version !== 3 || !agg.projects) return emptyAggregate();
   for (const proj of Object.values(agg.projects)) index(proj);
   return agg;
 }
@@ -260,77 +294,71 @@ export async function refreshGit(proj, now = Date.now()) {
 // ---- queries -------------------------------------------------------------------------------------------------
 
 const T = THRESHOLDS;
+const isEpisode = (ep) => ep.ed.length > 0;
 
-function windowSessions(proj, now) {
-  const cut = now - T.windowDays * DAY;
-  return Object.values(proj.sessions).filter((s) => s.last >= cut);
-}
-
-export function gate(proj, now = Date.now()) {
-  const sessions = proj ? windowSessions(proj, now) : [];
-  const days = new Set(sessions.map((s) => day(s.first))).size;
-  const commits = proj?.git?.commits?.length || 0;
-  return {
-    sessions: sessions.length, days, commits,
-    sessionOk: sessions.length >= T.minSessions && days >= T.minSessionDays,
-    gitOk: commits >= T.minGitCommits,
-  };
-}
-
-// Precomputed per query: file -> sessions that edited it, commits that touched it, and hub files.
+// Precomputed per query: every episode in the window with its session and day, which edit episodes touched each
+// file, which commits did, and the hub files.
 function context(proj, now) {
   if (proj._ctx && proj._ctx.at === now) return proj._ctx;
-  const sessions = windowSessions(proj, now);
+  const cut = now - T.windowDays * DAY;
+  const all = [];
+  for (const s of Object.values(proj.sessions)) for (const ep of s.eps) if (ep.last >= cut) all.push({ ep, s, day: day(ep.start) });
+  const episodes = all.filter((x) => isEpisode(x.ep));
   const editedIn = new Map();
   const readIn = new Map();
-  for (const s of sessions) {
-    for (const f of Object.keys(s.e)) (editedIn.get(+f) || editedIn.set(+f, []).get(+f)).push(s);
-    for (const f of Object.keys(s.r)) readIn.set(+f, (readIn.get(+f) || 0) + 1);
+  for (const x of episodes) {
+    for (const f of Object.keys(x.ep.e)) (editedIn.get(+f) || editedIn.set(+f, []).get(+f)).push(x);
+    for (const f of Object.keys(x.ep.r)) readIn.set(+f, (readIn.get(+f) || 0) + 1);
   }
   const commits = proj.git?.commits || [];
   const commitsOf = new Map();
   for (const c of commits) for (const f of c[2]) (commitsOf.get(f) || commitsOf.set(f, []).get(f)).push(c);
-  const editSessions = sessions.filter((s) => Object.keys(s.e).length).length;
-  const hub = (f) => (editSessions >= T.hubMinSample && (editedIn.get(f)?.length || 0) / editSessions > T.hubShare)
-    || (sessions.length >= T.hubMinSample && (readIn.get(f) || 0) / sessions.length > T.hubShare);
+  const hub = (f) => episodes.length >= T.hubMinSample
+    && (((editedIn.get(f)?.length || 0) / episodes.length > T.hubShare) || ((readIn.get(f) || 0) / episodes.length > T.hubShare));
   const gitHub = (f) => commits.length >= T.hubMinSample && (commitsOf.get(f)?.length || 0) / commits.length > T.hubShare;
-  const ctx = { at: now, sessions, editedIn, commitsOf, hub, gitHub, gate: gate(proj, now) };
-  Object.defineProperty(proj, '_ctx', { value: ctx, enumerable: false, writable: true, configurable: true });
+  const ctx = { at: now, all, episodes, editedIn, commitsOf, hub, gitHub, gate: gate(proj, now, episodes) };
+  hidden(proj, '_ctx', ctx);
   return ctx;
 }
 
-// Files changed alongside f: from sessions (edited together) and git (committed together). Session evidence first.
+// What evidence a project has: edit episodes and their days, and git commits (git counts from 20).
+export function gate(proj, now = Date.now(), episodes = null) {
+  if (!proj) return { episodes: 0, days: 0, commits: 0, gitOk: false };
+  const eps = episodes || context(proj, now).episodes;
+  const commits = proj.git?.commits?.length || 0;
+  return { episodes: eps.length, days: new Set(eps.map((x) => x.day)).size, commits, gitOk: commits >= T.minGitCommits };
+}
+
+// Files changed alongside f: from episodes (edited together) and git (committed together). Episodes rank first.
 export function partners(proj, f, now = Date.now()) {
   const ctx = context(proj, now);
   const out = new Map();
-  if (ctx.gate.sessionOk) {
-    const mine = ctx.editedIn.get(f) || [];
-    const count = new Map();
-    for (const s of mine) {
-      for (const k of Object.keys(s.e)) {
-        const g = +k;
-        if (g === f) continue;
-        const c = count.get(g) || { n: 0, days: new Set(), last: 0 };
-        c.n++;
-        c.days.add(day(s.first));
-        c.last = Math.max(c.last, s.last);
-        count.set(g, c);
-      }
+  const mine = ctx.editedIn.get(f) || [];
+  const count = new Map();
+  for (const x of mine) {
+    for (const k of Object.keys(x.ep.e)) {
+      const g = +k;
+      if (g === f) continue;
+      const c = count.get(g) || { n: 0, days: new Set(), last: 0 };
+      c.n++;
+      c.days.add(x.day);
+      c.last = Math.max(c.last, x.ep.last);
+      count.set(g, c);
     }
-    for (const [g, c] of count) {
-      if (c.n >= T.coEditSessions && c.days.size >= T.coEditDays && c.n / mine.length >= T.coEditShare && !ctx.hub(g)) {
-        out.set(g, { f: g, s: { n: c.n, of: mine.length, last: c.last } });
-      }
+  }
+  for (const [g, c] of count) {
+    if (c.n >= T.coEditEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.coEditShare && !ctx.hub(g)) {
+      out.set(g, { f: g, s: { n: c.n, days: c.days.size, of: mine.length, last: c.last } });
     }
   }
   if (ctx.gate.gitOk) {
-    const mine = ctx.commitsOf.get(f) || [];
-    const count = new Map();
-    for (const c of mine) for (const g of c[2]) if (g !== f) { const x = count.get(g) || { n: 0, last: 0 }; x.n++; x.last = Math.max(x.last, c[1]); count.set(g, x); }
-    for (const [g, c] of count) {
-      if (c.n >= T.gitCoChangeCommits && c.n / mine.length >= T.gitCoChangeShare && !ctx.gitHub(g)) {
+    const theirs = ctx.commitsOf.get(f) || [];
+    const gc = new Map();
+    for (const c of theirs) for (const g of c[2]) if (g !== f) { const x = gc.get(g) || { n: 0, last: 0 }; x.n++; x.last = Math.max(x.last, c[1]); gc.set(g, x); }
+    for (const [g, c] of gc) {
+      if (c.n >= T.gitCoChangeCommits && c.n / theirs.length >= T.gitCoChangeShare && !ctx.gitHub(g)) {
         const o = out.get(g) || { f: g };
-        o.g = { n: c.n, of: mine.length, last: c.last };
+        o.g = { n: c.n, of: theirs.length, last: c.last };
         out.set(g, o);
       }
     }
@@ -338,48 +366,52 @@ export function partners(proj, f, now = Date.now()) {
   return [...out.values()].sort((a, b) => (b.s ? 1 : 0) - (a.s ? 1 : 0) || (b.s?.n || 0) - (a.s?.n || 0) || (b.g?.n || 0) - (a.g?.n || 0));
 }
 
-// Files read before f's first edit, in enough of the sessions that edited it.
+// Files read before f's first edit, in enough of the episodes that edited it, on enough days.
 export function readFirst(proj, f, now = Date.now()) {
   const ctx = context(proj, now);
-  if (!ctx.gate.sessionOk) return [];
   const mine = ctx.editedIn.get(f) || [];
   const count = new Map();
-  for (const s of mine) {
-    for (const [k, ts] of Object.entries(s.r)) {
+  for (const x of mine) {
+    for (const [k, ts] of Object.entries(x.ep.r)) {
       const g = +k;
-      if (g === f || ts >= s.e[f]) continue;
-      const c = count.get(g) || { n: 0, last: 0 };
+      if (g === f || ts >= x.ep.e[f]) continue;
+      const c = count.get(g) || { n: 0, days: new Set(), last: 0 };
       c.n++;
-      c.last = Math.max(c.last, s.last);
+      c.days.add(x.day);
+      c.last = Math.max(c.last, x.ep.last);
       count.set(g, c);
     }
   }
-  return [...count].filter(([g, c]) => c.n >= T.readFirstSessions && c.n / mine.length >= T.readFirstShare && !ctx.hub(g))
-    .map(([g, c]) => ({ f: g, n: c.n, of: mine.length, last: c.last })).sort((a, b) => b.n - a.n);
+  return [...count].filter(([g, c]) => c.n >= T.readFirstEpisodes && c.days.size >= T.minDays && c.n / mine.length >= T.readFirstShare && !ctx.hub(g))
+    .map(([g, c]) => ({ f: g, n: c.n, days: c.days.size, of: mine.length, last: c.last })).sort((a, b) => b.n - a.n);
 }
 
-// Recurring failures (same command family and error in enough sessions) that had the same fix each time.
+// Recurring failures (same command family and error in enough episodes, on enough days) with the same fix each time.
+// The fix is what happened between the failure and the next success of the same command in that session.
 export function failures(proj, now = Date.now(), prefix = '') {
   const ctx = context(proj, now);
-  if (!ctx.gate.sessionOk) return [];
+  const bySession = new Map();
+  for (const x of ctx.all) (bySession.get(x.s) || bySession.set(x.s, []).get(x.s)).push(x);
   const groups = new Map();
-  for (const s of ctx.sessions) {
-    const runs = s.runs;
+  for (const [, list] of bySession) {
+    const runs = list.flatMap((x) => x.ep.runs.map((r) => ({ r, x }))).sort((a, b) => a.r[0] - b.r[0]);
+    const edits = list.flatMap((x) => x.ep.ed);
     for (let i = 0; i < runs.length; i++) {
-      const [ts, fam, ok, sig] = runs[i];
-      if (ok) continue;
+      const { r: [ts, fam, ok, sig], x } = runs[i];
+      if (ok || !isEpisode(x.ep)) continue;
       const famName = proj.fams[fam];
       if (prefix && !famName.startsWith(prefix.toLowerCase())) continue;
       const key = `${fam}|${sig}`;
-      const g = groups.get(key) || { fam: famName, sig: proj.sigs[sig], sessions: new Set(), occurrences: 0, fixes: new Map(), last: 0 };
-      g.sessions.add(s);
+      const g = groups.get(key) || { fam: famName, sig: proj.sigs[sig], episodes: new Set(), days: new Set(), occurrences: 0, fixes: new Map(), last: 0 };
+      g.episodes.add(x.ep);
+      g.days.add(x.day);
       g.occurrences++;
       g.last = Math.max(g.last, ts);
-      const next = runs.slice(i + 1).find((r) => r[1] === fam && r[2] === 1 && r[0] - ts <= T.fixWindowMs);
+      const next = runs.slice(i + 1).find(({ r }) => r[1] === fam && r[2] === 1 && r[0] - ts <= T.fixWindowMs);
       if (next) {
         const items = new Set();
-        for (const [t, f] of s.ed) if (t > ts && t < next[0]) items.add(`file:${proj.files[f]}`);
-        for (const r of runs) if (r[0] > ts && r[0] < next[0] && r[2] === 1 && r[1] !== fam) items.add(`cmd:${proj.fams[r[1]]}`);
+        for (const [t, f] of edits) if (t > ts && t < next.r[0]) items.add(`file:${proj.files[f]}`);
+        for (const { r } of runs) if (r[0] > ts && r[0] < next.r[0] && r[2] === 1 && r[1] !== fam) items.add(`cmd:${proj.fams[r[1]]}`);
         for (const it of items) g.fixes.set(it, (g.fixes.get(it) || 0) + 1);
       }
       groups.set(key, g);
@@ -387,39 +419,41 @@ export function failures(proj, now = Date.now(), prefix = '') {
   }
   const out = [];
   for (const g of groups.values()) {
-    if (g.sessions.size < T.failureSessions) continue;
+    if (g.episodes.size < T.failureEpisodes || g.days.size < T.minDays) continue;
     const best = [...g.fixes].sort((a, b) => b[1] - a[1])[0];
     if (!best || best[1] < T.fixRepeats) continue;
     const [kind, ...name] = best[0].split(':');
-    out.push({ fam: g.fam, sig: g.sig, sessions: g.sessions.size, occurrences: g.occurrences, fix: { kind, name: name.join(':'), n: best[1] }, last: g.last });
+    out.push({ fam: g.fam, sig: g.sig, episodes: g.episodes.size, days: g.days.size, occurrences: g.occurrences, fix: { kind, name: name.join(':'), n: best[1] }, last: g.last });
   }
-  return out.sort((a, b) => b.sessions - a.sessions);
+  return out.sort((a, b) => b.episodes - a.episodes);
 }
 
 export function history(proj, f, now = Date.now()) {
   const ctx = context(proj, now);
   let reads = 0, edits = 0, first = 0, last = 0;
-  const sessions = new Set();
+  const editDays = new Set();
+  let editEpisodes = 0;
   const agents = {};
-  for (const s of ctx.sessions) {
-    if (!(f in s.r) && !(f in s.e)) continue;
-    sessions.add(s);
-    reads += s.rc[f] || 0;
-    edits += s.ec[f] || 0;
-    first = first ? Math.min(first, s.first) : s.first;
-    last = Math.max(last, s.last);
-    for (const a of s.ag[f] || []) agents[a] = (agents[a] || 0) + 1;
+  for (const x of ctx.all) {
+    if (!(f in x.ep.r) && !(f in x.ep.e)) continue;
+    reads += x.ep.rc[f] || 0;
+    edits += x.ep.ec[f] || 0;
+    first = first ? Math.min(first, x.ep.start) : x.ep.start;
+    last = Math.max(last, x.ep.last);
+    if (f in x.ep.e) { editEpisodes++; editDays.add(x.day); }
+    for (const a of x.ep.ag[f] || []) agents[a] = (agents[a] || 0) + 1;
   }
   const commits = ctx.commitsOf.get(f) || [];
   return {
-    sessions: sessions.size, reads, edits, first, last, agents,
+    editEpisodes, editDays: editDays.size, reads, edits, first, last, agents,
     git: { changes: commits.length, fixes: commits.filter((c) => c[3]).length, last: commits[0]?.[1] || 0, first: commits.at(-1)?.[1] || 0 },
   };
 }
 
 // ---- answers (what the MCP tools return) ---------------------------------------------------------------------
 
-const ev = (x) => (x.s ? `sessions: ${x.s.n} of ${x.s.of}, last ${day(x.s.last)}` : '') + (x.s && x.g ? '; ' : '') + (x.g ? `git: ${x.g.n} of ${x.g.of} commits, last ${day(x.g.last)}` : '');
+const epEv = (s) => `episodes: ${s.n} on ${plural(s.days, 'day')}, last ${day(s.last)}`;
+const ev = (x) => [x.s && epEv(x.s), x.g && `git: ${x.g.n} of ${x.g.of} commits, last ${day(x.g.last)}`].filter(Boolean).join('; ');
 
 function capped(header, lines, footer) {
   const budget = T.maxTokens * 4; // characters, the same estimate used everywhere
@@ -435,23 +469,15 @@ function capped(header, lines, footer) {
 
 function scope(proj, now) {
   const g = gate(proj, now);
-  return `Evidence: ${g.sessions} Claude Code sessions over ${g.days} days (last ${T.windowDays} days)${g.sessionOk ? '' : ', below the session threshold'}; ` +
-    `${g.commits} git commits${g.gitOk ? '' : ', below the git threshold'}. History only: for code structure use Serena or other code tools.`;
-}
-
-function notEnough(proj, name, now) {
-  const g = gate(proj, now);
-  return `${NO_DATA} not enough history for ${name} yet (${g.sessions} sessions over ${g.days} days, ${g.commits} git commits). ` +
-    `KevMind answers once there are ${T.minSessions} sessions over ${T.minSessionDays} days, or ${T.minGitCommits} commits.`;
+  return `Evidence: ${plural(g.episodes, 'work episode')} on ${plural(g.days, 'day')} (last ${T.windowDays} days); ` +
+    `${plural(g.commits, 'git commit')}${g.gitOk ? '' : ` (git counts from ${T.minGitCommits})`}. History only: for code structure use Serena or other code tools.`;
 }
 
 const fileOf = (proj, p) => proj._fi.get(relPath(proj.root, p) || slash(String(p || '')).replace(/^\.\//, ''));
 
 export function answerFileContext(proj, name, paths, now = Date.now()) {
-  if (!proj) return notEnough(null, name, now);
+  if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
   index(proj);
-  const g = context(proj, now).gate;
-  if (!g.sessionOk && !g.gitOk) return notEnough(proj, name, now);
   const lines = [];
   let any = false;
   for (const p of paths.slice(0, 10)) {
@@ -463,13 +489,13 @@ export function answerFileContext(proj, name, paths, now = Date.now()) {
     const h = history(proj, f, now);
     const hot = h.git.fixes >= T.hotspotFixCommits ? `often fixed: ${h.git.fixes} of ${h.git.changes} commits touching it are fixes (git)` : '';
     if (!parts.length && !reads.length && !hot) {
-      lines.push(`- \`${label}\`: no pattern above the thresholds (seen in ${plural(h.sessions, 'session')}, ${plural(h.git.changes, 'commit')}).`);
+      lines.push(`- \`${label}\`: no pattern above the thresholds (edited in ${plural(h.editEpisodes, 'episode')} on ${plural(h.editDays, 'day')}, ${plural(h.git.changes, 'commit')}).`);
       continue;
     }
     any = true;
     lines.push(`- \`${label}\`:`);
     for (const x of parts) lines.push(`  - changes with \`${proj.files[x.f]}\` (${ev(x)})`);
-    for (const x of reads) lines.push(`  - usually read first: \`${proj.files[x.f]}\` (sessions: ${x.n} of ${x.of}, last ${day(x.last)})`);
+    for (const x of reads) lines.push(`  - usually read first: \`${proj.files[x.f]}\` (${epEv(x)})`);
     if (hot) lines.push(`  - ${hot}`);
   }
   const header = any ? `KevMind history for ${name}:` : `${NO_DATA} no pattern above the thresholds for these files in ${name}.`;
@@ -477,36 +503,33 @@ export function answerFileContext(proj, name, paths, now = Date.now()) {
 }
 
 export function answerFileHistory(proj, name, p, now = Date.now()) {
-  if (!proj) return notEnough(null, name, now);
+  if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
   index(proj);
   const f = fileOf(proj, p);
   const label = f === undefined ? relPath(proj.root, p) || p : proj.files[f];
   if (f === undefined) return `${NO_DATA} \`${label}\` was never read or edited in recorded ${name} sessions and is not in its git history.\n${scope(proj, now)}`;
   const h = history(proj, f, now);
-  if (!h.sessions && !h.git.changes) return `${NO_DATA} \`${label}\` has no recorded activity in the window.\n${scope(proj, now)}`;
+  if (!h.reads && !h.edits && !h.git.changes) return `${NO_DATA} \`${label}\` has no recorded activity in the window.\n${scope(proj, now)}`;
   const lines = [];
-  if (h.sessions) {
+  if (h.reads || h.edits) {
     const agents = Object.entries(h.agents).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a} ${n}`).join(', ');
-    lines.push(`- Claude Code sessions: ${h.sessions} (${day(h.first)} to ${day(h.last)}), ${h.reads} reads, ${h.edits} edits.`);
-    lines.push(`- Agent types (sessions): ${agents}.`);
-  } else lines.push('- Claude Code sessions: none recorded.');
+    lines.push(`- Claude Code: edited in ${plural(h.editEpisodes, 'work episode')} on ${plural(h.editDays, 'day')} (${day(h.first)} to ${day(h.last)}), ${h.reads} reads, ${h.edits} edits.`);
+    lines.push(`- Agent types (episodes): ${agents}.`);
+  } else lines.push('- Claude Code: no recorded activity.');
   if (h.git.changes) lines.push(`- git: changed in ${h.git.changes} commits (${day(h.git.first)} to ${day(h.git.last)}), ${h.git.fixes} labeled as fixes.`);
   else lines.push('- git: no commits in the window.');
   return capped(`KevMind history of \`${label}\` in ${name}:`, lines, scope(proj, now));
 }
 
 export function answerKnownFailures(proj, name, command = '', now = Date.now()) {
-  if (!proj) return notEnough(null, name, now);
+  if (!proj) return `${NO_DATA} KevMind has no recorded sessions for ${name} yet.`;
   index(proj);
-  const g = context(proj, now).gate;
-  if (!g.sessionOk) {
-    return `${NO_DATA} failures come from Claude Code sessions only, and ${name} has ${g.sessions} sessions over ${g.days} days ` +
-      `(KevMind needs ${T.minSessions} over ${T.minSessionDays} days).`;
-  }
   const fam = command ? commandFamily(command) || command : '';
   const list = failures(proj, now, fam);
-  if (!list.length) return `${NO_DATA} no recurring failure with a consistent fix${fam ? ` for \`${fam}\`` : ''} in ${name}.\n${scope(proj, now)}`;
-  const lines = list.map((x) => `- \`${x.fam}\` failed with "${x.sig}" in ${x.sessions} sessions (${x.occurrences} times, last ${day(x.last)}); ` +
+  if (!list.length) {
+    return `${NO_DATA} no failure${fam ? ` of \`${fam}\`` : ''} in ${name} repeated in ${T.failureEpisodes} work episodes on ${T.minDays} days with the same fix.\n${scope(proj, now)}`;
+  }
+  const lines = list.map((x) => `- \`${x.fam}\` failed with "${x.sig}" (episodes: ${x.episodes} on ${plural(x.days, 'day')}, ${x.occurrences} times, last ${day(x.last)}); ` +
     `${x.fix.n} times the next success came after ${x.fix.kind === 'file' ? `editing \`${x.fix.name}\`` : `running \`${x.fix.name}\``}.`);
   return capped(`KevMind: known failures in ${name}:`, lines, scope(proj, now));
 }
@@ -519,19 +542,40 @@ export function preview(proj, now = Date.now()) {
   const pairs = new Map();
   const reads = [];
   const files = new Set([...ctx.editedIn.keys(), ...ctx.commitsOf.keys()]);
+  // The strongest co-edit pair from episodes, qualifying or not, to say what is missing.
+  let nearest = null;
+  for (const f of ctx.editedIn.keys()) {
+    const count = new Map();
+    for (const x of ctx.editedIn.get(f)) {
+      for (const k of Object.keys(x.ep.e)) {
+        if (+k === f) continue;
+        const c = count.get(+k) || { n: 0, days: new Set() };
+        c.n++;
+        c.days.add(x.day);
+        count.set(+k, c);
+      }
+    }
+    for (const [g, c] of count) {
+      const score = Math.min(c.n / T.coEditEpisodes, 1) + Math.min(c.days.size / T.minDays, 1);
+      if (!nearest || score > nearest.score || (score === nearest.score && c.n > nearest.n)) nearest = { a: proj.files[f], b: proj.files[g], n: c.n, days: c.days.size, of: ctx.editedIn.get(f).length, score };
+    }
+  }
   for (const f of files) {
     for (const x of partners(proj, f, now)) {
       const k = [Math.min(f, x.f), Math.max(f, x.f)].join('|');
       // Raw counts: the dashboard words them in its own language. ev(x) is how the tools word them for Claude.
       if (!pairs.has(k)) pairs.set(k, { a: proj.files[f], b: proj.files[x.f], s: x.s ? { ...x.s, last: day(x.s.last) } : null, g: x.g ? { ...x.g, last: day(x.g.last) } : null, session: !!x.s, n: x.s?.n || x.g?.n || 0 });
     }
-    for (const x of readFirst(proj, f, now)) reads.push({ file: proj.files[f], first: proj.files[x.f], n: x.n, of: x.of });
+    for (const x of readFirst(proj, f, now)) reads.push({ file: proj.files[f], first: proj.files[x.f], n: x.n, days: x.days });
   }
   const hotspots = [...ctx.commitsOf].map(([f, cs]) => ({ file: proj.files[f], changes: cs.length, fixes: cs.filter((c) => c[3]).length }))
     .sort((a, b) => b.fixes - a.fixes || b.changes - a.changes).slice(0, 5);
+  const coChange = [...pairs.values()].sort((a, b) => b.session - a.session || b.n - a.n);
   return {
     gate: ctx.gate,
-    coChange: [...pairs.values()].sort((a, b) => b.session - a.session || b.n - a.n).slice(0, 10),
+    episodePairs: coChange.filter((p) => p.session).length,
+    nearest: coChange.some((p) => p.session) ? null : nearest && { a: nearest.a, b: nearest.b, n: nearest.n, days: nearest.days, of: nearest.of },
+    coChange: coChange.slice(0, 10),
     readFirst: reads.slice(0, 5),
     failures: failures(proj, now).slice(0, 5).map((x) => ({ ...x, last: day(x.last) })),
     hotspots,
@@ -539,7 +583,7 @@ export function preview(proj, now = Date.now()) {
 }
 
 // Calls seen through the hooks, and how often a suggested file was then read or edited, against a baseline:
-// how often a qualifying partner gets touched after an edit in sessions with no call. Correlation, not proof.
+// how often a qualifying partner gets touched after an edit in episodes with no call. Correlation, not proof.
 export function measure(proj, now = Date.now()) {
   index(proj);
   const ctx = context(proj, now);
@@ -548,35 +592,42 @@ export function measure(proj, now = Date.now()) {
   let hits = 0;
   const partnerCache = new Map();
   const partnersOf = (f) => partnerCache.get(f) || partnerCache.set(f, partners(proj, f, now).map((x) => x.f)).get(f);
-  const touchedAfter = (s, f, t0) => {
-    const t = Math.min(s.r[f] ?? Infinity, s.e[f] ?? Infinity);
-    return t > t0 && t - t0 <= T.followWindowMs;
-  };
-  for (const s of ctx.sessions) {
-    if (s.calls.length) {
-      for (const [ts, tool, tokens, noData, files, ms] of s.calls) {
-        calls.push({ ts, tool, tokens, noData: !!noData, ms, suggested: files.map((f) => proj.files[f]), followed: files.length ? files.some((f) => touchedAfter(s, f, ts)) : null });
-      }
-      continue;
+  const touches = new Map(); // session -> file -> every first-touch time across its episodes
+  const touchesOf = (s) => {
+    if (!touches.has(s)) {
+      const m = new Map();
+      for (const ep of s.eps) for (const src of [ep.r, ep.e]) for (const [k, t] of Object.entries(src)) (m.get(+k) || m.set(+k, []).get(+k)).push(t);
+      touches.set(s, m);
     }
-    for (const [k, t0] of Object.entries(s.e)) {
+    return touches.get(s);
+  };
+  const followed = (s, f, t0) => {
+    const ts = touchesOf(s).get(f) || [];
+    return !ts.some((t) => t <= t0) && ts.some((t) => t > t0 && t - t0 <= T.followWindowMs);
+  };
+  for (const { ep, s } of ctx.all) {
+    for (const [ts, tool, tokens, noData, files, ms] of ep.calls) {
+      calls.push({ ts, tool, tokens, noData: !!noData, ms, suggested: files.map((f) => proj.files[f]), followed: files.length ? files.some((f) => followed(s, f, ts)) : null });
+    }
+    if (ep.calls.length || !isEpisode(ep)) continue;
+    for (const [k, t0] of Object.entries(ep.e)) {
       const ps = partnersOf(+k);
       if (!ps.length) continue;
       opportunities++;
-      if (ps.some((g) => touchedAfter(s, g, t0))) hits++;
+      if (ps.some((g) => { const t = Math.min(ep.r[g] ?? Infinity, ep.e[g] ?? Infinity); return t > t0 && t - t0 <= T.followWindowMs; })) hits++;
     }
   }
   calls.sort((a, b) => b.ts - a.ts);
   const withSuggestions = calls.filter((c) => c.followed !== null);
-  const followed = withSuggestions.filter((c) => c.followed).length;
-  const rate = withSuggestions.length ? followed / withSuggestions.length : null;
+  const followedN = withSuggestions.filter((c) => c.followed).length;
+  const rate = withSuggestions.length ? followedN / withSuggestions.length : null;
   const baseline = opportunities ? hits / opportunities : null;
   return {
     calls: calls.length,
     tokens: calls.reduce((n, c) => n + c.tokens, 0),
     noData: calls.filter((c) => c.noData).length,
     avgMs: calls.length ? Math.round(calls.reduce((n, c) => n + (c.ms || 0), 0) / calls.length) : 0,
-    followRate: rate, followed, withSuggestions: withSuggestions.length,
+    followRate: rate, followed: followedN, withSuggestions: withSuggestions.length,
     baseline, baselineSample: opportunities,
     verdict: calls.length < 50 ? 'collecting' : rate !== null && baseline !== null && rate <= baseline ? 'turn_off' : 'helping',
     last: calls.slice(0, 20),

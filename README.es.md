@@ -91,16 +91,18 @@ Combínalos para grabar un solo proyecto: `http://localhost:4777/?project=KevMin
 KevMind también puede responder preguntas de Claude sobre la historia de un proyecto, con tres herramientas MCP incluidas en el plugin. Vienen **apagadas**; actívalas en `/config`, en el plugin kevmind ("Experience tools for Claude").
 
 - `file_context(paths)`: archivos que suelen cambiar o leerse junto con los indicados.
-- `file_history(path)`: cuántas sesiones leyeron y editaron un archivo, con qué tipos de agente, y cuántas veces git lo cambió o lo corrigió.
+- `file_history(path)`: en cuántos episodios de trabajo se leyó y editó un archivo, con qué tipos de agente, y cuántas veces git lo cambió o lo corrigió.
 - `known_failures(command)`: fallos que el proyecto ya vio y qué pasó antes del siguiente éxito.
 
-La evidencia viene de dos fuentes: el registro de KevMind de sesiones pasadas de Claude Code y el historial de git del proyecto (`git log` de solo lectura, últimos 365 días o 2,000 commits). Git solo basta para empezar, así que sirven desde el primer día en cualquier repositorio.
+La evidencia viene de dos fuentes: el registro de KevMind del trabajo pasado de Claude Code, contado en episodios de trabajo, y el historial de git del proyecto (`git log` de solo lectura, últimos 365 días o 2,000 commits). Git solo basta para empezar, así que sirven desde el primer día en cualquier repositorio.
+
+Un episodio de trabajo es un turno de prompt que termina con al menos una edición; sin prompts, un bloque de actividad separado del siguiente por más de 30 minutos. Las compactaciones y los mensajes del sistema no abren uno nuevo, así que una sola sesión larga deja muchos episodios. Además, cada patrón tiene que aparecer en al menos 2 días distintos, así que algo que solo se repite dentro de una conversación nunca califica. Cada resultado tiene su propio umbral; no hay un mínimo general por proyecto aparte de los 20 commits que necesita git.
 
 Cada respuesta:
 
-- cita su fuente y sus conteos, como "sessions: 3 of 4" o "git: 6 of 9 commits"; la evidencia de sesiones va antes que la de git;
+- cita su fuente y sus conteos, como "episodes: 4 on 3 days" o "git: 6 of 9 commits"; la evidencia de episodios va antes que la de git;
 - se queda por debajo de unos 400 tokens;
-- dice "No data:" en vez de adivinar. Nada por debajo de umbrales fijos se entrega, por ejemplo "editados juntos en al menos 3 sesiones, en 2 días distintos y en la mitad de las sesiones que editaron el archivo". Todos los umbrales están en `src/experience.js`.
+- dice "No data:" en vez de adivinar. Nada por debajo de umbrales fijos se entrega, por ejemplo "editados juntos en al menos 3 episodios, en 2 días distintos y en la mitad de los episodios que editaron el archivo", "leído antes en al menos 3 episodios" o "el mismo fallo en al menos 2 episodios en 2 días, con el mismo arreglo dos veces". Todos los umbrales están en `src/experience.js`.
 
 KevMind solo reporta historia: nunca analiza código, no indexa símbolos y no escribe memoria, así que convive con Serena (para la estructura del código) y con la memoria automática de Claude. Las respuestas salen de `~/.kevmind/experience.json`, que el panel mantiene al día, y suelen tardar menos de 40 ms.
 
