@@ -86,8 +86,8 @@ const P = {
   // What happened to a node: DESIGN.md's state hues (read, edit, error), command gray, selection violet.
   kinds: [[0, 0, 0], C(76, 0.115, 245), C(77, 0.13, 350), C(72, 0.17, 25), C(72, 0.012, 285), C(74, 0.145, 288)].flat(),
   edgeAlpha: [0.34, 0.12, 0.42, 0.24, 0.15, 0.26, 0.5, 1],
-  // The shell: a quiet backdrop in cool, desaturated blue-gray, about a third as bright as the nodes' layer.
-  dust: C(70, 0.03, 250), dustAlpha: 0.3 * SHELL, dustSize: 0.0085,
+  // The shell: a backdrop in cool, desaturated blue-gray, about half as bright as the old white shell, with a soft edge.
+  dust: C(74, 0.03, 250), dustAlpha: 0.5 * SHELL, dustSize: 0.0095, dustEdge: 0.7,
   breath: C(82, 0.07, 60), // Claude thinking: a warm cream glow through the whole brain
 };
 const kindRgb = (k) => P.kinds.slice(KIND[k] * 3, KIND[k] * 3 + 3);

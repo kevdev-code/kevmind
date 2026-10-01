@@ -201,17 +201,18 @@ void main() {
   o = vec4(col * a, 0.0);
 }`;
 
-// The shell: a quiet backdrop. Brightest where it faces the camera, fading out toward the rim, almost gone behind,
-// so the folds read as texture and the outline is felt more than seen.
+// The shell: a backdrop. Brightest where it faces the camera, so the folds read as texture; a soft, thin edge just
+// inside the near side's rim, so the silhouette reads at a glance; almost nothing behind.
 export const DUST_VS = `#version 300 es
 in vec3 a_pos; in vec3 a_nrm;
-uniform mat4 u_vp; uniform float u_px, u_size, u_alpha; uniform vec3 u_eye, u_color;
+uniform mat4 u_vp; uniform float u_px, u_size, u_alpha, u_edge; uniform vec3 u_eye, u_color;
 out vec4 v_color;
 void main() {
   vec4 p = u_vp * vec4(a_pos, 1.0);
   gl_Position = p;
   float f = dot(a_nrm, normalize(u_eye - a_pos));
-  float k = f > 0.0 ? 0.1 + 0.9 * smoothstep(0.0, 0.65, f) : 0.04;
+  float face = 0.1 + 0.9 * smoothstep(0.0, 0.65, f), edge = smoothstep(0.0, 0.05, f) * (1.0 - smoothstep(0.1, 0.22, f));
+  float k = f > 0.0 ? face + u_edge * edge : 0.04;
   v_color = vec4(u_color, u_alpha * k);
   gl_PointSize = clamp(u_size * u_px / p.w, 1.0, 6.0);
 }`;
@@ -362,6 +363,7 @@ export class Renderer {
     this._common(this.dust, view);
     gl.uniform3f(L.u_eye, ...view.eye);
     gl.uniform1f(L.u_size, P.dustSize);
+    gl.uniform1f(L.u_edge, P.dustEdge);
     gl.uniform1f(L.u_alpha, alpha * (half ? 2 : 1));
     gl.uniform3f(L.u_color, ...color);
     gl.bindVertexArray(this.vao.dust);

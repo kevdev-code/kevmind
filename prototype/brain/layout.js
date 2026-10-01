@@ -8,7 +8,7 @@
 // territory; each lobe's volume is shared among its regions in proportion to their node counts, and a short force
 // simulation evens the nodes out inside it.
 import { rng } from './data.js';
-import { SHAPE, CORONAL, TOP, CEREBELLUM } from './shape.js';
+import { SHAPE, SHAPE_PD, CORONAL, TOP, CEREBELLUM } from './shape.js';
 
 // Proportions of a real brain: length 1 : width 0.83 : cerebrum height 0.62 (here the length is 2).
 const HALF_WIDTH = 0.83; // the widest half-width (the top view's widest point)
@@ -17,11 +17,13 @@ const CBL_HALF = 0.5, CBL_LIFT = 0.15; // the cerebellum's half-width; how far i
 const STEM_R = 0.075;
 
 // The region map, decoded: one code per cell, 0 outside.
-const G = SHAPE.size, CODES = '.PFAOTCS';
+// The side map: ?side=pd shows the one traced from public-domain plates, for comparison.
+const SIDE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('side') === 'pd' ? SHAPE_PD : SHAPE;
+const G = SIDE.size, CODES = '.PFAOTCS';
 const T_ = 5, C_ = 6, S_ = 7;
 const LOBE_OF = [null, 'prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem'];
 const cls = new Uint8Array(G * G);
-SHAPE.rows.forEach((row, gy) => {
+SIDE.rows.forEach((row, gy) => {
   let gx = 0;
   for (const m of row.matchAll(/(\d+)(.)/g)) { cls.fill(CODES.indexOf(m[2]), gy * G + gx, gy * G + gx + Number(m[1])); gx += Number(m[1]); }
 });
