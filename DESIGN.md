@@ -54,8 +54,9 @@ colors:
   lobe-occipital: "oklch(76% 0.12 238)"
   lobe-temporal: "oklch(74% 0.15 356)"
   lobe-cerebellum: "oklch(78% 0.11 190)"
-  lobe-stem: "oklch(75% 0.13 45)"
-  agent-main: "oklch(95% 0.02 285)"
+  lobe-stem: "oklch(80% 0.05 85)"
+  agent-main: "oklch(74% 0.14 38)"
+  brain-breath: "oklch(82% 0.07 60)"
   agent-cyan: "oklch(82% 0.12 200)"
   agent-chartreuse: "oklch(87% 0.16 117)"
   agent-lilac: "oklch(76% 0.11 314)"
@@ -315,37 +316,37 @@ The Brain tab (Phase 4, prototyped standalone in `prototype/brain/`) is a second
 - **Occipital Azure** (`lobe-occipital`): interface.
 - **Temporal Pink** (`lobe-temporal`): memory.
 - **Cerebellum Teal** (`lobe-cerebellum`): tools and tests.
-- **Brainstem Orange** (`lobe-stem`): infrastructure.
+- **Brainstem Sand** (`lobe-stem`): infrastructure. Sand, not orange, so it never passes for Claude's coral.
 
 Regions inside a lobe shift around its color so neighbors stay apart: hue by 0, +10, −10, +18, −18 degrees and lightness by 0, +3, −3 points, in the order the regions appear. Text in a region's color (labels, the focus card) is lifted 6 points of lightness, capped at 88%; the legend dot is the lobe color lifted 4 points.
 
 **The White Core Rule.** Activity never passes for a region. Whatever happened, rather than what something is, carries a white core, a label or a ring:
-- **Agents** are colored beams and heads with a white core and a numbered chip ("#1 Explore"). The main agent is near-white (`agent-main`); subagents take, in order, cyan (`agent-cyan`), chartreuse (`agent-chartreuse`) and lilac (`agent-lilac`). The same hue marks the agent's chip dot and its row in the agents panel, always a white center ringed by the hue.
+- **Agents** are colored beams and heads with a white core and a numbered chip ("#1 Explore"). Claude itself is coral (`agent-main`), its warm color, the one warm accent in the well with the cream of its thinking breath; subagents take, in order, cyan (`agent-cyan`), chartreuse (`agent-chartreuse`) and lilac (`agent-lilac`). The same hue marks the agent's chip dot and its row in the agents panel, always a white center ringed by the hue.
 - **Kind rings** on the node an agent lands on use the dashboard's dark state hues: read blue (`read`), edit pink (`edit`), error red (`error`), and command gray (`brain-command`) for commands and tools, never white (white is Claude). The ring's word is in the chip.
 - **Selection** is the restrained violet (`accent`): a ring around the focused node, and its links mixed 45% toward violet at 0.6 opacity.
 - **Embers:** a touched node keeps a whitened core that cools in steps (full under 1 min, 0.55 under 5 min, 0.28 under 15 min, then gone), checked every 15s.
 
-**The Working Project Rule.** While a session works, its project's nodes and fibers rise to 1.15 and every other project drops to half; idle, all sit at 1.
+**The Working Project Rule.** While a session works, its project's nodes and fibers rise to 1.15 and every other project drops to half; idle, all sit at 0.8.
 
 ### Elevation & depth
 
 **The Night Well Rule.** The well is always dark, in both themes, because glow is additive light and needs a dark ground. It forces the dark token set on its own text and overlays, so a light-theme page frames a night window.
 
 - **Ground:** a radial night from `brain-night-center` at the middle (slightly above center) to `brain-night` at the edges, darkened by a vignette toward the corners, with a sparse, dim, static starfield (one candidate per 6px cell, about 1.4% lit). Screen space, never moves, never data.
-- **Particle shell:** about 13,000 dust points in `brain-dust` sketch the cerebrum, cerebellum, brainstem and a faint midline fissure, and turn with the scene. Decoration: never interactive, never counted, never picked.
+- **Particle shell:** about 26,000 dust points in `brain-dust` sketch the cerebrum, cerebellum and brainstem, and turn with the scene. The side view is traced from a real brain (a region map: frontal, motor strip, parietal, occipital, temporal, cerebellum, brainstem) and inflated into 3D: the cerebrum rounds off toward its outline (length 1 : width 0.83 : height 0.62), split by a thin fissure (about 2.5% of the width) into hemispheres with flat inner faces; the cerebellum is a compact flattened dome with fine curved folia; the brainstem is a round tube. The surface carries gyri: dots gather along winding ridges with thin dark grooves between; the Sylvian fissure, the central sulcus and the midline fissure are the clearest grooves. The shell's far half fades almost away, as if the brain were solid, so the near side's folds read; while the camera moves only half the (shuffled) dots draw, twice as bright. Lobes are the map's regions through the whole depth, mirrored on both hemispheres, so nodes fill their territory. Decoration: never interactive, never counted, never picked.
 - **Glow:** region haze (soft sprites in each region's color, 0.055 strength) and the lit lobe (where agents are or recently were, up to 0.075, cooling with the embers, updated at most every 2s). Glow lives only inside the well.
-- **Depth fog:** the far side of the brain is smaller (perspective), dimmer and greyer. Nodes desaturate up to 55% and dim up to 50%; fibers and sprites lose up to 60% opacity; far lobe labels drop to 0.6.
+- **Depth fog:** the far side of the brain is smaller (perspective), dimmer and greyer. Nodes desaturate up to 55% and dim up to 50%; fibers and sprites lose up to 60% opacity. Labels do not fade: they must stay readable.
 - **Overlays** on the well (title, trace, camera bar, agents panel, focus card, tooltip) sit on an opaque `brain-veil` with a hairline border and 12px radius, never glass. Labels over the light get a dark halo (`text-shadow` 0 0 6px and 0 0 2px of the night), the only shadow in the system, and only for legibility.
 
 ### Shapes
 
 - **Nodes** are neuron sprites: a crisp shape per type with a soft halo in the region color and up to four short dendrites (fixed per node, drawn only once the sprite is over 10px). Files are dots, instructions diamonds, memories triangles, Serena memories squares, tools rings. Size and brightness grow with activity; crowded lobes get smaller, dimmer nodes so additive light does not blow out. The rail's type filter shows the same shapes as icons.
-- **Fibers** are links drawn as curved ribbons with a bright core and a soft glow, colored from one region's color to the other's. Links within a region bow gently; links between regions run as a B-spline through the lobes they join along one shared lane per pair of lobes (dipping toward the core inside a hemisphere, crossing the midline high between hemispheres, like the corpus callosum), so they gather into bundles instead of fanning out. Base opacity is low and differs by type (imports 0.42, links 0.34, read-first 0.26, cites 0.24, co-change 0.15, index 0.12, midline 0.5). Co-change links are statistical, so they are dashed and thinner (2.2px against 3.2px). While the camera moves, fibers draw straight (one segment each) so slow GPUs keep up; the smooth curves (14 segments between regions, two inside one) return the moment it stops.
-- **Beams** are an agent's trip: a 16px glowing tube, a white core inside a wide halo in its hue, that arcs over the surface (lifting away from the core) from where it was to the file it now reads or edits, drawn from 60% behind the head up to the head, lingering 480ms after it lands.
+- **Fibers** are links drawn as curved ribbons with a bright core and a soft glow, colored from one region's color to the other's. Links within a region bow gently; links between regions run as a B-spline through the lobes they join along one shared lane per pair of lobes (dipping toward the core inside a hemisphere, crossing the midline high between hemispheres, like the corpus callosum), so they gather into bundles instead of fanning out. Base opacity is low and differs by type (imports 0.42, links 0.34, read-first 0.26, cites 0.24, co-change 0.15, index 0.12, midline 0.5), and drops with the number of links (×√(900 / links), at least half) so thousands of crossings never burn out to white. Co-change links are statistical, so they are dashed and thinner (2.2px against 3.2px). While the camera moves, fibers draw straight (one segment each) so slow GPUs keep up; the smooth curves (14 segments between regions, two inside one) return the moment it stops.
+- **Beams** are an agent's trip: a 16px glowing tube, a white core inside a wide halo in its hue, that travels the fiber lane between lobes (or arcs over the surface inside one lobe) from where it was to the file it now reads or edits, drawn from 60% behind the head up to the head, lingering 480ms after it lands.
 
 ### Components
 
-- **Lobe labels:** one per lobe, placed inside the brain on the side facing the camera. The lobe is small on top in ink 3 ("Prefrontal · instructions", 12px, sentence case, ink 2 while agents work there); under it the lobe's groups in their region colors (13px semibold, most important first: focused region, where agents work, the working project, then size), at most three (two below 520px) and "+n". On a `brain-label-veil` with 6px radius. A label never covers an agent: chips take the first free spot around their agent, and a label gives way only when a chip has nowhere else to go.
+- **Lobe labels:** one per lobe, at the projected center of the lobe's nodes in both hemispheres, so they follow the anatomy from any angle. When that spot is taken (a label, a panel, an agent) the label tries just beside it, then moves outside the outline, where its leader line (1px in the lobe's color at 0.6, with a 2.5px dot on the lobe's center) is shortest. A label goes outside only on its lobe's own side (within 70 degrees), never across the brain. A lobe on the far side (more than a quarter of the brain's radius behind its center, like the prefrontal lobe from the back) has no label unless agents work there. Labels never overlap; below 640px only those that fit show. The lobe is small on top in ink 3 ("Prefrontal · instructions", 12px, sentence case, ink 2 while agents work there); under it the lobe's groups in their region colors (13px semibold, most important first: focused region, where agents work, the working project, then size), at most three (two below 520px) and "+n". On a `brain-label-veil` with 6px radius. A label never covers an agent: chips take the first free spot around their agent, and a label gives way only when a chip has nowhere else to go.
 - **Agent chips:** pill on `brain-veil`, hairline border, the white-core dot in the agent's hue, the number (and type when there is room), the kind word in its state color and the target in monospace. They follow their agent and fade out (200ms) about 2.6s after it finishes.
 - **Activity trace:** a 250px card with an EEG-like line from real events (an ink 2 line, thinking tokens as a faint ink 3 band) and a status word (working in green, thinking, idle) on its own row above the line; below 640px a compact 190px card keeps only the word and the line.
 - **Camera bar:** a segmented control on the veil: +, −, Fit, Re-layout, Follow, Auto-rotate. The view opens, and Fit returns, at a 3/4 side view (frontal toward the viewer's right) that frames the particle shell with a margin, on phones too.
@@ -354,9 +355,9 @@ Regions inside a lobe shift around its color so neighbors stay apart: hue by 0, 
 
 ### Motion
 
-Beam travel 520–1000ms (longer for farther trips) with a cubic ease-in-out; ignition ring 750ms ease-out and a flash on the node that fades over about a second; think ripple 2.4s across nearby nodes; a subagent appears with an 800ms ring; drag inertia decays with a 260ms time constant; zoom, Fit and Follow ease with a 140ms time constant; project dimming eases over about 220ms; embers and the lit lobe cool at 1, 5 and 15 min.
+Beam travel 620–1200ms (longer for farther trips) with a cubic ease-in-out; ignition ring 750ms ease-out, a flash on the node that fades over about a second, and the region glowing in its color for 1.4s; while events keep coming (the last 3s), small signals (900ms each, at most 8) run along the links of what was just touched, toward it; while Claude thinks, a warm cream glow (`brain-breath`) breathes through the whole brain every 4.2s, drawn at about 12 frames a second when nothing else moves; think ripple 2.4s across nearby nodes; a subagent appears with an 800ms ring; drag inertia decays with a 260ms time constant; zoom, Fit and Follow ease with a 140ms time constant; project dimming eases over about 220ms; embers and the lit lobe cool at 1, 5 and 15 min.
 
-**The Still Idle Rule.** Idle is fully still. The loop draws only while something moves (camera, beams, rings, ripples, Follow, Auto-rotate), at most 30 frames a second, then sleeps; nothing renders while the tab is hidden or another view is shown. Follow and Auto-rotate are off by default; Auto-rotate (about 7 degrees a second) waits 3s after input and 4s after an event. "Animations off", which `prefers-reduced-motion` sets by default, draws single static frames: beams land at once, no rings, no ripples, no inertia.
+**The Still Idle Rule.** Idle is fully still, calm and a little dim (every project at 0.8). The loop draws only while something moves (camera, beams, rings, ripples, signals, Claude's breath, Follow, Auto-rotate), at most 30 frames a second, then sleeps; nothing renders while the tab is hidden or another view is shown. Follow and Auto-rotate are off by default; Auto-rotate (about 7 degrees a second) waits 3s after input and 4s after an event. "Animations off", which `prefers-reduced-motion` sets by default, draws single static frames: beams land at once, no rings, ripples, flashes, signals or inertia, and the breath is a still glow.
 
 ### Layout
 
