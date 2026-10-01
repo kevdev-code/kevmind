@@ -35,7 +35,7 @@ Status as of 2026-10-01. Version **0.4.2** in the repo; **0.4.1** is on npm (0.4
 
 ## Next: Phase 4, brain view
 
-An optional, animated view of the project's memory and activity. Requirements:
+An optional, animated view of the project's memory and activity. Status 2026-10-01: a standalone prototype, the renderer comparison and the measurements are in [BRAIN.md](BRAIN.md), waiting for review before integration. Requirements:
 
 - A separate tab next to Live and Memory; the everyday panels stay as they are.
 - A switch to turn animations off (and `prefers-reduced-motion` respected).
