@@ -174,13 +174,15 @@ void main() {
 
 export const SPRITE_VS = `#version 300 es
 in vec3 a_pos; in float a_size; in vec4 a_color; in float a_mode;
-uniform mat4 u_vp; uniform float u_px; uniform vec2 u_depth;
+uniform mat4 u_vp; uniform float u_px; uniform vec2 u_depth; uniform float u_gain;
 out vec4 v_color; out float v_mode;
 ${DEPTH}
 void main() {
   vec4 p = u_vp * vec4(a_pos, 1.0);
   gl_Position = p;
-  v_color = vec4(a_color.rgb, a_color.a * (1.0 - farOf(p.w) * 0.6));
+  float far = farOf(p.w);
+  // The shell's far half almost disappears, as if the brain were solid, so the near side's folds read.
+  v_color = vec4(a_color.rgb, a_color.a * (a_mode > 2.5 ? u_gain * (1.0 - 0.85 * smoothstep(0.45, 0.7, far)) : 1.0 - far * 0.6));
   v_mode = a_mode;
   gl_PointSize = clamp(a_size * u_px / p.w, a_mode > 2.5 ? 1.6 : 0.0, 420.0);
 }`;
@@ -386,7 +388,13 @@ export class Renderer {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE);
       const skip = layers.skip || new Set();
-      if (this.counts.dust && !skip.has('dust')) { this._common(this.sprite, view); gl.bindVertexArray(this.vao.dust); gl.drawArrays(gl.POINTS, 0, this.counts.dust); }
+      if (this.counts.dust && !skip.has('dust')) { // while the camera moves, half the (shuffled) shell, twice as bright
+        const half = (layers.lod || 0) > 0;
+        this._common(this.sprite, view);
+        gl.uniform1f(this.sprite.loc.u_gain, half ? 2 : 1);
+        gl.bindVertexArray(this.vao.dust);
+        gl.drawArrays(gl.POINTS, 0, half ? Math.ceil(this.counts.dust / 2) : this.counts.dust);
+      }
       if (haze && !skip.has('haze')) { this._common(this.sprite, view); gl.bindVertexArray(this.vao.sprite); gl.drawArrays(gl.POINTS, 0, haze); }
       const f = this.fibers && (this.fibers[layers.lod || 0] || this.fibers[0]);
       if (f && f.count && !skip.has('fibers')) this._fibers(view, f.vao, f.count);

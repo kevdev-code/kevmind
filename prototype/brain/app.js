@@ -11,7 +11,7 @@ const TARGET = Number(params.get('nodes')) || 0;
 const SPEED = Number(params.get('speed')) || 1;
 const SKIP = new Set((params.get('skip') || '').split(',')); // benchmark only: draw without some layers
 const FRAME_MS = 1000 / 30;
-const FOV = (30 * Math.PI) / 180;
+const FOV = (24 * Math.PI) / 180;
 const T0 = performance.now();
 const $ = (id) => document.getElementById(id);
 const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
@@ -86,14 +86,16 @@ const P = {
   kinds: [[0, 0, 0], C(76, 0.115, 245), C(77, 0.13, 350), C(72, 0.17, 25), C(72, 0.012, 285), C(74, 0.145, 288)].flat(),
   edgeAlpha: [0.34, 0.12, 0.42, 0.24, 0.15, 0.26, 0.5, 1],
   dust: C(82, 0.035, 290),
+  breath: C(82, 0.07, 60), // Claude thinking: a warm cream glow through the whole brain
 };
 const kindRgb = (k) => P.kinds.slice(KIND[k] * 3, KIND[k] * 3 + 3);
 // Categorical color per lobe kind: the brain view's one exemption from one-hue-per-meaning (DESIGN.md, Brain view).
 // Regions in a lobe shift a little around its hue so neighbors stay apart.
 const LOBE_COLOR = { prefrontal: [80, 0.13, 78], frontal: [78, 0.13, 152], parietal: [72, 0.14, 295], occipital: [76, 0.12, 238],
-  temporal: [74, 0.15, 356], cerebellum: [78, 0.11, 190], stem: [75, 0.13, 45] };
+  temporal: [74, 0.15, 356], cerebellum: [78, 0.11, 190], stem: [80, 0.05, 85] };
 // Agents: colored beams with a white core and a numbered label, so they never pass for a region (user's choice).
-const AGENT_HUES = [[95, 0.02, 285], [82, 0.12, 200], [87, 0.16, 117], [76, 0.11, 314]];
+// Claude itself is coral, its warm color; subagents are cyan, chartreuse and lilac.
+const AGENT_HUES = [[74, 0.14, 38], [82, 0.12, 200], [87, 0.16, 117], [76, 0.11, 314]];
 
 // ---- data ----------------------------------------------------------------------------------------------------
 const graph = makeGraph({ target: TARGET });
@@ -130,10 +132,13 @@ const activityOf = (i) => {
 // Additive light saturates where a lobe is crowded: crowded lobes get dimmer, smaller stars.
 const lobeLoad = {};
 for (const n of nodes) { const l = regions[n.region].lobe; lobeLoad[l] = (lobeLoad[l] || 0) + 1; }
-const crowd = Object.fromEntries(Object.entries(LOBES).map(([l, s]) => [l, clamp(Math.sqrt(900 / ((lobeLoad[l] || 1) / ((4 / 3) * Math.PI * s.r[0] * s.r[1] * s.r[2] * (s.midline ? 1 : 2)))), 0.45, 1)]));
+const crowd = Object.fromEntries(Object.entries(LOBES).map(([l, s]) => [l, clamp(Math.sqrt(900 / ((lobeLoad[l] || 1) / s.vol)), 0.45, 1)]));
 const crowdOf = (i) => crowd[lobeOf(i)];
-const sizeOf = (i) => (nodes[i].type === 'instruction' ? 0.085 : (0.042 + 0.008 * Math.sqrt(Math.min(activityOf(i), 140))) * Math.sqrt(crowdOf(i)));
-const brightOf = (i) => (nodes[i].type === 'instruction' ? 1 : (0.5 + 0.5 * Math.min(1, Math.sqrt(activityOf(i) / 70))) * crowdOf(i));
+// The same for links: where thousands cross, each draws fainter (the six link types; the midline and beams keep theirs).
+const linkScale = clamp(Math.sqrt(900 / Math.max(1, edges.length)), 0.5, 1);
+P.edgeAlpha = P.edgeAlpha.map((v, k) => (k < 6 ? v * linkScale : v));
+const sizeOf = (i) => 0.82 * (nodes[i].type === 'instruction' ? 0.085 : (0.042 + 0.008 * Math.sqrt(Math.min(activityOf(i), 140))) * Math.sqrt(crowdOf(i)));
+const brightOf = (i) => 0.85 * (nodes[i].type === 'instruction' ? 1 : (0.5 + 0.5 * Math.min(1, Math.sqrt(activityOf(i) / 70))) * crowdOf(i));
 
 const size = new Float32Array(N), bright = new Float32Array(N);
 for (let i = 0; i < N; i++) { size[i] = sizeOf(i); bright[i] = brightOf(i); }
@@ -161,10 +166,21 @@ function bspline(P) {
     return [0, 1, 2].map((k) => (w[0] * Q[i][k] + w[1] * Q[i + 1][k] + w[2] * Q[i + 2][k] + w[3] * Q[i + 3][k]) / 6);
   };
 }
+// The path between points of two regions in different lobes: a B-spline through the lobes' centers and one lane per
+// pair of lobes (across hemispheres it crosses the midline high, like the corpus callosum; within one it dips toward
+// the core), so fibers gather into bundles and an agent's pulse travels along them.
+function lanePath(pa, ga, pb, gb) {
+  const la = lobeShape(regions[ga].lobe, L.side[ga]).c, lb = lobeShape(regions[gb].lobe, L.side[gb]).c;
+  const m = [0, 1, 2].map((i) => (la[i] + lb[i]) / 2);
+  const lane = L.side[ga] !== L.side[gb] ? [m[0] * 0.8, 0.18, 0] : [0, 1, 2].map((i) => m[i] + (CORE[i] - m[i]) * 0.35);
+  const poly = [pa, la, lane, lb, pb]; // few control points, so the lane bends in long curves, not corners
+  return bspline(poly.map((p, i) => [0, 1, 2].map((k) => pa[k] + (pb[k] - pa[k]) * (i / 4) + (p[k] - pa[k] - (pb[k] - pa[k]) * (i / 4)) * 0.85)));
+}
 // fiberData(cross, same): segments per curve between regions and inside one.
 function fiberData(segCross, segSame) {
-  const out = [], owner = [];
+  const out = [], owner = [], start = new Int32Array(edges.length), segs = new Int32Array(edges.length);
   edges.forEach((e, k) => {
+    start[k] = owner.length;
     const pa = at(e.a), pb = at(e.b), ga = nodes[e.a].region, gb = nodes[e.b].region;
     const mid = [0, 1, 2].map((i) => (pa[i] + pb[i]) / 2);
     let pt;
@@ -172,19 +188,12 @@ function fiberData(segCross, segSame) {
       const cg = L.centroid[ga], d = [0, 1, 2].map((i) => mid[i] - cg[i]), dl = Math.hypot(...d) || 1, len = Math.hypot(pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]);
       const c = [0, 1, 2].map((i) => mid[i] + (d[i] / dl) * len * 0.3);
       pt = (t) => [0, 1, 2].map((i) => (1 - t) * (1 - t) * pa[i] + 2 * (1 - t) * t * c[i] + t * t * pb[i]);
-    } else {
-      const ra = regions[ga], rb = regions[gb], la = lobeShape(ra.lobe, L.side[ga]).c, lb = lobeShape(rb.lobe, L.side[gb]).c;
-      let poly;
-      if (ra.lobe === rb.lobe && L.side[ga] === L.side[gb]) poly = [pa, L.centroid[ga], L.centroid[gb], pb];
-      else {
-        const m = [0, 1, 2].map((i) => (la[i] + lb[i]) / 2);
-        // Across hemispheres the lane crosses the midline high, like the corpus callosum; within one it dips toward the core.
-        const lane = L.side[ga] !== L.side[gb] ? [m[0] * 0.8, 0.24, 0] : [0, 1, 2].map((i) => m[i] + (CORE[i] - m[i]) * 0.35);
-        poly = [pa, la, lane, lb, pb]; // few control points, so the lane bends in long curves, not corners
-      }
-      pt = bspline(poly.map((p, i) => [0, 1, 2].map((k) => pa[k] + (pb[k] - pa[k]) * (i / (poly.length - 1)) + (p[k] - pa[k] - (pb[k] - pa[k]) * (i / (poly.length - 1))) * 0.85)));
-    }
+    } else if (regions[ga].lobe === regions[gb].lobe && L.side[ga] === L.side[gb]) {
+      const poly = [pa, L.centroid[ga], L.centroid[gb], pb];
+      pt = bspline(poly.map((p, i) => [0, 1, 2].map((k) => pa[k] + (pb[k] - pa[k]) * (i / 3) + (p[k] - pa[k] - (pb[k] - pa[k]) * (i / 3)) * 0.85)));
+    } else pt = lanePath(pa, ga, pb, gb);
     const S = ga === gb ? segSame : segCross;
+    segs[k] = S;
     const ca = regionColor[ga].map((x) => x * 0.95), cb = regionColor[gb].map((x) => x * 0.95);
     const col = (t) => [0, 1, 2].map((i) => ca[i] + (cb[i] - ca[i]) * t);
     const pj = nodes[e.a].project != null ? projIndex.get(nodes[e.a].project) : nodes[e.b].project != null ? projIndex.get(nodes[e.b].project) : -1;
@@ -197,15 +206,15 @@ function fiberData(segCross, segSame) {
       prev = p; dist += d;
     }
   });
-  return { data: new Float32Array(out), owner: Int32Array.from(owner) };
+  return { data: new Float32Array(out), owner: Int32Array.from(owner), start, segs };
 }
 
 let shellXYZ = new Float32Array(0); // the shell's points, also used to frame the brain
 function dustData() {
-  const s = (shellXYZ = shellPoints(13000)), d = new Float32Array((s.length / 4) * SPRITE_FLOATS);
+  const s = (shellXYZ = shellPoints(26000)), d = new Float32Array((s.length / 4) * SPRITE_FLOATS);
   for (let i = 0, k = 0; i < s.length; i += 4, k += SPRITE_FLOATS) {
     const part = s[i + 3];
-    d.set([s[i], s[i + 1], s[i + 2], part === 3 ? 0.009 : 0.011, ...P.dust, part === 3 ? 0.32 : part === 0 ? 0.5 : 0.42, SPRITE.dust], k);
+    d.set([s[i], s[i + 1], s[i + 2], 0.0105, ...P.dust, part === 1 ? 0.5 : 0.6, SPRITE.dust], k);
   }
   return d;
 }
@@ -223,9 +232,12 @@ let follow = false, autoRotate = false, lastInput = 0, lastEvent = -1e9;
 let W = 1, H = 1, VP = null, PX = 1, basis = null, depth = [3, 6], camDirty = true, camVersion = 0, scrVersion = -1, labelsDirty = true;
 let staticKey = 0; // bumped whenever the cached static layers (ground, shell, haze, fibers) must be redrawn
 const scr = new Float32Array(N * 3);
-const projCur = new Float32Array(32).fill(1), projTarget = new Float32Array(32).fill(1);
+const projCur = new Float32Array(32).fill(0.8), projTarget = new Float32Array(32).fill(0.8);
 const embers = new Map();
 const rings = [];
+const flashes = []; // a region glowing where an agent just landed
+const signals = []; // small pulses running along fibers around recent work
+let lastSignal = 0;
 let ripples = [];
 let busyUntil = 0;
 const busy = (until) => { if (until > busyUntil) busyUntil = until; };
@@ -237,11 +249,13 @@ let R = null;
 const edgeHl = new Float32Array(edges.length);
 // ponytail: two fixed levels; the coarse one exists for software and weak GPUs, where cost grows with segments.
 const lod = [{ cross: 14, same: 2 }, { cross: 1, same: 1 }].map((x) => ({ ...x, owner: new Int32Array(0), hl: new Float32Array(0) }));
+let fine = null; // the smooth fibers, for signals running along them
 function uploadGeometry() {
   R.setNodes(nodeData(), state);
   lod.forEach((l, k) => {
     const f = fiberData(l.cross, l.same);
     l.owner = f.owner;
+    if (!k) fine = f;
     l.hl = new Float32Array(f.owner.length);
     R.setFibers(f.data, l.hl, k);
   });
@@ -302,17 +316,30 @@ function refresh() {
 const PITCH = 1.35; // just short of the poles, so the view never flips
 const FIT = { dist: 5, target: [...BRAIN_CENTER] };
 let cardShift = [0, 0, 0];
-function frameBrain() {
-  const b = orbitView(BRAIN_CENTER, 5, HOME.yaw, HOME.pitch), t = Math.tan(FOV / 2);
+// The shell's extent across the view from an angle (orthographic, in brain units), parts as listed.
+function extent(yaw, pitch, parts = [0, 1, 2]) {
+  const b = orbitView(BRAIN_CENTER, 5, yaw, pitch);
   let x0 = 9, x1 = -9, y0 = 9, y1 = -9;
   for (let i = 0; i < shellXYZ.length; i += 4) {
+    if (!parts.includes(shellXYZ[i + 3])) continue;
     const d = [shellXYZ[i] - BRAIN_CENTER[0], shellXYZ[i + 1] - BRAIN_CENTER[1], shellXYZ[i + 2] - BRAIN_CENTER[2]];
     const px = d[0] * b.x[0] + d[1] * b.x[1] + d[2] * b.x[2], py = d[0] * b.y[0] + d[1] * b.y[1] + d[2] * b.y[2];
     x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
   }
-  const old = [...HOME.target];
-  FIT.target = [0, 1, 2].map((a) => BRAIN_CENTER[a] + b.x[a] * (x0 + x1) / 2 + b.y[a] * (y0 + y1) / 2);
-  FIT.dist = Math.max((y1 - y0) / 2 / t, (x1 - x0) / 2 / (t * (W / H))) * 1.1 + 0.45; // margin, and the near half is bigger
+  return { b, x0, x1, y0, y1 };
+}
+// Where the camera looks and how far it stands so the whole brain fits the well from an angle, with a margin.
+function fitFor(yaw, pitch) {
+  const { b, x0, x1, y0, y1 } = extent(yaw, pitch), t = Math.tan(FOV / 2);
+  return {
+    target: [0, 1, 2].map((a) => BRAIN_CENTER[a] + b.x[a] * (x0 + x1) / 2 + b.y[a] * (y0 + y1) / 2),
+    dist: Math.max((y1 - y0) / 2 / t, (x1 - x0) / 2 / (t * (W / H))) * 1.1 + 0.45, // margin, and the near half is bigger
+  };
+}
+function frameBrain() {
+  const old = [...HOME.target], f = fitFor(HOME.yaw, HOME.pitch);
+  FIT.target = f.target;
+  FIT.dist = f.dist;
   HOME.target = [...FIT.target];
   if (goal.target.every((v, a) => Math.abs(v - old[a] - cardShift[a]) < 1e-6)) { // not moved by hand: follow the new frame
     goal.target = FIT.target.map((v, a) => v + cardShift[a]);
@@ -403,9 +430,9 @@ function agentOf(id) {
   return a;
 }
 const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
-const bez = (c, t) => [0, 1, 2].map((k) => (1 - t) * (1 - t) * c.from[k] + 2 * (1 - t) * t * c.ctrl[k] + t * t * c.to[k]);
-const cometHead = (c, now) => bez(c, ease(clamp((now - c.t0) / c.dur, 0, 1)));
+const cometHead = (c, now) => c.pt(ease(clamp((now - c.t0) / c.dur, 0, 1)));
 const animating = () => anim && R && !document.hidden && view === 'brain';
+const thinking = () => { for (const a of agents.values()) if (a.kind === 'think' && a.status !== 'done') return true; return false; };
 
 function onEvent(ev) {
   const now = performance.now();
@@ -442,11 +469,17 @@ function onEvent(ev) {
     const to = at(ev.node);
     if (!animating() || !a.pos) { a.comet = { to, node: ev.node, kind: ev.kind }; arrive(a, false); }
     else {
-      // The beam arcs over the surface: its control point lifts away from the core.
+      // Between lobes the pulse travels the fiber lane; inside one lobe it arcs over the surface.
       const from = a.pos, d = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-      const mid = [0, 1, 2].map((i) => (from[i] + to[i]) / 2), out = [0, 1, 2].map((i) => mid[i] - CORE[i]), ol = Math.hypot(...out) || 1;
-      const ctrl = [0, 1, 2].map((i) => mid[i] + (out[i] / ol) * (0.18 + d * 0.35));
-      a.comet = { from, to, ctrl, t0: now, dur: 520 + 480 * Math.min(1, d / 1.2), node: ev.node, kind: ev.kind };
+      const ga = a.node != null ? nodes[a.node].region : null, gb = nodes[ev.node].region;
+      let pt;
+      if (ga != null && (regions[ga].lobe !== regions[gb].lobe || L.side[ga] !== L.side[gb])) pt = lanePath(from, ga, to, gb);
+      else {
+        const mid = [0, 1, 2].map((i) => (from[i] + to[i]) / 2), out = [0, 1, 2].map((i) => mid[i] - CORE[i]), ol = Math.hypot(...out) || 1;
+        const ctrl = [0, 1, 2].map((i) => mid[i] + (out[i] / ol) * (0.18 + d * 0.35));
+        pt = (t) => [0, 1, 2].map((k) => (1 - t) * (1 - t) * from[k] + 2 * (1 - t) * t * ctrl[k] + t * t * to[k]);
+      }
+      a.comet = { from, to, pt, t0: now, dur: 620 + 580 * Math.min(1, d / 1.2), node: ev.node, kind: ev.kind };
       busy(now + a.comet.dur + 40);
     }
   }
@@ -468,7 +501,7 @@ function arrive(a, animate) {
   embers.set(i, { kind: c.kind, at: Date.now() });
   state[i * 4] = nodeBright(i); state[i * 4 + 1] = 1; state[i * 4 + 2] = animate ? tSec(now) : -100; state[i * 4 + 3] = KIND[c.kind];
   if (R) R.updateState(state, i, i + 1);
-  if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); busy(now + 1700); }
+  if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); flashes.push({ g: nodes[i].region, t0: now }); busy(now + 1700); }
   cooling();
   if (focus === i) renderFocus();
   labelsDirty = true;
@@ -495,7 +528,7 @@ function cooling() {
 }
 
 function setProjectActive(id) {
-  projTarget.fill(1);
+  projTarget.fill(0.8); // idle: calm and a little dim
   if (id != null) { projTarget.fill(0.5); projTarget[projIndex.get(id)] = 1.15; }
   if (!animating()) projCur.set(projTarget);
   busy(performance.now() + 900);
@@ -510,7 +543,8 @@ function request() {
 function frame(now) {
   raf = 0;
   if (!R || view !== 'brain' || document.hidden) return;
-  if (anim && now - lastFrame < FRAME_MS - 2) { raf = requestAnimationFrame(frame); return; } // 30 fps cap
+  // 30 fps cap; about 12 when only Claude's breath moves
+  if (anim && now - lastFrame < (now < busyUntil || wasMoving || drag ? FRAME_MS : 80) - 2) { raf = requestAnimationFrame(frame); return; }
   const dt = Math.min(100, now - lastFrame);
   lastFrame = now;
   for (let k = 0; k < 32; k++) {
@@ -530,7 +564,7 @@ function frame(now) {
   R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth }, { haze, staticKey, skip: SKIP, lod: moving ? 1 : 0 });
   if (labelsDirty) layoutLabels();
   placeChips(now);
-  if (anim && (now < busyUntil || moving)) request();
+  if (anim && (now < busyUntil || moving || thinking())) request();
 }
 
 // Haze per region and the lit lobes (cached layer), then agent heads, markers and rings.
@@ -567,6 +601,31 @@ function buildSprites(now) {
     const u = (now - r.t0) / r.dur, e = 1 - (1 - u) ** 3;
     list.push(...r.p, (0.06 + 0.16 * e) * (r.s || 1), ...r.rgb, (1 - u) * 0.9, SPRITE.ring);
   }
+  for (let k = flashes.length - 1; k >= 0; k--) {
+    const fl = flashes[k], u = (now - fl.t0) / 1400;
+    if (u >= 1 || !anim) { flashes.splice(k, 1); continue; }
+    list.push(...L.centroid[fl.g], clamp(L.spread[fl.g] * 3.4, 0.16, 0.5), ...regionColor[fl.g], 0.16 * (1 - u) ** 2, SPRITE.glow);
+  }
+  // While events keep coming (the last 3 s), signals run along the links of what was just touched, toward it.
+  if (anim && fine && now - lastEvent < 3000 && now - lastSignal > 200 && signals.length < 8 && embers.size) {
+    lastSignal = now;
+    const recent = [...embers].sort((x, y) => y[1].at - x[1].at).slice(0, 6), [i] = recent[Math.floor(Math.random() * recent.length)];
+    const ks = adj[i].filter((k) => edgeHl[k] > 0);
+    if (ks.length) {
+      const k = ks[Math.floor(Math.random() * ks.length)];
+      signals.push({ k, toB: edges[k].b === i, t0: now, rgb: regionColor[nodes[i].region] });
+      busy(now + 950);
+    }
+  }
+  for (let s = signals.length - 1; s >= 0; s--) {
+    const sg = signals[s], u = (now - sg.t0) / 900;
+    if (u >= 1) { signals.splice(s, 1); continue; }
+    const v = sg.toB ? u : 1 - u, n = fine.segs[sg.k], j = Math.min(n - 1, Math.floor(v * n)), w = v * n - j, o = (fine.start[sg.k] + j) * FIBER_FLOATS;
+    const p = [0, 1, 2].map((q) => fine.data[o + q] + (fine.data[o + 3 + q] - fine.data[o + q]) * w);
+    list.push(...p, 0.03, ...sg.rgb, 0.85 * Math.sin(Math.PI * u), SPRITE.head);
+  }
+  // Claude thinking: a slow, warm breath through the whole brain (still, with animations off).
+  if (thinking()) list.push(BRAIN_CENTER[0], BRAIN_CENTER[1] + 0.12, 0, 1.25, ...P.breath, anim ? 0.035 + 0.04 * (0.5 - 0.5 * Math.cos((2 * Math.PI * now) / 4200)) : 0.05, SPRITE.glow);
   if (focus != null) list.push(...at(focus), size[focus] * 1.6, ...P.accent, 0.95, SPRITE.ring);
   if (list.length > spriteData.length) spriteData = new Float32Array(list.length * 2);
   spriteData.set(list);
@@ -582,7 +641,7 @@ function buildBeams(now) {
     const S = 16;
     for (let s = 0; s < S; s++) {
       const ta = t0 + ((t1 - t0) * s) / S, tb = t0 + ((t1 - t0) * (s + 1)) / S;
-      out.push(...bez(c, ta), ...bez(c, tb), 0, 0, ...rgb, ...rgb, EDGE.beam, 16, 1, Math.max(0.004, alphaAt((ta + tb) / 2)), -1, 0);
+      out.push(...c.pt(ta), ...c.pt(tb), 0, 0, ...rgb, ...rgb, EDGE.beam, 16, 1, Math.max(0.004, alphaAt((ta + tb) / 2)), -1, 0);
     }
   };
   for (const a of agents.values()) {
@@ -608,21 +667,46 @@ function regionName(g) {
   const parts = g.label.split('/');
   return parts[parts.length - 1] === 'api' || parts[parts.length - 1] === '__tests__' ? parts.slice(-2).join('/') : parts[parts.length - 1];
 }
-// Lobe labels sit inside the brain: the lobe once, small, and under it its groups in their region colors, the
-// most important first (where agents work, the focused node's region, the working project, then size), names
-// deduplicated across projects. Each label goes on the side of the brain facing the camera and fades with depth.
+// Lobe labels: one per lobe, at the projected center of its nodes in both hemispheres, so they follow the anatomy in
+// every view. The lobe once, small, and under it its groups in their region colors, the most important first (where
+// agents work, the focused node's region, the working project, then size), names deduplicated across projects. When
+// that spot is taken (another label, a panel, an agent), the label moves outside the brain's outline, straight out
+// from the brain's center, with a leader line back to the lobe's center.
 const lobeEls = new Map();
 let chipBoxes = [];
+const NS = 'http://www.w3.org/2000/svg';
+const leaders = document.createElementNS(NS, 'svg');
+leaders.setAttribute('class', 'leaders');
+labelBox.prepend(leaders);
+const leaderEls = new Map();
+// The outline: the farthest projected shell point from the outline's center, in 48 directions.
+function silhouette() {
+  const pts = [];
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (let i = 0; i < shellXYZ.length; i += 20) {
+    const p = project([shellXYZ[i], shellXYZ[i + 1], shellXYZ[i + 2]]);
+    if (p[2] <= 0) continue;
+    pts.push(p);
+    x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+  }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rad = new Float32Array(48);
+  for (const p of pts) {
+    const b = Math.round((Math.atan2(p[1] - cy, p[0] - cx) / (2 * Math.PI)) * 48 + 48) % 48;
+    rad[b] = Math.max(rad[b], Math.hypot(p[0] - cx, p[1] - cy));
+  }
+  const at = (a) => { const b = Math.round((a / (2 * Math.PI)) * 48 + 48) % 48; return Math.max(rad[b], rad[(b + 1) % 48], rad[(b + 47) % 48]); };
+  return { cx, cy, at };
+}
 function layoutLabels() {
   labelsDirty = false;
   // The panels over the well count as taken, so no label hides under them (read before this function writes anything).
   const wr = $('well').getBoundingClientRect();
-  const taken = ['now', 'trace', 'focusCard'].map($).concat([document.querySelector('.seg.camera')]).filter((el) => el && !el.hidden && el.offsetParent)
+  const taken = ['now', 'trace', 'focusCard'].map($).concat([...document.querySelectorAll('.seg.camera, .overlay.tl, .overlay.tr')]).filter((el) => el && !el.hidden && el.offsetParent)
     .map((el) => { const r = el.getBoundingClientRect(); return [r.left - wr.left, r.top - wr.top, r.width, r.height]; });
-  const free = (x, y, w, h) => !taken.some((r) => x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + h);
+  const hit = (x, y, w, h, list) => list.some((r) => x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + h);
   const live = new Set();
   for (const a of agents.values()) if (a.node != null && a.status !== 'done') live.add(nodes[a.node].region);
-  const wc = (depth[0] + depth[1]) / 2;
+  const wc = project(BRAIN_CENTER)[2];
   const byLobe = new Map();
   for (const g of regions) {
     if (!L.count[g.id] || (g.project != null && !filter.projects.has(g.project))) continue;
@@ -635,45 +719,78 @@ function layoutLabels() {
   }
   const cands = [...byLobe].map(([lobe, list]) => {
     list.sort((x, y) => y[1] - x[1]);
-    const sides = [...new Set(list.map(([g]) => L.side[g.id]))];
-    const near = sides.map((s) => lobeShape(lobe, s)).map((sh) => [sh, project(sh.c)]).sort((p, q) => p[1][2] - q[1][2])[0];
-    const [sh, c0] = near, up = project([sh.c[0], sh.c[1] + sh.r[1], sh.c[2]]), fw = project([sh.c[0] + sh.r[0], sh.c[1], sh.c[2]]);
-    const ry = Math.abs(up[1] - c0[1]), rx = Math.abs(fw[0] - c0[0]);
-    const spots = [[0, 0], [0, -ry - 14], [0, ry + 14], [-rx * 0.7, 0], [rx * 0.7, 0]].map(([dx, dy]) => [c0[0] + dx, c0[1] + dy, c0[2]]);
+    const c = [0, 0, 0];
+    let n = 0;
+    for (const [g] of list) { const k = L.count[g.id]; n += k; for (let a = 0; a < 3; a++) c[a] += L.centroid[g.id][a] * k; }
     const names = [], seen = new Set();
-    for (const [g] of list) { const n = regionName(g); if (!seen.has(n)) { seen.add(n); names.push([n, g.id]); } }
-    return { lobe, top: list[0][1], live: list.some(([, pr]) => pr >= 1000), spots, names };
-  }).sort((x, y) => y.top - x.top);
+    for (const [g] of list) { const nm = regionName(g); if (!seen.has(nm)) { seen.add(nm); names.push([nm, g.id]); } }
+    return { lobe, top: list[0][1], live: list.some(([, pr]) => pr >= 1000), at: project(c.map((v) => v / n)), names };
+  }).sort((x, y) => y.top - x.top)
+    // A lobe on the far side of the brain (prefrontal from the back) has no label, unless agents work there.
+    .filter((c) => c.live || c.at[2] - wc < 0.25 * BRAIN_RADIUS);
   const keep = new Set();
   const show = W < 520 ? 2 : 3;
   const agentsAt = [];
   for (const a of agents.values()) if (a.pos && !(a.hideAt && performance.now() > a.hideAt)) { const p = project(a.pos); agentsAt.push([p[0] - 18, p[1] - 18, 36, 36]); }
   for (const b of chipBoxes) agentsAt.push(b);
-  const clear = (x, y, w, h) => free(x - 3, y - 3, w + 6, h + 6) && !agentsAt.some((o) => x < o[0] + o[2] && o[0] < x + w && y < o[1] + o[3] && o[1] < y + h);
+  const sil = silhouette();
+  const inWell = (x, y, w, h) => x >= 8 && x + w <= W - 8 && y >= 8 && y + h <= H - 8;
+  const clear = (x, y, w, h) => inWell(x, y, w, h) && !hit(x - 3, y - 3, w + 6, h + 6, taken) && !hit(x, y, w, h, agentsAt);
   for (const c of cands) {
     const [la, lb] = T.lobes[c.lobe];
     const small = `${la} · ${lb}`;
     const list = c.names.slice(0, show), more = c.names.length - list.length;
-    const html = `<small>${esc(small)}</small><span class="groups">${list.map(([n, id]) => `<b style="color:${regionCss[id]}">${esc(n)}</b>`).join('<i>·</i>')}${more > 0 ? `<i>+${more}</i>` : ''}</span>`;
-    const text = list.map(([n]) => n).join(' · ') + (more > 0 ? ` +${more}` : '');
+    const html = `<small>${esc(small)}</small><span class="groups">${list.map(([nm, id]) => `<b style="color:${regionCss[id]}">${esc(nm)}</b>`).join('<i>·</i>')}${more > 0 ? `<i>+${more}</i>` : ''}</span>`;
+    const text = list.map(([nm]) => nm).join(' · ') + (more > 0 ? ` +${more}` : '');
     const w = Math.max(small.length * 6.3, text.length * 7.4) + 14, h = 36;
-    const fits = (s) => { const x = clamp(s[0] - w / 2, 8, W - w - 8), y = s[1] - h / 2; return s[2] > 0 && y > 56 && y + h < H - 8 ? [x, y] : null; };
-    const options = c.spots.map(fits).filter(Boolean);
-    const pick = options.find(([x, y]) => clear(x, y, w, h)) || options.find(([x, y]) => free(x - 3, y - 3, w + 6, h + 6));
-    if (!pick) continue;
+    const [ax, ay] = c.at;
+    let pick = null, lead = false;
+    if (c.at[2] > 0) {
+      // On the center, or just beside it (a short leader once it no longer covers the center)...
+      for (const [dx, dy] of [[0, 0], [w * 0.3, 0], [-w * 0.3, 0], [0, -h * 0.8], [0, h * 0.8], [0, -h * 1.6], [0, h * 1.6], [0, -h * 2.4], [0, h * 2.4]]) {
+        const x = ax - w / 2 + dx, y = ay - h / 2 + dy;
+        if (clear(x, y, w, h)) { pick = [x, y]; lead = Math.abs(dy) > h / 2; break; }
+      }
+      // ...else outside the outline on the lobe's own side (within 70 degrees), where the leader is shortest.
+      const base = Math.atan2(ay - sil.cy, ax - sil.cx);
+      for (let k = -6, best = Infinity; !pick && k <= 6; k++) {
+        const an = base + (k * Math.PI) / 16, dx = Math.cos(an), dy = Math.sin(an);
+        const d = sil.at(an) + 12 + (Math.abs(dx) * w) / 2 + (Math.abs(dy) * h) / 2;
+        const x = sil.cx + dx * d - w / 2, y = sil.cy + dy * d - h / 2;
+        if (!clear(x, y, w, h)) continue;
+        const len = Math.hypot(clamp(ax, x, x + w) - ax, clamp(ay, y, y + h) - ay);
+        if (len < best) { best = len; c.out = [x, y]; }
+      }
+      if (!pick && c.out) { pick = c.out; lead = true; }
+    }
+    let line = leaderEls.get(c.lobe);
+    if (!pick) { if (line && line.style.display !== 'none') line.style.display = 'none'; continue; }
     const [x, y] = pick;
     let el = lobeEls.get(c.lobe);
     if (!el) { el = document.createElement('span'); el.className = 'lbl lobe'; lobeEls.set(c.lobe, el); labelBox.append(el); }
     if (el._html !== html) { el._html = html; el.innerHTML = html; }
     el.classList.toggle('on', c.live);
-    el.classList.toggle('far', c.spots[0][2] > wc && !c.live);
     if (el.hidden) el.hidden = false;
     el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     el._box = [x, y, w, h];
     taken.push([x - 3, y - 3, w + 6, h + 6]);
     keep.add(c.lobe);
+    if (!line) {
+      line = document.createElementNS(NS, 'g');
+      line.innerHTML = '<line></line><circle r="2.5"></circle>';
+      line.style.color = lobeCss(c.lobe);
+      leaderEls.set(c.lobe, line);
+      leaders.append(line);
+    }
+    line.style.display = lead ? '' : 'none';
+    if (lead) { // from the lobe's center to the nearest point of the label
+      const ex = clamp(ax, x, x + w), ey = clamp(ay, y, y + h), [ln, dot] = line.children;
+      ln.setAttribute('x1', ax.toFixed(1)); ln.setAttribute('y1', ay.toFixed(1)); ln.setAttribute('x2', ex.toFixed(1)); ln.setAttribute('y2', ey.toFixed(1));
+      dot.setAttribute('cx', ax.toFixed(1)); dot.setAttribute('cy', ay.toFixed(1));
+    }
   }
   for (const [k, el] of lobeEls) if (!keep.has(k) && !el.hidden) el.hidden = true;
+  for (const [k, g] of leaderEls) if (!keep.has(k) && g.style.display !== 'none') g.style.display = 'none';
 }
 function placeChips(now) {
   const placed = [];
@@ -1171,6 +1288,26 @@ let frames = 0, firstFrame = 0;
 window.__brain = { nodes: N, edges: edges.length, frames: () => frames, staticDraws: () => (R ? R.staticDraws || 0 : 0), firstFrameMs: () => firstFrame,
   get busy() { return busyUntil > performance.now(); }, setAutoRotate(on) { if (on !== autoRotate) $('rotateBtn').click(); }, setFollow(on) { if (on !== follow) $('followBtn').click(); },
   get cam() { return JSON.parse(JSON.stringify({ cam, goal, vel, follow, autoRotate })); }, pos: (i) => at(i),
-  look(yaw, pitch, zoom = 1) { Object.assign(cam, { yaw, pitch, zoom }); Object.assign(goal, { yaw, pitch, zoom }); camDirty = true; request(); } };
+  look(yaw, pitch, zoom = 1) { Object.assign(cam, { yaw, pitch, zoom }); Object.assign(goal, { yaw, pitch, zoom }); camDirty = true; request(); },
+  // A fixed view, framed like Fit (top uses pitch 1.55, past the orbit's limit), and the outline measured from it.
+  view(yaw, pitch) {
+    const f = fitFor(yaw, pitch);
+    vel.yaw = vel.pitch = 0;
+    Object.assign(cam, { yaw, pitch, zoom: f.dist / FIT.dist, target: [...f.target] });
+    Object.assign(goal, structuredClone(cam));
+    lastInput = performance.now();
+    camDirty = true;
+    request();
+  },
+  outline() {
+    const size = (parts) => { const e = extent(cam.yaw, cam.pitch, parts); return [+(e.x1 - e.x0).toFixed(3), +(e.y1 - e.y0).toFixed(3)]; };
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (let i = 0; i < shellXYZ.length; i += 4) {
+      const p = project([shellXYZ[i], shellXYZ[i + 1], shellXYZ[i + 2]]);
+      x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+    }
+    return { cerebrum: size([0]), all: size([0, 1, 2]), px: [Math.round(x1 - x0), Math.round(y1 - y0)], box: [x0, y0, x1, y1].map(Math.round) };
+  },
+  labels: () => [...lobeEls].filter(([, el]) => !el.hidden).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), leader: leaderEls.get(l)?.style.display !== 'none' })) };
 const _draw = R ? R.draw.bind(R) : null;
 if (R) R.draw = (...a) => { frames++; if (!firstFrame) firstFrame = Math.round(performance.now()); return _draw(...a); };
