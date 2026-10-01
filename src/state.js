@@ -315,6 +315,10 @@ export class State {
       .map((s) => ({
         id: s.id, project: s.project, cwd: s.cwd, status: isStale(s, now) ? 'idle' : s.status,
         lastAt: s.lastAt, startedAt: s.startedAt, prompts: s.prompts, title: s.title || null, firstPrompt: s.firstPrompt || null,
+        // How much happened, so the dashboard can fold sessions that never did anything.
+        events: s.eventSeq || s.events.length,
+        toolCalls: Object.values(s.tools).reduce((n, t) => n + (t.count || 0), 0),
+        edits: Object.values(s.files).reduce((n, x) => n + (x.edits || 0), 0),
       }));
   }
 }

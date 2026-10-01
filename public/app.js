@@ -237,7 +237,6 @@ const isLive = (st) => st === 'running' || st === 'working';
 // ---------- sessions: grouped by project, keyed buttons updated in place ----------
 // Groups are ordered by their latest activity. The selected session's project opens by itself (and stays open
 // until you close it); closed sessions older than 2 h fold under "Show closed (N)" inside their group.
-const CLOSED_AFTER_MS = 2 * 60 * 60 * 1000;
 const sessionRows = new Map();  // session id -> row
 const groupEls = new Map();     // project -> group
 const groupOpen = new Map();    // project -> open, once decided (by you, or by selecting one of its sessions)
@@ -268,6 +267,15 @@ function placeRows(ul, rows) {
     prev = r.li;
   }
 }
+// Where a session goes in its group: shown; folded under "Show closed" (closed over 2 h ago, or one that never got
+// going but did call a tool); or skipped (never got going and did nothing: no prompt, no title, at most 3 events,
+// no tool call, no edit). A working or waiting session is always shown.
+function sessionFold(s, st, now) {
+  if (st === 'working' || st === 'waiting') return 'show';
+  const quiet = !s.title && !s.firstPrompt && (s.events ?? Infinity) <= 3;
+  if (quiet) return (s.toolCalls || 0) + (s.edits || 0) > 0 ? 'closed' : 'skip';
+  return st === 'ended' && now - s.lastAt > 2 * 60 * 60 * 1000 ? 'closed' : 'show';
+}
 const sessionTitle = (s) => s.title || (s.firstPrompt ? (s.firstPrompt.length > 42 ? s.firstPrompt.slice(0, 40).trimEnd() + '…' : s.firstPrompt) : T.noTitle);
 function renderSessions() {
   const names = [...new Set(sessions.map((s) => s.project))].sort((a, b) => a.localeCompare(b));
@@ -281,8 +289,13 @@ function renderSessions() {
   const now = Date.now();
   const today = new Date(now).toDateString();
   const byProject = new Map();
-  for (const s of visible) (byProject.get(s.project) || byProject.set(s.project, []).get(s.project)).push(s);
-  const latest = (list) => Math.max(...list.map((s) => s.lastAt));
+  for (const s of visible) {
+    const st = sessionStatus(s);
+    const fold = s.id === selectedId ? 'show' : sessionFold(s, st, now);
+    if (fold === 'skip') continue; // never did anything: not listed, not counted
+    (byProject.get(s.project) || byProject.set(s.project, []).get(s.project)).push({ s, st, fold });
+  }
+  const latest = (list) => Math.max(...list.map((x) => x.s.lastAt));
   const groups = [...byProject].sort((a, b) => latest(b[1]) - latest(a[1]));
   const selProject = (current?.id === selectedId ? current?.project : null) || sessions.find((s) => s.id === selectedId)?.project;
   if (selProject && !groupOpen.has(selProject)) groupOpen.set(selProject, true);
@@ -297,14 +310,12 @@ function renderSessions() {
     const open = groupOpen.get(project) === true;
     setAttr(g.head, 'aria-expanded', String(open));
     setText(g.name, project);
-    setText(g.count, list.length);
     const recent = [];
     const closed = [];
-    for (const s of list) {
+    for (const { s, st, fold } of list) {
       let r = sessionRows.get(s.id);
       if (!r) { r = sessionRow(s.id); sessionRows.set(s.id, r); }
       seenRows.add(s.id);
-      const st = sessionStatus(s);
       const live = st === 'working' || st === 'waiting';
       setClass(r.dot, 'dot ' + st);
       setText(r.name, sessionTitle(s));
@@ -316,8 +327,9 @@ function renderSessions() {
       setAttr(r.btn, 'aria-current', String(s.id === selectedId));
       const tip = `${s.title || s.firstPrompt || T.noTitle}\n${T.status[st] || st} · ${s.cwd || ''}`;
       if (r.btn.title !== tip) r.btn.title = tip;
-      (st === 'ended' && now - s.lastAt > CLOSED_AFTER_MS && s.id !== selectedId ? closed : recent).push(r);
+      (fold === 'closed' ? closed : recent).push(r);
     }
+    setText(g.count, recent.length); // what the group shows; the folded ones are counted in "Show closed (N)"
     placeRows(g.list, recent);
     placeRows(g.closedList, closed);
     const showClosed = closedOpen.has(project);

@@ -24,3 +24,19 @@ test('files panel: the shortest parent path that tells same-named files apart', 
   assert.deepEqual(shortPaths(['/r/a.js', '/r/a.js']), ['r/a.js', 'r/a.js'], 'identical paths end without looping');
   assert.deepEqual(shortPaths([]), []);
 });
+
+test('sessions rail: sessions that never got going are folded or skipped, live ones always shown', () => {
+  const sessionFold = lift('sessionFold');
+  const now = Date.UTC(2026, 9, 1, 12);
+  const base = { title: null, firstPrompt: null, events: 2, toolCalls: 0, edits: 0, lastAt: now - 60_000 };
+  assert.equal(sessionFold(base, 'ended', now), 'skip', 'no prompt, no title, 2 events, nothing done');
+  assert.equal(sessionFold({ ...base, toolCalls: 1 }, 'ended', now), 'closed', 'a tool call folds it instead');
+  assert.equal(sessionFold({ ...base, edits: 1 }, 'idle', now), 'closed');
+  assert.equal(sessionFold({ ...base, events: 4 }, 'ended', now), 'show', 'more than 3 events');
+  assert.equal(sessionFold({ ...base, firstPrompt: 'Fix it' }, 'ended', now), 'show');
+  assert.equal(sessionFold({ ...base, title: 'Billing' }, 'ended', now), 'show');
+  assert.equal(sessionFold(base, 'working', now), 'show', 'a running session is never hidden');
+  assert.equal(sessionFold(base, 'waiting', now), 'show');
+  assert.equal(sessionFold({ ...base, firstPrompt: 'x', lastAt: now - 3 * 3600_000 }, 'ended', now), 'closed', 'closed more than 2 h ago');
+  assert.equal(sessionFold({ ...base, firstPrompt: 'x', lastAt: now - 3 * 3600_000 }, 'idle', now), 'show', 'idle, not closed');
+});
