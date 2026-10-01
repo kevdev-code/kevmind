@@ -6,6 +6,7 @@ let view = 'live';
 let memProjects = [];
 let memKey = null;
 let memReport = null;
+let memExp = null; // the Experience panel's data: what the MCP tools would serve, and how calls went
 let memError = null;
 let memTimer = null;
 const memOpen = new Set(); // rows whose details are expanded
@@ -40,10 +41,15 @@ async function loadMemory() {
     }
     renderMemoryView();
     if (!memKey) return;
-    const res = await fetch(`/api/memory/project?key=${encodeURIComponent(memKey)}`);
+    const key = memKey;
+    const [res, exp] = await Promise.all([
+      fetch(`/api/memory/project?key=${encodeURIComponent(key)}`),
+      fetch(`/api/experience?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
+    ]);
     const body = await res.json();
     memError = res.ok ? null : body.error || String(res.status);
     if (res.ok && body.key === memKey) memReport = body;
+    if (key === memKey) memExp = exp;
   } catch (e) {
     memError = String(e.message || e);
   }
@@ -54,6 +60,7 @@ function selectMemProject(key) {
   if (key === memKey) return;
   memKey = key;
   memReport = null;
+  memExp = null;
   memOpen.clear();
   memPathsOpen.clear();
   renderMemoryView();
@@ -90,6 +97,7 @@ function renderMemoryView() {
   $('memName').textContent = p ? p.name : '—';
   $('memRoot').textContent = p ? p.root : '';
   $('memUpdated').textContent = memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hourCycle: 'h23' })) : p ? T.memLoading : '';
+  renderExperience(memExp);
   if (!r) {
     for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) $(id).innerHTML = '';
     $('memClaudeDir').textContent = '';
@@ -251,6 +259,44 @@ function renderTables(r) {
       detail: () => noteDetail(n),
     })),
   );
+}
+
+// What the experience tools would tell Claude about this project today, and whether calls help. Shown whether
+// or not the tools are on, so it's clear when turning them on is worth it.
+function renderExperience(x) {
+  const el = $('memExperience');
+  if (!x) { el.innerHTML = ''; return; }
+  if (!x.known) { el.innerHTML = `<p class="empty small">${esc(T.expUnknown)}</p>`; return; }
+  const { gate, coChange, readFirst, failures, hotspots } = x.preview;
+  const th = x.thresholds;
+  const m = x.measure;
+  const ok = (b) => `<b class="${b ? 'ok' : 'off'}">${esc(b ? T.expMet : T.expNotYet)}</b>`;
+  const list = (items, fn) => (items.length ? `<ul class="exp-list">${items.map((i) => `<li>${fn(i)}</li>`).join('')}</ul>` : `<p class="empty small">${esc(T.expNone)}</p>`);
+  const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+  el.innerHTML = `
+    <div class="exp-gate">
+      <div>${esc(T.expSessions(gate.sessions, gate.days, th.minSessions, th.minSessionDays))} ${ok(gate.sessionOk)}</div>
+      <div>${esc(T.expCommits(gate.commits, th.minGitCommits))} ${ok(gate.gitOk)}</div>
+      <p class="muted">${esc(T.expHowTo)}</p>
+    </div>
+    <h3 class="exp-h">${esc(T.expWouldServe)}</h3>
+    <div class="exp-grid">
+      <section><h4>${esc(T.expCoChange)}</h4>${list(coChange, (p) => `<code>${esc(p.a)}</code> + <code>${esc(p.b)}</code><small>${esc([p.s && T.expBySessions(p.s.n, p.s.of, p.s.last), p.g && T.expByGit(p.g.n, p.g.of, p.g.last)].filter(Boolean).join(' · '))}</small>`)}</section>
+      <section><h4>${esc(T.expReadFirst)}</h4>${list(readFirst, (p) => `<code>${esc(p.first)}</code> → <code>${esc(p.file)}</code><small>${esc(T.expBySessions(p.n, p.of))}</small>`)}</section>
+      <section><h4>${esc(T.expFailures)}</h4>${list(failures, (f) => `<code>${esc(f.fam)}</code> ${esc(f.sig)}<small>${esc(T.expFix(f.sessions, f.fix.n, f.fix.name))}</small>`)}</section>
+      <section><h4>${esc(T.expHotspots)}</h4>${list(hotspots, (h) => `<code>${esc(h.file)}</code><small>${esc(T.expHot(h.changes, h.fixes))}</small>`)}</section>
+    </div>
+    <h3 class="exp-h">${esc(T.expUse)}</h3>
+    <div class="stats exp-stats">
+      <div><b>${m.calls}</b><span>${esc(T.expCalls)}</span></div>
+      <div><b>${esc(fmtK(m.tokens))}</b><span>${esc(T.expTokens)}</span></div>
+      <div><b>${m.calls ? pct(m.noData / m.calls) : '—'}</b><span>${esc(T.expNoData)}</span></div>
+      <div><b>${pct(m.followRate)}</b><span>${esc(T.expFollow(m.withSuggestions))}</span></div>
+      <div><b>${pct(m.baseline)}</b><span>${esc(T.expBaseline(m.baselineSample))}</span></div>
+    </div>
+    <p class="muted">${esc(T.expVerdict[m.verdict])}</p>
+    ${m.last.length ? `<ul class="exp-list">${m.last.map((c) => `<li><code>${esc(c.tool)}</code> ${esc(new Date(c.ts).toLocaleString(lang))} · ≈ ${c.tokens} tok${c.noData ? ` · ${esc(T.expNoDataShort)}` : ''}${
+      c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`;
 }
 
 // A table whose rows expand to show metadata, headings, links and cited files (never the note's body).

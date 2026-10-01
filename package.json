@@ -1,6 +1,6 @@
 {
   "name": "kevmind",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Watch Claude Code work in real time: parallel agents, tool calls, files and errors. Local-only, zero dependencies.",
   "type": "module",
   "bin": {
@@ -20,6 +20,7 @@
     "hooks",
     "public",
     "scripts",
+    "mcp",
     ".claude-plugin",
     "README.md",
     "README.es.md",

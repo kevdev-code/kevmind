@@ -7,16 +7,20 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { State, baseName } from './state.js';
 import { Tailer } from './transcript.js';
-import { listProjects, scanProject, projectRoot } from './memory.js';
+import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
+import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
+import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
-export const LOG_FILE = path.join(DATA_DIR, 'events.jsonl');
 export const SPOOL_FILE = path.join(DATA_DIR, 'spool.jsonl'); // written by hooks/send.js while the server is down
 export const PID_FILE = path.join(DATA_DIR, 'server.pid');
 export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
+export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read by mcp/server.js
 const REPLAY_MS = 24 * 60 * 60 * 1000;
+const EXPERIENCE_TICK_MS = 15_000;
+const GIT_REFRESH_MS = 10 * 60_000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const DEDUPE_MS = 3000;
@@ -39,12 +43,14 @@ export function makeDedupe(windowMs = DEDUPE_MS) {
 
 export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env.KEVMIND_DEV === '1' } = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  const migrated = migrateLegacyLog(DATA_DIR);
+  if (migrated) console.log(`  Split events.jsonl into monthly logs (${migrated} events).`);
   const state = new State();
   const isDuplicate = makeDedupe();
   replay(state, isDuplicate);
 
   const clients = new Set();
-  const log = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+  const log = logWriter(DATA_DIR);
   ingestSpool(state, log, isDuplicate);
   // New on every start; the page reloads when a reconnect hands it a different one.
   const bootId = Math.random().toString(36).slice(2);
@@ -73,6 +79,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   tailTranscripts();
   const tailTimer = setInterval(tailTranscripts, 1000);
   const memory = memoryApi(state);
+  const experience = experienceKeeper();
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -87,7 +94,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
         const ts = Date.now();
         if (isDuplicate(payload, ts)) return;
         const clean = redact(payload);
-        log.write(JSON.stringify({ ts, e: clean }) + '\n');
+        log.write(ts, JSON.stringify({ ts, e: clean }));
         const s = state.apply(clean, ts);
         if (s) broadcast({ type: 'session', session: state.summary(s), sessions: state.list() });
       });
@@ -120,6 +127,13 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       );
       return;
     }
+    if (url.pathname === '/api/experience') {
+      experience.panel(url.searchParams.get('key')).then(
+        (r) => json(res, r),
+        (err) => json(res, { error: String(err?.message || err) }, 500),
+      );
+      return;
+    }
 
     if (url.pathname === '/api/sessions') return json(res, state.list());
 
@@ -148,6 +162,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   function shutdown() {
     watcher?.close();
     clearInterval(tailTimer);
+    experience.stop();
     for (const res of clients) res.end();
     log.end();
     try { fs.unlinkSync(PID_FILE); } catch { /* never written */ }
@@ -168,45 +183,50 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   return server;
 }
 
-// Rewrites events.jsonl keeping only the lines whose event passes `keep`. Returns how many were dropped.
+// Rewrites the logs keeping only the events that pass `keep`. Returns how many were dropped.
+// The experience aggregate is derived from the logs, so it is dropped and rebuilt.
 export function clearEvents(keep) {
-  if (!fs.existsSync(LOG_FILE)) return 0;
-  const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').filter(Boolean);
-  const kept = lines.filter((l) => { try { return keep(JSON.parse(l).e); } catch { return false; } });
-  fs.writeFileSync(LOG_FILE, kept.map((l) => l + '\n').join(''));
-  return lines.length - kept.length;
+  migrateLegacyLog(DATA_DIR);
+  const dropped = rewriteLogs(DATA_DIR, keep);
+  if (dropped) fs.rmSync(EXPERIENCE_FILE, { force: true });
+  return dropped;
 }
 
 export function clearAll() {
-  for (const f of [LOG_FILE, SPOOL_FILE]) fs.rmSync(f, { force: true });
+  for (const name of logFiles(DATA_DIR)) fs.rmSync(path.join(DATA_DIR, name), { force: true });
+  for (const f of [SPOOL_FILE, EXPERIENCE_FILE]) fs.rmSync(f, { force: true });
 }
 
 export const isDemoEvent = (e) => String(e?.session_id || '').startsWith('demo-') || baseName(e?.cwd || '') === 'demo-kevmind';
 
-// Memory tab data. The project list and "last read" come from the whole event log (not only the 24 h in memory),
+// Memory tab data. The project list and "last read" come from all the logs (not only the 24 h in memory),
 // read incrementally; what loaded comes from the InstructionsLoaded events of the project's latest session.
 function memoryApi(state) {
-  const usage = { offset: 0, rest: '', since: null, cwds: new Map(), reads: [] };
+  const usage = { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [] };
   const refresh = () => {
-    let size;
-    try { size = fs.statSync(LOG_FILE).size; } catch { return; }
-    if (size < usage.offset) Object.assign(usage, { offset: 0, rest: '', since: null, cwds: new Map(), reads: [] });
-    if (size === usage.offset) return;
-    const fd = fs.openSync(LOG_FILE, 'r');
-    const buf = Buffer.alloc(size - usage.offset);
-    fs.readSync(fd, buf, 0, buf.length, usage.offset);
-    fs.closeSync(fd);
-    usage.offset = size;
-    const lines = (usage.rest + buf.toString('utf8')).split('\n');
-    usage.rest = lines.pop();
-    for (const line of lines) {
-      let o;
-      try { o = JSON.parse(line); } catch { continue; }
-      const e = o.e || {};
-      usage.since = Math.min(usage.since ?? o.ts, o.ts);
-      if (e.cwd) usage.cwds.set(e.cwd, Math.max(usage.cwds.get(e.cwd) || 0, o.ts));
-      if (e.hook_event_name === 'PreToolUse' && e.tool_name === 'Read' && e.cwd && e.tool_input?.file_path) {
-        usage.reads.push({ ts: o.ts, root: projectRoot(e.cwd), path: e.tool_input.file_path });
+    for (const name of logFiles(DATA_DIR)) {
+      const file = path.join(DATA_DIR, name);
+      let size;
+      try { size = fs.statSync(file).size; } catch { continue; }
+      const from = usage.offsets[name] || 0;
+      if (size < from) { Object.assign(usage, { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [] }); return refresh(); }
+      if (size === from) continue;
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      fs.closeSync(fd);
+      usage.offsets[name] = size;
+      const lines = ((usage.rest[name] || '') + buf.toString('utf8')).split('\n');
+      usage.rest[name] = lines.pop();
+      for (const line of lines) {
+        let o;
+        try { o = JSON.parse(line); } catch { continue; }
+        const e = o.e || {};
+        usage.since = Math.min(usage.since ?? o.ts, o.ts);
+        if (e.cwd) usage.cwds.set(e.cwd, Math.max(usage.cwds.get(e.cwd) || 0, o.ts));
+        if (e.hook_event_name === 'PreToolUse' && e.tool_name === 'Read' && e.cwd && e.tool_input?.file_path) {
+          usage.reads.push({ ts: o.ts, root: projectRoot(e.cwd), path: e.tool_input.file_path });
+        }
       }
     }
   };
@@ -234,6 +254,54 @@ function memoryApi(state) {
   return { projects, report };
 }
 
+// Keeps ~/.kevmind/experience.json current for the MCP server: new log lines every 15 s, each project's git
+// history at most every 10 min, written atomically and only when something changed.
+function experienceKeeper() {
+  let agg = emptyAggregate();
+  try { agg = revive(JSON.parse(fs.readFileSync(EXPERIENCE_FILE, 'utf8'))); } catch { /* first run: built from the logs */ }
+  let running = null;
+  const tick = () => {
+    if (running) return running;
+    running = (async () => {
+      const now = Date.now();
+      const before = JSON.stringify(agg.logs) + Object.values(agg.projects).map((p) => p.git?.at || 0).join();
+      if (!(await updateFromLogs(agg, DATA_DIR, now))) {
+        agg = emptyAggregate();
+        await updateFromLogs(agg, DATA_DIR, now);
+      }
+      for (const proj of Object.values(agg.projects)) if (!proj.git || now - proj.git.at > GIT_REFRESH_MS) await refreshGit(proj, now);
+      const after = JSON.stringify(agg.logs) + Object.values(agg.projects).map((p) => p.git?.at || 0).join();
+      if (after !== before || !fs.existsSync(EXPERIENCE_FILE)) atomicWrite(EXPERIENCE_FILE, JSON.stringify(agg));
+    })().catch((e) => console.error(`  experience: ${e.message}`)).finally(() => { running = null; });
+    return running;
+  };
+  tick();
+  const timer = setInterval(tick, EXPERIENCE_TICK_MS);
+  // The dashboard panel: what the tools would serve today and how calls have gone, even while the tools are off.
+  const panel = async (key) => {
+    await tick();
+    const proj = agg.projects[key];
+    if (!proj) return { known: false, thresholds: THRESHOLDS };
+    const now = Date.now();
+    return { known: true, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
+  };
+  return { panel, stop: () => clearInterval(timer) };
+}
+
+// Events of a project, for `kevmind clear --project`: matched by project folder name or path.
+export function projectMatcher(nameOrPath) {
+  const wanted = String(nameOrPath).toLowerCase();
+  const cache = new Map();
+  return (e) => {
+    if (!e?.cwd) return false;
+    if (!cache.has(e.cwd)) {
+      const root = projectRoot(e.cwd);
+      cache.set(e.cwd, !!root && (path.basename(root).toLowerCase() === wanted || keyOf(root) === keyOf(nameOrPath)));
+    }
+    return cache.get(e.cwd);
+  };
+}
+
 function json(res, obj, code = 200) {
   res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));
 }
@@ -241,11 +309,8 @@ function json(res, obj, code = 200) {
 // Rebuilds state from the last 24 h of events on startup. Logs written before the duplicate filter
 // existed may hold repeats, so the filter applies here too.
 function replay(state, isDuplicate) {
-  if (!fs.existsSync(LOG_FILE)) return;
   const since = Date.now() - REPLAY_MS;
-  const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
-  for (const line of lines) {
-    if (!line) continue;
+  for (const line of readSince(DATA_DIR, since)) {
     try {
       const { ts, e } = JSON.parse(line);
       if (ts >= since && !isDuplicate(e, ts)) state.apply(e, ts);
@@ -268,7 +333,7 @@ function ingestSpool(state, log, isDuplicate) {
   for (const { ts, e } of items) {
     if (isDuplicate(e, ts)) continue;
     const clean = redact(e);
-    log.write(JSON.stringify({ ts, e: clean }) + '\n');
+    log.write(ts, JSON.stringify({ ts, e: clean }));
     if (ts >= since) state.apply(clean, ts);
   }
 }

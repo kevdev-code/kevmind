@@ -24,7 +24,7 @@ const STOP = new Set(('the and for not but are was with from that this when what
   'gotcha project feedback reference note notes user memory nota').split(' '));
 
 export const tokensOf = (text) => Math.round(text.length / 4); // an estimate: characters divided by four
-const keyOf = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+export const keyOf = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
 const slash = (p) => p.split(path.sep).join('/');
 const lineCount = (t) => (t ? t.split(/\r?\n/).length - (/\r?\n$/.test(t) ? 1 : 0) : 0);
 const norm = (s) => s.trim().toLowerCase().replace(/_/g, '-');

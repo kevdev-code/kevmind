@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startServer, clearEvents, clearAll, isDemoEvent, DATA_DIR, SERVER_LOG, PID_FILE } from '../src/server.js';
+import { startServer, clearEvents, clearAll, isDemoEvent, projectMatcher, DATA_DIR, SERVER_LOG, PID_FILE } from '../src/server.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -25,6 +25,7 @@ KevMind · watch Claude Code work in real time
   kevmind stop                 Stop the running dashboard
   kevmind restart [--dev]      Stop it if running, then start it again the same way (--dev adds file watching)
   kevmind clear                Delete demo sessions from the stored events
+  kevmind clear --project <n>  Delete one project's history (by folder name or path)
   kevmind clear --all          Delete all stored data (asks first; --yes skips the question)
   kevmind install [--force]    Add the hooks to ~/.claude/settings.json (refuses when the plugin is installed)
   kevmind uninstall            Remove KevMind's hooks
@@ -54,6 +55,9 @@ switch (cmd) {
   }
   case 'clear': {
     const all = flags.has('--all');
+    // --project <name> or --project=<name>: one project's history, matched by folder name or path.
+    const project = [...flags].find((f) => f.startsWith('--project='))?.slice(10) || (flags.has('--project') ? args[0] : null);
+    if (flags.has('--project') && !project) fail('Usage: kevmind clear --project <name or path>');
     if (all && !flags.has('--yes') && !(await confirm(`\n  Delete ALL KevMind data in ${DATA_DIR}? [y/N] `))) {
       console.log('\n  Nothing deleted.\n');
       break;
@@ -62,6 +66,10 @@ switch (cmd) {
     if (all) {
       clearAll();
       console.log(`\n  ✓ All data deleted from ${DATA_DIR}.\n`);
+    } else if (project) {
+      const isProject = projectMatcher(project);
+      const n = clearEvents((e) => !isProject(e));
+      console.log(n ? `\n  ✓ Removed ${n} event${n === 1 ? '' : 's'} of project ${project}.\n` : `\n  No events of project ${project}.\n`);
     } else {
       const n = clearEvents((e) => !isDemoEvent(e));
       console.log(`\n  ✓ Removed ${n} demo event${n === 1 ? '' : 's'}.\n`);

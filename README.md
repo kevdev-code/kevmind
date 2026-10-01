@@ -80,12 +80,32 @@ Simulates a session with three parallel agents. It shows up as project `demo-kev
 ```
 Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ local server :4777 ──SSE──▶ web dashboard
                                                                 │
-                                                                └─▶ ~/.kevmind/events.jsonl
+                                                                └─▶ ~/.kevmind/events-YYYY-MM.jsonl (one file per month)
 ```
 
 1. Claude Code fires hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, etc.).
 2. `send.js` forwards the event to the local server. If the server isn't running, it spools the event to `~/.kevmind/spool.jsonl` and exits: **it never blocks Claude**. The server ingests the spool at its next start, so nothing is lost while the dashboard is down.
 3. The server masks secrets (tokens, keys, `.env` lines), stores the event and streams it to the browser.
+
+## Experience tools for Claude (optional)
+
+KevMind can also answer Claude's questions about a project's history, through three MCP tools built into the plugin. They are **off by default**; turn them on in `/config` under the kevmind plugin ("Experience tools for Claude").
+
+- `file_context(paths)`: files that usually change or get read together with the given ones.
+- `file_history(path)`: how often sessions read and edited a file, by which agent types, and how often git changed or fixed it.
+- `known_failures(command)`: failures this project has seen before, and what came before the next success.
+
+The evidence comes from two places: KevMind's own record of past Claude Code sessions, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
+
+Every answer:
+
+- cites its source and counts, such as "sessions: 3 of 4, last 2026-10-21" or "git: 6 of 9 commits"; session evidence ranks above git;
+- stays under about 400 tokens;
+- says "No data:" instead of guessing. Nothing is served below fixed thresholds, for example "edited together in at least 3 sessions on 2 different days and in half the sessions that edited the file". All thresholds live in `src/experience.js`.
+
+KevMind only reports history. It never parses code, indexes symbols or writes memory, so it works alongside Serena (for code structure) and Claude's auto memory. The answers come from `~/.kevmind/experience.json`, which the dashboard keeps up to date, and typically take under 40 ms.
+
+The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
 
 ## Privacy
 
@@ -95,6 +115,7 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
 - The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`.
+- The experience tools collect nothing new: they read the already-masked event log and `git log`, only for the project Claude is working in, and never write. `npx kevmind clear --project <name>` removes one project's history.
 
 ## Configuration
 
@@ -117,9 +138,12 @@ Combine them to record a single project: `http://localhost:4777/?project=KevMind
 ## Clearing data
 
 ```bash
-npx kevmind clear          # removes demo sessions from ~/.kevmind/events.jsonl
-npx kevmind clear --all    # wipes everything (asks first; --yes skips the question)
+npx kevmind clear                     # removes demo sessions from the event logs
+npx kevmind clear --project OdonMind  # removes one project's history (by folder name or path)
+npx kevmind clear --all               # wipes everything (asks first; --yes skips the question)
 ```
+
+Events are kept in one file per month (`events-YYYY-MM.jsonl`, months in UTC). A single `events.jsonl` from an earlier version is split into monthly files the first time the dashboard starts.
 
 If the dashboard is running, it is stopped and started again so it reflects the change.
 

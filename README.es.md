@@ -67,7 +67,7 @@ No necesitas mantenerlo abierto tú: cuando empieza una sesión de Claude Code y
 
 `npx kevmind start --background` lo abre separado de la terminal, así sigue corriendo cuando la cierras (salida en `~/.kevmind/server.log`). `npx kevmind stop` cierra el panel en ejecución; `npx kevmind restart` lo cierra si está corriendo y lo vuelve a abrir tal como estaba.
 
-`npx kevmind clear` borra las sesiones de demo de los datos guardados; `npx kevmind clear --all` borra todo (pregunta antes; `--yes` omite la pregunta).
+`npx kevmind clear` borra las sesiones de demo de los datos guardados; `npx kevmind clear --project <nombre>` borra el historial de un proyecto (por nombre de carpeta o ruta); `npx kevmind clear --all` borra todo (pregunta antes; `--yes` omite la pregunta). Los eventos se guardan en un archivo por mes (`events-AAAA-MM.jsonl`, meses en UTC); el `events.jsonl` único de versiones anteriores se divide por meses la primera vez que arranca el panel.
 
 ### Probar sin Claude Code
 
@@ -86,6 +86,26 @@ Dos parámetros en la URL dejan fuera de pantalla a los demás proyectos:
 
 Combínalos para grabar un solo proyecto: `http://localhost:4777/?project=KevMind&focus=latest`.
 
+## Herramientas de experiencia para Claude (opcional)
+
+KevMind también puede responder preguntas de Claude sobre la historia de un proyecto, con tres herramientas MCP incluidas en el plugin. Vienen **apagadas**; actívalas en `/config`, en el plugin kevmind ("Experience tools for Claude").
+
+- `file_context(paths)`: archivos que suelen cambiar o leerse junto con los indicados.
+- `file_history(path)`: cuántas sesiones leyeron y editaron un archivo, con qué tipos de agente, y cuántas veces git lo cambió o lo corrigió.
+- `known_failures(command)`: fallos que el proyecto ya vio y qué pasó antes del siguiente éxito.
+
+La evidencia viene de dos fuentes: el registro de KevMind de sesiones pasadas de Claude Code y el historial de git del proyecto (`git log` de solo lectura, últimos 365 días o 2,000 commits). Git solo basta para empezar, así que sirven desde el primer día en cualquier repositorio.
+
+Cada respuesta:
+
+- cita su fuente y sus conteos, como "sessions: 3 of 4" o "git: 6 of 9 commits"; la evidencia de sesiones va antes que la de git;
+- se queda por debajo de unos 400 tokens;
+- dice "No data:" en vez de adivinar. Nada por debajo de umbrales fijos se entrega, por ejemplo "editados juntos en al menos 3 sesiones, en 2 días distintos y en la mitad de las sesiones que editaron el archivo". Todos los umbrales están en `src/experience.js`.
+
+KevMind solo reporta historia: nunca analiza código, no indexa símbolos y no escribe memoria, así que convive con Serena (para la estructura del código) y con la memoria automática de Claude. Las respuestas salen de `~/.kevmind/experience.json`, que el panel mantiene al día, y suelen tardar menos de 40 ms.
+
+El panel **Experiencia**, en la pestaña Memoria, muestra lo que se entregaría hoy aunque las herramientas estén apagadas. Cuando Claude las usa, muestra las llamadas, los tokens entregados y qué tan seguido se abrió después un archivo sugerido, comparado con una referencia. Si tras 50 llamadas no supera la referencia, el panel recomienda apagarlas.
+
 ## Privacidad
 
 - Todo se queda en `~/.kevmind/`. No hay telemetría.
@@ -94,6 +114,7 @@ Combínalos para grabar un solo proyecto: `http://localhost:4777/?project=KevMin
 - Si el panel está apagado, el hook enmascara los eventos antes de guardarlos en `spool.jsonl`.
 - La pestaña Memoria solo lee. Muestra metadatos, descripciones y encabezados, nunca el cuerpo completo de las notas. De la configuración global de Serena solo lee la lista de proyectos, nunca el `auth_secret`. Git se usa solo con `git ls-tree`, de solo lectura.
 - De las transcripciones solo se guardan extractos de hasta 200 caracteres, enmascarados como todo lo demás. Las firmas del razonamiento nunca se leen y la transcripción nunca se copia.
+- Las herramientas de experiencia no recolectan nada nuevo: leen el registro de eventos ya enmascarado y `git log`, solo del proyecto en el que trabaja Claude, y nunca escriben. `npx kevmind clear --project <nombre>` borra el historial de un proyecto.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).
 
