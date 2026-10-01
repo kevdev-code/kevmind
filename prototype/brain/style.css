@@ -48,9 +48,9 @@
    labels and panels legible over additive light. The renderer's palette (app.js) uses the same values. */
 .well {
   --command: oklch(72% 0.012 285); /* the renderer's command color */
-  --night: oklch(12.5% 0.014 285);
-  --night-center: oklch(17.5% 0.03 288);
-  --night-veil: oklch(12.5% 0.014 285 / 0.55);
+  --night: oklch(12.5% 0.028 280);
+  --night-center: oklch(22% 0.055 280);
+  --night-veil: oklch(12.5% 0.028 280 / 0.82); /* labels stay readable over the light */
   --veil: oklch(15.5% 0.016 285);
 }
 
@@ -121,23 +121,32 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .legend .dot.read { background: var(--read); } .legend .dot.edit { background: var(--edit); }
 .legend .dot.error { background: var(--error); } .legend .dot.command { background: var(--command); }
 .legend .dot.sel { background: var(--accent); }
+.legend .dot.agent { background: radial-gradient(circle, #fff 0 32%, var(--text-2) 48%); }
+.legend .wide { grid-column: 1 / -1; }
+.legend.regions { grid-template-columns: 1fr; gap: 3px; }
+.legend.regions small { color: var(--text-3); font-size: var(--fs-xs); margin-left: 2px; }
 .proto-box .row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-2); }
 
 /* the well */
 .well { position: relative; overflow: hidden; min-height: 0; color: var(--text);
   background: radial-gradient(ellipse 70% 60% at 52% 46%, var(--night-center), var(--night) 70%); }
-.well canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
-.well canvas.dragging { cursor: grabbing; }
-.well canvas.over { cursor: pointer; }
+#brain { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#brain.dragging { cursor: grabbing; }
+#brain.over { cursor: pointer; }
+#brain { transition: opacity 160ms var(--ease-out); }
+#brain.fading { opacity: 0; }
 .labels, .chips { position: absolute; inset: 0; pointer-events: none; }
 .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: var(--fs-xs); line-height: 1.2; color: var(--text-2); text-shadow: 0 0 6px var(--night), 0 0 2px var(--night); } /* no layer per label: they only move with the camera */
-.lbl small { color: var(--text-3); font-size: var(--fs-xs); margin-left: 4px; }
-.lbl.region { padding: 0 4px; border-radius: var(--r-sm); background: var(--night-veil); }
-.lbl.lobe { color: var(--text-3); font-weight: 600; }
-.lbl.lobe b { color: var(--text-2); font-weight: 600; }
-.lbl.region.on { color: var(--text); }
+.lbl.lobe { display: flex; flex-direction: column; align-items: center; padding: 2px 8px 3px; border-radius: var(--r-sm); background: var(--night-veil); }
+.lbl.lobe small { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.25; }
+.lbl.lobe .groups { display: flex; gap: 5px; align-items: baseline; line-height: 1.3; }
+.lbl.lobe b { font-size: var(--fs-sm); font-weight: 600; }
+.lbl.lobe i { font-style: normal; color: var(--text-3); font-size: var(--fs-xs); }
+.lbl.lobe.far { opacity: 0.6; } /* on the far side of the brain */
+.lbl.lobe.on small { color: var(--text-2); }
 .chip { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--fs-xs); padding: 2px 8px 2px 6px; border-radius: var(--r-pill); background: var(--veil); border: 1px solid var(--border); color: var(--text); will-change: transform; transition: opacity var(--dur-2) var(--ease-out); }
 .chip .who { font-weight: 600; }
+.chip .dot { background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }
 .chip .k.read { color: var(--read); } .chip .k.edit { color: var(--edit); } .chip .k.error { color: var(--error); } .chip .k.command { color: var(--command); }
 .chip .k.think { color: var(--text-2); }
 .chip code { color: var(--text-2); font-size: var(--fs-xs); } /* 12 px floor: not 0.92em of 12 px */
@@ -146,12 +155,26 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .lbl.under { opacity: 0; } /* instant: a fade here re-rasterizes labels every time a chip passes */
 
 .overlay { position: absolute; z-index: 2; }
-.overlay.tl { top: var(--sp-3); left: var(--sp-4); display: flex; align-items: baseline; gap: var(--sp-3); pointer-events: none; }
+.overlay.tl { top: var(--sp-3); left: var(--sp-4); pointer-events: none; }
+.titlerow { display: flex; align-items: baseline; gap: var(--sp-3); }
 .title { margin: 0; font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.005em; }
 .overlay.tr { top: var(--sp-3); right: var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); }
 .overlay.br { right: var(--sp-4); bottom: var(--sp-4); }
-.overlay.bl { left: var(--sp-4); bottom: var(--sp-3); }
-.hint { margin: 0; font-size: var(--fs-xs); color: var(--text-3); pointer-events: none; }
+.overlay.bl { left: var(--sp-4); bottom: var(--sp-4); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+.hint { margin: 2px 0 0; font-size: var(--fs-xs); color: var(--text-3); pointer-events: none; }
+.trace { width: 250px; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-2) var(--sp-3); --trace-line: var(--text-2); --trace-think: color-mix(in oklch, var(--text-3) 38%, transparent); }
+.trace-top { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); }
+.trace-top b { font-weight: 600; }
+.trace-top small { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); }
+.trace .dot { background: var(--text-3); }
+.trace.working .dot { background: var(--working); } .trace.working b { color: var(--working); }
+.trace.thinking .dot { background: var(--text); }
+.trace.idle b { color: var(--text-3); }
+#eeg { display: block; width: 100%; height: 40px; margin-top: 6px; }
+.trace-legend { display: flex; gap: var(--sp-3); margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); }
+.trace-legend span::before { content: ''; display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; background: var(--trace-line); }
+.trace-legend .tk::before { height: 8px; background: var(--trace-think); }
+.seg.camera { background: var(--veil); box-shadow: 0 0 0 1px var(--border); }
 
 .now { width: 300px; max-width: calc(100% - 32px); background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
 .now-top { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
@@ -160,19 +183,19 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .status.working .dot { background: var(--working); }
 .nowproj { font-weight: 600; font-size: var(--fs-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; font-size: var(--fs-xs); padding: 2px 0; }
-.agents .sw { width: 10px; height: 10px; border-radius: 50%; }
+.agents .sw { width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }
 .agents .lb { font-weight: 600; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents .st { color: var(--text-3); }
 .agents .act { grid-column: 2 / 4; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents li.done .lb, .agents li.done .act { color: var(--text-3); }
 
 .card { position: absolute; z-index: 3; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); color: var(--text); }
-.focus { top: 56px; right: var(--sp-4); width: 300px; max-height: calc(100% - 140px); overflow-y: auto; scrollbar-width: thin; }
+.focus { top: 56px; right: var(--sp-4); width: 300px; max-height: calc(100% - 56px - var(--now-h, 0px) - var(--sp-4) - var(--sp-3)); overflow-y: auto; scrollbar-width: thin; }
 .focus .x { float: right; }
 .tip { position: absolute; z-index: 4; left: 0; top: 0; pointer-events: none; max-width: 320px; background: var(--veil); border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); }
 .nname { font-family: var(--mono); font-weight: 350; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
-.nkind { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-xs); margin-top: 2px; }
-.nkind svg { width: 12px; height: 12px; }
+.nkind { color: var(--text-2); font-size: var(--fs-xs); margin-top: 2px; } /* inline, so the line wraps as text */
+.nkind svg { width: 12px; height: 12px; vertical-align: -1px; margin-right: 6px; }
 .npath { font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); color: var(--text-3); overflow-wrap: anywhere; margin-top: 2px; }
 .nstats { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
 .nstats b { color: var(--text); font-weight: 600; }
@@ -193,9 +216,17 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
   .filters[open] > summary { margin-bottom: var(--sp-2); }
   .well { height: 78vh; min-height: 480px; }
   .hint { display: none; }
+  .now { bottom: var(--sp-3); }
   .focus { top: auto; bottom: var(--sp-3); right: var(--sp-3); left: var(--sp-3); width: auto; max-height: 50%; }
   .now { width: auto; left: var(--sp-3); right: var(--sp-3); }
   .overlay.tl { flex-direction: column; gap: 0; }
+}
+@media (max-width: 640px) {
+  .trace { width: 190px; padding: 4px var(--sp-2); }
+  .trace .trace-top small, .trace-legend { display: none; }
+  #eeg { height: 22px; margin-top: 2px; }
+  .overlay.bl { bottom: auto; top: 64px; left: var(--sp-3); }
+  .seg.camera { flex-wrap: wrap; }
 }
 @media (max-width: 520px) {
   .top { padding: var(--sp-2) var(--sp-3); }

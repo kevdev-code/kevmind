@@ -231,7 +231,7 @@ export function makeGraph({ seed = 7, target = 0, now = Date.now() } = {}) {
 }
 
 // A replay of one working session in demo-clinic: Claude plus three parallel subagents, ~80 s, then idle.
-// Each event: { at (ms), agent, kind: start | stop | read | edit | command | think | error, node, text }.
+// Each event: { at (ms), agent, kind: start | stop | read | edit | command | think | error, node, text, tokens }.
 export function makeReplay(graph, { seed = 11 } = {}) {
   const r = rng(seed);
   const P = 'demo-clinic';
@@ -250,7 +250,8 @@ export function makeReplay(graph, { seed = 11 } = {}) {
   ];
   const script = (agent, at, steps) => {
     for (const [kind, node, gap] of steps) {
-      events.push({ at, agent, kind, node, text: node != null ? graph.nodes[node].name : '' });
+      // tokens: thinking tokens of a think event (the transcript gives them per message), for the activity trace
+      events.push({ at, agent, kind, node, text: node != null ? graph.nodes[node].name : '', tokens: kind === 'think' ? 150 + r.int(1200) : 0 });
       at += gap ?? 900 + r.int(1500);
     }
     return at;

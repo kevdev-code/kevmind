@@ -58,6 +58,10 @@
           <ul class="checks" id="edgeList"></ul>
         </section>
         <section>
+          <h2 class="head" data-i18n="regions"></h2>
+          <ul class="legend regions" id="regionLegend"></ul>
+        </section>
+        <section>
           <h2 class="head" data-i18n="colors"></h2>
           <ul class="legend" id="kindLegend"></ul>
         </section>
@@ -84,19 +88,33 @@
       <div class="chips" id="chips" aria-hidden="true"></div>
 
       <div class="overlay tl">
-        <h1 class="title" id="wellTitle" data-i18n="viewBrain"></h1>
-        <span class="muted" id="counts"></span>
+        <div class="titlerow">
+          <h1 class="title" id="wellTitle" data-i18n="viewBrain"></h1>
+          <span class="muted" id="counts"></span>
+        </div>
+        <p class="hint" id="hint" data-i18n="hint"></p>
       </div>
       <div class="overlay tr">
         <button type="button" class="switch" role="switch" id="animSwitch" aria-checked="true"><span></span><b data-i18n="anim"></b></button>
-        <div class="seg icons" role="group">
-          <button type="button" id="zoomIn" data-i18n-label="zoomIn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-          <button type="button" id="zoomOut" data-i18n-label="zoomOut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
-          <button type="button" id="resetView" data-i18n-label="resetView"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6"/></svg></button>
-        </div>
       </div>
 
       <aside class="card focus" id="focusCard" hidden aria-live="polite"></aside>
+
+      <div class="overlay bl">
+        <div class="trace" id="trace">
+          <div class="trace-top"><span class="dot"></span><b id="traceState"></b><small data-i18n="trace"></small></div>
+          <div class="trace-legend" id="traceLegend"></div>
+          <canvas id="eeg" role="img"></canvas>
+        </div>
+        <div class="seg camera" role="group" data-i18n-label="camera">
+          <button type="button" id="zoomIn" data-i18n-label="zoomIn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button type="button" id="zoomOut" data-i18n-label="zoomOut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+          <button type="button" id="fitBtn" data-i18n="fit"></button>
+          <button type="button" id="relayoutBtn" data-i18n="relayout"></button>
+          <button type="button" id="followBtn" aria-pressed="false" data-i18n="follow"></button>
+          <button type="button" id="rotateBtn" aria-pressed="false" data-i18n="rotate"></button>
+        </div>
+      </div>
 
       <div class="overlay br now" id="now">
         <div class="now-top">
@@ -105,7 +123,6 @@
         </div>
         <ul class="agents" id="agentList"></ul>
       </div>
-      <p class="overlay bl hint" id="hint" data-i18n="hint"></p>
 
       <div class="tip" id="tip" hidden></div>
       <p class="nogl" id="noGl" hidden data-i18n="noWebgl"></p>
