@@ -355,20 +355,23 @@ function renderBriefing(b) {
     <p class="brief-how">${esc(T.briefHow)}</p>`;
   const preview = `<div class="brief-preview"><h3 class="exp-h">${esc(T.briefPreview)}</h3>${briefPreview === null
     ? (shared ? '' : `<button type="button" class="btn" id="briefPreviewBtn">${esc(T.briefPreviewBtn)}</button>`)
-    : briefPreview.text ? `<pre class="brief-text">${esc(briefPreview.text)}</pre>` : `<p class="none">${esc(T.briefNothing)}</p>`}</div>`;
+    : briefPreview.text ? `${briefPreview.map ? `<small>${esc(T.briefPreviewMap)}</small>` : ''}<pre class="brief-text">${esc(briefPreview.text)}</pre>` : `<p class="none">${esc(T.briefNothing)}</p>`}</div>`;
   const starts = b.starts.length ? `<ul class="brief-starts">${b.starts.map((s) => {
     const head = `${esc(new Date(s.ts).toLocaleString(lang, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }))} · ${esc(T.briefSource[s.source] || s.source)} · <span class="arm-${esc(s.arm)}">${esc(T.briefArm[s.arm] || s.arm)}</span>${s.chars ? ` · ${esc(T.briefChars(s.chars))}` : ''}`;
     if (!s.text) return `<li>${head}</li>`;
-    return `<li><details data-ts="${s.ts}"${briefOpen.has(s.ts) ? ' open' : ''}><summary>${head}</summary><small>${esc(s.arm === 'shown' ? T.briefReceived : T.briefWouldHave)}</small><pre class="brief-text">${esc(s.text)}</pre></details></li>`;
+    return `<li><details data-ts="${s.ts}"${briefOpen.has(s.ts) ? ' open' : ''}><summary>${head}</summary><small>${esc(s.arm === 'shown' || s.arm === 'map' ? T.briefReceived : T.briefWouldHave)}</small><pre class="brief-text">${esc(s.text)}</pre></details></li>`;
   }).join('')}</ul>` : `<p class="none">${esc(T.briefNoStarts)}</p>`;
   const c = b.compare, num = (v, k) => (v == null ? '—' : k === 'rereadShare' || k === 'followed' ? `${Math.round(v * 100)}%` : k.startsWith('tokens') ? fmtK(Math.round(v)) : String(v));
-  const rows = Object.keys(T.briefRows).map((k) => `<tr><td>${esc(T.briefRows[k])}</td><td>${esc(num(c.shown[k], k))}</td><td>${esc(num(c.withheld[k], k))}</td></tr>`).join('');
-  const verdict = c.verdict === 'collecting' ? T.briefVerdict.collecting(c.shown.n, c.withheld.n, c.minPerArm) : T.briefVerdict[c.verdict](c.tokens.toEdit, c.tokens.total);
+  // v2 (with the code map) gets its own column and verdict while it is an arm, or once it has measured starts.
+  const v2 = c.map && (b.mapArm || c.map.n > 0);
+  const rows = Object.keys(T.briefRows).map((k) => `<tr><td>${esc(T.briefRows[k])}</td><td>${esc(num(c.shown[k], k))}</td><td>${esc(num(c.withheld[k], k))}</td>${v2 ? `<td>${esc(num(c.map[k], k))}</td>` : ''}</tr>`).join('');
+  const say = (v, s, tk) => (v === 'collecting' ? T.briefVerdict.collecting(s.n, c.withheld.n, c.minPerArm) : T.briefVerdict[v](tk.toEdit, tk.total));
+  const verdicts = [say(c.verdict, c.shown, c.tokens), ...(v2 ? [`${T.briefMapLabel} ${say(c.mapVerdict, c.map, c.mapTokens)}`] : [])];
   patchHTML(el, `${toggle}${preview}
     <h3 class="exp-h">${esc(T.briefStarts)}</h3>${starts}
     <h3 class="exp-h">${esc(T.briefCompare)}</h3>
-    <table class="tbl brief-cmp"><thead><tr>${T.briefCols.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
-    <p class="verdict">${esc(verdict)}</p><p class="verdict">${esc(T.briefTokensNote)}</p>`);
+    <table class="tbl brief-cmp${v2 ? ' v2' : ''}"><thead><tr>${[...T.briefCols, ...(v2 ? [T.briefColMap] : [])].map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+    ${verdicts.map((v) => `<p class="verdict">${esc(v)}</p>`).join('')}<p class="verdict">${esc(T.briefTokensNote)}</p>`);
 }
 $('memBriefing').addEventListener('toggle', (e) => {
   const d = e.target.closest?.('details[data-ts]');

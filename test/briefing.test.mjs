@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { emptyAggregate, ingest } from '../src/experience.js';
-import { BRIEF, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from '../src/briefing.js';
+import { BRIEF, ARMS, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from '../src/briefing.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'kevmind.js');
@@ -83,6 +83,41 @@ test('half the starts are shown and half withheld, the same way every time', () 
   assert.equal(armOf('abc', 0), armOf('abc', 0));
 });
 
+test('with the code map on, a third of the starts get v2; with it off, the split is the same as before', () => {
+  const counts = { withheld: 0, shown: 0, map: 0 };
+  for (let i = 0; i < 6000; i++) counts[armOf(`session-${i}`, i % 3, ARMS.v2)]++;
+  for (const [arm, n] of Object.entries(counts)) assert.ok(n > 1850 && n < 2150, `${arm}: ${n} of 6000`);
+  for (let i = 0; i < 50; i++) assert.equal(armOf(`s-${i}`, 0, ARMS.v1), armOf(`s-${i}`, 0), 'v1 alone keeps its old assignment');
+});
+
+test('v2: the same briefing first, then the code map: the area of the last edits, key files, names the code dropped', async () => {
+  const { dir, root } = project();
+  try {
+    const now = Date.now(), agg = history(root, now);
+    // A small map: cart, price and tax form the Cart area; util is shared by most of the code.
+    const map = {
+      root, files: ['backend/src/total.ts', 'src/cart.js', 'src/price.js', 'src/tax.js', 'src/util.js'],
+      imports: [new Set(), new Set([2, 4]), new Set([4]), new Set([4]), new Set()],
+      importers: [new Set(), new Set(), new Set([1]), new Set(), new Set([1, 2, 3])],
+      hub: [false, false, false, false, true], pr: [0.05, 0.1, 0.3, 0.2, 0.5],
+      areas: [{ name: 'Cart', files: [1, 2, 3], top: [2, 1] }], areaOf: new Map([[1, 0], [2, 0], [3, 0]]),
+    };
+    const report = { problems: [{ code: 'stale_name', tier: 'suggestion', file: '~/.claude/projects/demo-shop/memory/cart_notes.md', params: { count: 1, items: [{ path: 'legacyTotal', lines: [3], date: '2026-09-29' }] } }] };
+    const v1 = briefingText(await gatherFacts({ agg, root, name: 'demo-shop', sid: 's4', source: 'startup', now, git, toolsOn: true, report }));
+    const v2 = briefingText(await gatherFacts({ agg, root, name: 'demo-shop', sid: 's4', source: 'startup', now, git, toolsOn: true, report, map }));
+    const v1Lines = v1.text.split('\n').slice(0, -1); // all but the tools line
+    assert.deepEqual(v2.text.split('\n').slice(0, v1Lines.length), v1Lines, 'v2 says everything v1 says, first');
+    assert.match(v2.text, /- Code map \(from imports and exports, approximate\): the last edits are in the Cart area \(3 files; core `src\/price\.js`, `src\/cart\.js`\)\./);
+    assert.match(v2.text, /- Most depended-on files: `src\/price\.js` \(imported by 1\); shared by most of the code: `util\.js` \(3\)\./, 'a file nothing imports is not a key file');
+    assert.match(v2.text, /- `memory\/cart_notes\.md` names `legacyTotal`, which no code file has anymore \(git: last in the code on 2026-09-29\)\./);
+    assert.match(v2.text, /file_context, file_history, known_failures and code_map tools/);
+    assert.ok(!/code_map/.test(v1.text) && !/Code map/.test(v1.text));
+    assert.ok(v2.text.length <= BRIEF.maxChars);
+    assert.ok(!/\b(you should|you must|always|never|do not|don't|make sure|remember to|please)\b/i.test(v2.text), v2.text);
+    assert.ok(v2.items.includes('file:src/price.js'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('what followed a start: time, steps, re-reads, repeated failures and tokens until the first edit', () => {
   const { dir, root } = project();
   try {
@@ -112,6 +147,10 @@ test('the verdict is about tokens: saves, costs, unclear, or still collecting', 
   assert.equal(few.verdict, 'collecting');
   assert.deepEqual([few.shown.n, few.withheld.n], [5, BRIEF.minPerArm]);
   assert.deepEqual(compare([...many('shown', 80_000, 20_000), ...many('withheld', 100_000, 25_000)]).tokens, { toEdit: -0.2, total: -0.2 });
+  // v2 has its own verdict against the same withheld starts.
+  const three = compare([...many('shown', 97_000, 20_000), ...many('withheld', 100_000, 25_000), ...many('map', 70_000, 15_000)]);
+  assert.deepEqual([three.verdict, three.mapVerdict, three.map.n], ['unclear', 'saves', BRIEF.minPerArm]);
+  assert.deepEqual(three.mapTokens, { toEdit: -0.4, total: -0.3 });
 });
 
 const runHook = (input, port) => spawnSync(process.execPath, [HOOK], { input, env: { ...process.env, KEVMIND_PORT: String(port) }, encoding: 'utf8', timeout: 5000 });
@@ -154,6 +193,7 @@ test('the server: off by default; on, every start is recorded with its text, and
   const { dir, root } = project();
   const home = path.join(dir, 'kevmind');
   fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'config.json'), '{"experienceTools": true}'); // the code map is on, so v2 is an arm too
   // Past work in the logs before the server starts, so its aggregate has something to say.
   const now = Date.now(), month = new Date(now).toISOString().slice(0, 7);
   const lines = [['s1', now - 2 * 3600_000, 'UserPromptSubmit', {}], ['s1', now - 2 * 3600_000 + MIN, 'PreToolUse', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/cart.js') }, tool_use_id: 'e1' }]]
@@ -175,13 +215,15 @@ test('the server: off by default; on, every start is recorded with its text, and
     for (const [sid, a] of answers) {
       const rec = recs.find((x) => x.sid === sid);
       assert.match(rec.text, /Last session with edits: .* Its last edits: `src\/cart\.js`\./, 'the text is recorded either way');
-      assert.equal(a.text, rec.arm === 'shown' ? rec.text : '', `${rec.arm}: Claude gets the text only when shown`);
+      assert.equal(a.text, rec.arm === 'withheld' ? '' : rec.text, `${rec.arm}: Claude gets the text unless it is withheld`);
     }
-    assert.ok(recs.some((x) => x.arm === 'shown') && recs.some((x) => x.arm === 'withheld'));
+    assert.ok(['shown', 'withheld', 'map'].every((arm) => recs.some((x) => x.arm === arm)), recs.map((x) => x.arm).join());
     const panel = JSON.parse((await req(`${base}/api/briefing?key=${encodeURIComponent(recs[0].key)}`)).body);
     assert.equal(panel.on, true);
     assert.equal(panel.starts.length, 8, 'the panel lists the last eight starts, each with its text');
     assert.equal(panel.compare.verdict, 'collecting');
+    assert.equal(panel.mapArm, true);
+    assert.equal(panel.compare.mapVerdict, 'collecting');
     // Only JSON from this PC: a simple cross-site form post is refused.
     assert.equal((await new Promise((resolve) => { const r = http.request(`${base}/api/briefing`, { method: 'POST', headers: { 'content-type': 'text/plain' } }, (res) => { res.resume(); resolve(res.statusCode); }); r.end('{}'); })), 403);
   } finally {

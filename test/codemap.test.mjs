@@ -122,7 +122,7 @@ test('Memory tab: stale names (not in negated sentences) and scripts no package.
   assert.deepEqual(asked.sort(), ['legacyHelper'], 'a name in a negated sentence is never asked about');
   const stale = r.problems.find((p) => p.code === 'stale_name');
   assert.equal(stale.tier, 'suggestion');
-  assert.deepEqual(stale.params.items, [{ path: 'legacyHelper', lines: [2] }]);
+  assert.deepEqual(stale.params.items, [{ path: 'legacyHelper', lines: [2], date: '2026-09-29' }]);
   assert.match(stale.fix, /`legacyHelper` \(line 2\), last changed in abc1234 on 2026-09-29: "cleanup"/);
   const scripts = r.problems.filter((p) => p.code === 'missing_script');
   assert.equal(scripts.length, 1, 'README has only scripts that exist');

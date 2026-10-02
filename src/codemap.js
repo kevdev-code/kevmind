@@ -267,6 +267,32 @@ export function connection(map, a, b) {
   return { kind: shared.length ? 'shared' : 'none', shared };
 }
 
+// What area k leans on and who leans on it, the top 3 of each with import counts: shared infrastructure it imports
+// ([file, n]), other areas it imports from and areas that import it ([area, n]).
+export function areaLinks(map, k) {
+  const set = new Set(map.areas[k].files), shared = new Map(), dependsOn = new Map(), usedBy = new Map();
+  const bump = (m, x) => m.set(x, (m.get(x) || 0) + 1);
+  for (const i of set) {
+    for (const j of map.imports[i]) {
+      if (set.has(j)) continue;
+      if (map.hub[j]) bump(shared, j);
+      else if (map.areaOf.has(j)) bump(dependsOn, map.areaOf.get(j));
+    }
+    for (const j of map.importers[i]) if (!set.has(j) && map.areaOf.has(j) && map.areaOf.get(j) !== k) bump(usedBy, map.areaOf.get(j));
+  }
+  const top = (m) => [...m].sort((x, y) => y[1] - x[1]).slice(0, 3);
+  return { shared: top(shared), dependsOn: top(dependsOn), usedBy: top(usedBy) };
+}
+
+// Key files: the most depended-on files that are not shared infrastructure (PageRank), and the shared ones by importers.
+export function keyFiles(map, n = 3) {
+  const all = map.files.map((f, i) => i);
+  return {
+    key: all.filter((i) => !map.hub[i]).sort((x, y) => map.pr[y] - map.pr[x]).slice(0, n),
+    hubs: all.filter((i) => map.hub[i]).sort((x, y) => map.importers[y].size - map.importers[x].size).slice(0, n),
+  };
+}
+
 // A file by path (relative to the project or absolute), or undefined.
 export function fileIndex(map, p) {
   if (p == null) return undefined;
@@ -378,25 +404,15 @@ export async function answerCodeMap(map, name, args = {}, hist = async () => '')
     const q = String(args.area).toLowerCase();
     const a = map.areas.find((x) => x.name.toLowerCase() === q) || map.areas.find((x) => x.name.toLowerCase().includes(q)) || map.areas.find((x) => x.folder && x.folder.toLowerCase().startsWith(q.replace(/\/+$/, '')));
     if (!a) return `No data: no area of ${name} is called \`${args.area}\`. Ask with no arguments for the list.\n${TRUST}`;
-    const k = map.areas.indexOf(a), set = new Set(a.files);
-    const out = new Map(), shared = new Map(), users = new Map();
-    for (const i of a.files) for (const j of map.imports[i]) {
-      if (set.has(j)) continue;
-      if (map.hub[j]) shared.set(j, (shared.get(j) || 0) + 1);
-      else { const o = map.areaOf.get(j); if (o != null) out.set(o, (out.get(o) || 0) + 1); }
-    }
-    for (const i of a.files) for (const j of map.importers[i]) { const o = map.areaOf.get(j); if (!set.has(j) && o != null && o !== k) users.set(o, (users.get(o) || 0) + 1); }
-    const top = (m) => [...m].sort((x, y) => y[1] - x[1]).slice(0, 3);
+    const { shared, dependsOn, usedBy } = areaLinks(map, map.areas.indexOf(a));
     const lines = [`Area ${a.name}: ${a.files.length} files${a.folder ? ` under \`${a.folder}\`` : ''}, ${a.inside} imports inside, ${a.outside} to other files.`,
       `- Core: ${list(a.top.map((i) => map.files[i]))}.`];
-    if (shared.size) lines.push(`- Uses shared: ${top(shared).map(([j]) => `\`${base(map.files[j])}\``).join(', ')}.`);
-    if (out.size) lines.push(`- Depends on: ${top(out).map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
-    if (users.size) lines.push(`- Used by: ${top(users).map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
+    if (shared.length) lines.push(`- Uses shared: ${shared.map(([j]) => `\`${base(map.files[j])}\``).join(', ')}.`);
+    if (dependsOn.length) lines.push(`- Depends on: ${dependsOn.map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
+    if (usedBy.length) lines.push(`- Used by: ${usedBy.map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
     return capped(lines, TRUST);
   }
-  const all = map.files.map((f, i) => i);
-  const key = all.filter((i) => !map.hub[i]).sort((x, y) => map.pr[y] - map.pr[x]).slice(0, 3);
-  const hubs = all.filter((i) => map.hub[i]).sort((x, y) => map.importers[y].size - map.importers[x].size).slice(0, 3);
+  const { key, hubs } = keyFiles(map);
   const lines = [`Code map of ${name}: ${map.files.length} code files${map.repos > 1 ? ` in ${map.repos} repos` : ''}, ${map.importers.reduce((n, s) => n + s.size, 0)} imports.`,
     `- Key files: ${key.map((i) => `\`${map.files[i]}\` (imported by ${map.importers[i].size})`).join(', ')}.`];
   if (hubs.length) lines.push(`- Shared infrastructure (imported by ${map.hubAt}+ files): ${hubs.map((i) => `\`${base(map.files[i])}\` (${map.importers[i].size})`).join(', ')}.`);

@@ -7,11 +7,13 @@
 //
 // Every start is measured: half of them get the briefing and half don't (by a hash of the session and the start), and
 // both are compared on what happened next, tokens included (from the session's transcript), so the Experience panel
-// can say whether showing it saves anything.
+// can say whether showing it saves anything. While the code map is on (with the experience tools), a third of the
+// starts get v2 instead: the same briefing plus lines from the code map, compared with the withheld starts the same way.
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { keyOf } from './memory.js';
 import { relPath, failures, partners, isShellError } from './experience.js';
+import { fileIndex, areaLinks, keyFiles } from './codemap.js';
 
 // Every limit in one place.
 export const BRIEF = {
@@ -37,9 +39,11 @@ function gitRead(cwd, args) {
   });
 }
 
-// Shown or withheld, half and half: a hash of the session and how many starts it had before this one.
-export function armOf(sid, n = 0) {
-  return crypto.createHash('sha1').update(`${sid}|${n}`).digest()[0] % 2 ? 'shown' : 'withheld';
+// Which arm a start falls in, in equal shares: a hash of the session and how many starts it had before this one.
+// 'withheld' and 'shown' (v1); with the code map on, also 'map' (v2: v1 plus the code map's lines).
+export const ARMS = { v1: ['withheld', 'shown'], v2: ['withheld', 'shown', 'map'] };
+export function armOf(sid, n = 0, arms = ARMS.v1) {
+  return arms[crypto.createHash('sha1').update(`${sid}|${n}`).digest()[0] % arms.length];
 }
 
 const when = (ts) => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ts);
@@ -79,8 +83,9 @@ const silent = (sig) => /^exit 1: $/.test(sig || '') || isShellError(sig);
 const RUNNER_RE = /^(npm|pnpm|yarn|bun|bunx|npx|node|deno|tsx|tsc|vitest|jest|eslint|python3?|py|pytest|pip|uv|ruff|mypy|cargo|go|make|cmake|dotnet|mvn|gradle|php|composer|artisan|docker|flutter|dart|swift|xcodebuild)\b/;
 
 // Everything the briefing may say, from the records. live: the server's session state (agents, replies) for sessions
-// of the last 24 h; report: the memory report when it is at hand (else no notes); git(repo, args): read-only git.
-export async function gatherFacts({ agg, root, name, sid, source, now = Date.now(), live = null, report = null, toolsOn = false, git = gitRead }) {
+// of the last 24 h; report: the memory report when it is at hand (else no notes); git(repo, args): read-only git;
+// map: the project's code map, for v2 only (else no map lines).
+export async function gatherFacts({ agg, root, name, sid, source, now = Date.now(), live = null, report = null, toolsOn = false, git = gitRead, map = null }) {
   const projs = projectsUnder(agg, root);
   const sessions = sessionsOf(projs);
   const facts = { name, now, source, last: null, git: [], failures: [], rereads: [], together: [], notes: [], stale: [], toolsOn, items: [] };
@@ -156,7 +161,28 @@ export async function gatherFacts({ agg, root, name, sid, source, now = Date.now
     facts.stale = (report.problems || []).filter((pr) => (pr.code === 'cited_file_missing' || pr.code === 'possibly_moved') && /[\\/]memory[\\/]|\.serena/.test(pr.file || '') && (pr.params?.items || []).some((it) => near(it.path)))
       .slice(0, BRIEF.maxStale).map((pr) => ({ note: noteName(pr.file), path: pr.params.items[0].path, moved: pr.code === 'possibly_moved' }));
   }
+  if (map) facts.map = mapFacts(map, facts, report);
   return facts;
+}
+
+// v2: the area the last edits fall in (most of them), what it leans on and who leans on it; the most depended-on
+// files; and notes that name code no code file has anymore (the Memory tab's stale names).
+function mapFacts(map, facts, report) {
+  const counts = new Map();
+  for (const f of facts.last?.edited || []) {
+    const a = map.areaOf.get(fileIndex(map, f));
+    if (a != null) counts.set(a, (counts.get(a) || 0) + 1);
+  }
+  const k = [...counts].sort((x, y) => y[1] - x[1])[0]?.[0];
+  let area = null;
+  if (k != null) {
+    const a = map.areas[k], l = areaLinks(map, k);
+    area = { name: a.name, files: a.files.length, core: a.top.slice(0, 2).map((i) => map.files[i]), dependsOn: l.dependsOn.slice(0, 2).map(([o]) => map.areas[o].name), usedBy: l.usedBy.slice(0, 2).map(([o]) => map.areas[o].name), others: counts.size - 1 };
+  }
+  const { key, hubs } = keyFiles(map);
+  const stale = (report?.problems || []).filter((pr) => pr.code === 'stale_name').slice(0, BRIEF.maxStale)
+    .map((pr) => ({ note: noteName(pr.file), names: pr.params.items.map((it) => it.path).slice(0, 3), date: pr.params.items[0].date }));
+  return { area, key: key.filter((i) => map.importers[i].size).map((i) => ({ file: map.files[i], by: map.importers[i].size })), hubs: hubs.map((i) => ({ file: map.files[i], by: map.importers[i].size })), stale };
 }
 const noteName = (p) => { const parts = String(p).split(/[\\/]/); return parts.slice(-2).join('/'); };
 
@@ -189,8 +215,18 @@ export function briefingText(f) {
   for (const t of f.together) lines.push(`${code(t.a)} usually changes with ${name([t.b])} (${t.how}).`);
   if (f.notes.length) lines.push(`Notes that cite these files: ${f.notes.map((n) => code(n.name)).join(', ')}.`);
   for (const s of f.stale) lines.push(`${code(s.note)} cites ${code(s.path)}, which ${s.moved ? 'seems to have moved' : 'is not in the working tree'}.`);
+  // v2 only, after v1's lines, so v2 says everything v1 says first.
+  if (f.map) {
+    const { area: a, key, hubs, stale } = f.map;
+    if (a) {
+      const links = [a.dependsOn.length && `uses ${a.dependsOn.join(', ')}`, a.usedBy.length && `is used by ${a.usedBy.join(', ')}`].filter(Boolean);
+      lines.push(`Code map (from imports and exports, approximate): the last edits are in the ${a.name} area (${plural(a.files, 'file')}; core ${name(a.core)})${links.length ? `, which ${links.join(' and ')}` : ''}.${a.others ? ` They also touch ${plural(a.others, 'other area')}.` : ''}`);
+    }
+    if (key.length) lines.push(`Most depended-on files: ${key.map((k) => `${name([k.file])} (imported by ${k.by})`).join(', ')}${hubs.length ? `; shared by most of the code: ${hubs.map((h) => `${code(h.file.split('/').pop())} (${h.by})`).join(', ')}` : ''}.`);
+    for (const s of stale) lines.push(`${code(s.note)} names ${list(s.names)}, which no code file has anymore (git: last in the code on ${s.date}).`);
+  }
   if (!lines.length) return { text: '', items: [] };
-  if (f.toolsOn) lines.push('KevMind\'s file_context, file_history and known_failures tools answer questions like these on demand.');
+  if (f.toolsOn) lines.push(`KevMind's file_context, file_history${f.map ? ', known_failures and code_map' : ' and known_failures'} tools answer questions like these on demand.`);
   const head = `KevMind's record of ${f.name}, from its past Claude Code sessions and git (${when(f.now)}):`;
   let text = '';
   for (const l of lines) { const next = `${text || head}\n- ${l}`; if (next.length > BRIEF.maxChars) break; text = next; }
@@ -232,8 +268,9 @@ export function measureStretch({ t0, t1, eps, prevReads = new Set(), known = new
 const median = (xs) => { const v = xs.filter((x) => x != null).sort((a, b) => a - b); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
 const mean = (xs) => { const v = xs.filter((x) => x != null); return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(2) : null; };
 
-// The Experience panel's comparison: per arm, the measured starts and their medians; the verdict is about tokens
-// first (until the first edit, and for the whole stretch), then behavior.
+// The Experience panel's comparison: per arm, the measured starts and their medians; each shown arm (v1 'shown',
+// v2 'map') gets its own verdict against the withheld starts, about tokens (until the first edit, and for the whole
+// stretch).
 export function compare(results) {
   const arm = (a) => {
     const rs = results.filter((r) => r.arm === a && r.m);
@@ -245,14 +282,18 @@ export function compare(results) {
       followed: median(rs.map((r) => r.m.followed)), chars: median(rs.map((r) => r.chars)),
     };
   };
-  const shown = arm('shown'), withheld = arm('withheld');
-  const change = (k) => (shown[k] == null || !withheld[k] ? null : +((shown[k] - withheld[k]) / withheld[k]).toFixed(2));
-  const tokens = { toEdit: change('tokensToEdit'), total: change('tokens') };
-  let verdict = 'collecting';
-  if (shown.n >= BRIEF.minPerArm && withheld.n >= BRIEF.minPerArm) {
-    const c = BRIEF.clearChange, both = [tokens.toEdit, tokens.total];
-    verdict = both.every((x) => x != null && x <= -c) ? 'saves' : both.every((x) => x != null && x >= c) ? 'costs' : 'unclear';
-  }
-  return { shown, withheld, tokens, verdict, minPerArm: BRIEF.minPerArm };
+  const shown = arm('shown'), withheld = arm('withheld'), map = arm('map');
+  const against = (s) => {
+    const change = (k) => (s[k] == null || !withheld[k] ? null : +((s[k] - withheld[k]) / withheld[k]).toFixed(2));
+    const tokens = { toEdit: change('tokensToEdit'), total: change('tokens') };
+    let verdict = 'collecting';
+    if (s.n >= BRIEF.minPerArm && withheld.n >= BRIEF.minPerArm) {
+      const c = BRIEF.clearChange, both = [tokens.toEdit, tokens.total];
+      verdict = both.every((x) => x != null && x <= -c) ? 'saves' : both.every((x) => x != null && x >= c) ? 'costs' : 'unclear';
+    }
+    return { tokens, verdict };
+  };
+  const v1 = against(shown), v2 = against(map);
+  return { shown, withheld, map, tokens: v1.tokens, verdict: v1.verdict, mapTokens: v2.tokens, mapVerdict: v2.verdict, minPerArm: BRIEF.minPerArm };
 }
 

@@ -11,7 +11,7 @@ import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
 import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
 import { writeConfig, experienceTools, pluginOption, briefingOn } from './config.js';
-import { BRIEF, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from './briefing.js';
+import { BRIEF, ARMS, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from './briefing.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
@@ -357,14 +357,18 @@ function memoryApi(state) {
   // The code map of each project whose report asked for it (one builder each: a builder keeps one project's files),
   // reused for a minute: reports come every 20 s while the Brain is open, and a warm rebuild costs ~250 ms on 1,000 files.
   // ponytail: kept for the server's life, about 10 MB for a project of 1,000 files; drop idle ones if that grows.
-  const mappers = new Map(); // key -> { build, map, at }
-  const codeNames = (root) => async (names) => {
+  const mappers = new Map(); // key -> { build, map, at, running }
+  const codeMap = (root) => {
     const k = keyOf(root);
-    if (!mappers.has(k)) mappers.set(k, { build: codeMapper(), map: null, at: 0 });
+    if (!mappers.has(k)) mappers.set(k, { build: codeMapper(), map: null, at: 0, running: null });
     const m = mappers.get(k);
-    if (!m.map || Date.now() - m.at > 60_000) { m.map = await m.build(root); m.at = Date.now(); }
-    return staleNames(m.map, names);
+    if (!m.running && (!m.map || Date.now() - m.at > 60_000)) {
+      m.running = m.build(root).then((x) => { Object.assign(m, { map: x, at: Date.now() }); return x; }, () => m.map).finally(() => { m.running = null; });
+    }
+    return m.running || Promise.resolve(m.map);
   };
+  const lastMap = (root) => mappers.get(keyOf(root))?.map || null;
+  const codeNames = (root) => async (names) => { const map = await codeMap(root); return map ? staleNames(map, names) : new Map(); };
   const cache = new Map();
   const report = async (key) => {
     const p = projects().find((x) => x.key === key);
@@ -386,7 +390,7 @@ function memoryApi(state) {
     promise.catch(() => cache.delete(key));
     return promise;
   };
-  return { projects, report, tools: () => { refresh(); return usage.tools; } };
+  return { projects, report, codeMap, lastMap, tools: () => { refresh(); return usage.tools; } };
 }
 
 // Keeps ~/.kevmind/experience.json current for the MCP server: new log lines every 15 s, each project's git
@@ -426,7 +430,8 @@ function experienceKeeper() {
 }
 
 // The session briefing (src/briefing.js): built when a session starts, recorded in briefings.jsonl whether it was
-// shown or withheld (half and half), and measured once the stretch that followed has settled.
+// shown or withheld (in equal shares; with the code map on, also shown as v2), and measured once the stretch that
+// followed has settled.
 function briefingKeeper(state, memory, experience) {
   // ponytail: every record is read at start and kept in memory (about 2 KB a start); rotate the file if it ever grows past a few MB.
   const records = [];
@@ -437,23 +442,25 @@ function briefingKeeper(state, memory, experience) {
     const p = memory.report(key).then((r) => { reports.set(key, r); return r; }).catch(() => null);
     return Promise.race([p, new Promise((r) => setTimeout(() => r(reports.get(key) || null), 150))]);
   };
-  const build = async (root, sid, source) => {
+  // v2's code map: the one at hand within 400 ms, else the last one built (a cold build goes on for the next start).
+  const mapOf = (root) => Promise.race([memory.codeMap(root), new Promise((r) => setTimeout(() => r(memory.lastMap(root)), 400))]);
+  const toolsOn = () => experienceTools(DATA_DIR, pluginOption()).on;
+  const build = async (root, sid, source, withMap, wait = false) => {
     const key = keyOf(root);
-    const facts = await gatherFacts({
-      agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions,
-      report: await reportOf(key), toolsOn: experienceTools(DATA_DIR, pluginOption()).on,
-    });
+    const [report, map] = await Promise.all([reportOf(key), withMap ? (wait ? memory.codeMap(root) : mapOf(root)) : null]);
+    const facts = await gatherFacts({ agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions, report, toolsOn: toolsOn(), map });
     return briefingText(facts);
   };
   async function serve(p) {
     const sid = p.session_id, source = p.source || 'startup', root = p.cwd ? projectRoot(p.cwd) : null;
     if (!briefingOn(DATA_DIR) || !sid || !root || !['startup', 'clear', 'compact'].includes(source)) return { text: '' };
-    const t0 = Date.now(), arm = armOf(sid, records.filter((r) => r.type === 'start' && r.sid === sid).length);
+    // v2 is an arm only while the code map is on (with the experience tools).
+    const t0 = Date.now(), arm = armOf(sid, records.filter((r) => r.type === 'start' && r.sid === sid).length, toolsOn() ? ARMS.v2 : ARMS.v1);
     const late = Symbol('late');
-    const b = await Promise.race([build(root, sid, source), new Promise((r) => setTimeout(() => r(late), BRIEF.budgetMs))]);
+    const b = await Promise.race([build(root, sid, source, arm === 'map'), new Promise((r) => setTimeout(() => r(late), BRIEF.budgetMs))]);
     if (b === late) { append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: 'late', chars: 0, items: [], text: '', ms: Date.now() - t0 }); return { text: '' }; }
     append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: b.text ? arm : 'empty', chars: b.text.length, items: b.items, text: b.text, ms: Date.now() - t0 });
-    return { text: b.text && arm === 'shown' ? b.text : '' };
+    return { text: b.text && arm !== 'withheld' ? b.text : '' };
   }
   // A start's stretch closes at the session's next start, once the session has been quiet for a while, or after
   // 8 h; then what followed is measured and recorded.
@@ -461,7 +468,7 @@ function briefingKeeper(state, memory, experience) {
     const now = Date.now(), agg = experience.now();
     const done = new Set(records.filter((r) => r.type === 'result').map((r) => `${r.sid}|${r.t0}`));
     for (const r of records) {
-      if (r.type !== 'start' || (r.arm !== 'shown' && r.arm !== 'withheld') || done.has(`${r.sid}|${r.ts}`)) continue;
+      if (r.type !== 'start' || !ARMS.v2.includes(r.arm) || done.has(`${r.sid}|${r.ts}`)) continue;
       const next = records.find((x) => x.type === 'start' && x.sid === r.sid && x.ts > r.ts);
       const projs = projectsUnder(agg, r.root), sessions = sessionsOf(projs), mine = sessions.get(r.sid);
       const last = Math.max(state.sessions.get(r.sid)?.lastAt || 0, mine?.last || 0);
@@ -481,13 +488,14 @@ function briefingKeeper(state, memory, experience) {
     panel(key) {
       const mine = records.filter((r) => r.key === key);
       const starts = mine.filter((r) => r.type === 'start').sort((x, y) => y.ts - x.ts).slice(0, 8).map(({ ts, source, arm, chars, text, ms }) => ({ ts, source, arm, chars, text, ms }));
-      return { on: briefingOn(DATA_DIR), starts, compare: compare(mine.filter((r) => r.type === 'result')) };
+      return { on: briefingOn(DATA_DIR), mapArm: toolsOn(), starts, compare: compare(mine.filter((r) => r.type === 'result')) };
     },
+    // What a session starting now would get: v2 while the code map is on (v1's lines come first in it).
     async preview(key) {
       const root = memory.projects().find((p) => p.key === key)?.root;
       if (!root) return { text: '', error: 'unknown project' };
-      const t0 = Date.now(), b = await build(root, 'preview', 'startup');
-      return { text: b.text, chars: b.text.length, ms: Date.now() - t0 };
+      const t0 = Date.now(), map = toolsOn(), b = await build(root, 'preview', 'startup', map, true);
+      return { text: b.text, chars: b.text.length, ms: Date.now() - t0, map };
     },
   };
 }

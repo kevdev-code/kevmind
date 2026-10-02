@@ -807,7 +807,7 @@ async function checkCitations(ctx, sources) {
       const stale = names.filter((c) => gone.has(c.name)).map((c) => ({ ...c, ...gone.get(c.name) }));
       if (!stale.length) continue;
       // A suggestion, not a warning: notes about a fixed bug name the removed code on purpose.
-      add('suggestion', 'stale_name', owner.display, { count: stale.length, cited: stale.slice(0, 3).map((c) => c.name).join(', '), items: stale.map((c) => ({ path: c.name, lines: c.lines })) },
+      add('suggestion', 'stale_name', owner.display, { count: stale.length, cited: stale.slice(0, 3).map((c) => c.name).join(', '), items: stale.map((c) => ({ path: c.name, lines: c.lines, date: c.date })) },
         `${owner.display} names ${stale.length === 1 ? 'something' : `${stale.length} things`} no code file in this project has anymore, though git shows ${stale.length === 1 ? 'it' : 'each'} in the code before:\n` +
         stale.map((c) => `- \`${c.name}\` (${lines(c)}), last changed in ${c.commit} on ${c.date}: "${c.subject}"`).join('\n') + '\n' +
         'If the passage tells the history on purpose (a fixed bug, a removed feature), leave it. Otherwise find what replaced each one (git show <commit> helps) and update the passage.');
