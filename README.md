@@ -149,7 +149,7 @@ Every new Claude Code session starts cold. With the briefing on, KevMind gives C
 - the files read in each of the last three sessions, and the files that usually change with the last edits;
 - memory notes that cite those files, and notes whose cited files are gone.
 
-It is at most 1,500 characters (about 350 tokens), written as facts, never as instructions. Nothing is written to your project, `CLAUDE.md` or Claude's memory. It is **off by default**:
+It is at most 1,500 characters (about 350 tokens), written as facts, never as instructions; when there is more to say, the least important lines go first, and the line naming KevMind's tools always stays. Nothing is written to your project, `CLAUDE.md` or Claude's memory. It is **off by default**:
 
 ```bash
 npx kevmind briefing on
@@ -159,7 +159,7 @@ or the switch in the Memory tab's **Session briefing** panel. It takes effect at
 
 **Does it help?** Half of the session starts get the briefing and half don't, so the two can be compared on what happens next: time and steps to the first edit, files read again, known failures repeated, and tokens (input, output and cache reads, from the session transcript) until the first edit and for the whole stretch. The panel shows the exact text each start received (or, when withheld, what it would have received), what a session starting now would get, and the comparison. After 20 measured starts on each side it says whether the briefing saves tokens; if it costs tokens instead, it tells you to turn it off.
 
-**v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the starts split in three: a third get the briefing above, a third get v2 (the same note, then lines from the code map: the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has), and a third get nothing. v2 gets its own column and its own verdict against the same starts without a briefing.
+**v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the half that gets the briefing gets v2: the same note plus lines from the code map (the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has). The comparison is then v2 against no briefing.
 
 ## View on your phone
 

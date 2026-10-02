@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Brain, and the session briefing (off by default, measured). 0.5.0 brought the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
+Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Brain, the session briefing (off by default, measured; v2 adds the code map), and the code map (`code_map`, with the experience tools). 0.5.0 brought the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -65,7 +65,7 @@ Known limits:
 - A session's last reply and its running subagents are known only for sessions of the last 24 hours (the server's live state); older ones get the rest.
 - Tokens come from the transcript tailer, which follows sessions of the last 24 hours: a start whose stretch settles later is measured without tokens.
 
-## Code map (unreleased)
+## Code map (0.5.1)
 
 `src/codemap.js` and the `code_map` MCP tool (behind the experience tools' switch, off by default): which files use an exported name, what a file exports and who imports it, how one file reaches another, key files (PageRank over imports, shared infrastructure apart) and areas (label propagation, named from folder and file names). Each file answer adds its history. The Memory tab also checks docs against code: `npm run` scripts no package.json has, and code names no code file has anymore that `git log -S` shows were there before.
 
@@ -77,15 +77,15 @@ Known limits:
 - A stale name in a note about a fixed bug is history on purpose, so it is a suggestion, not a warning. The first Memory report waits at most 1.5 s for `git log -S`; names it hasn't checked yet show up on a later report.
 - `bun run` and `yarn run` also run binaries and files: those are skipped. A monorepo with `workspaces` skips the script check.
 
-## Session briefing v2 (unreleased)
+## Session briefing v2 (0.5.1)
 
-While the code map is on, the starts split in three (`ARMS.v2`): withheld, v1, and v2, which is v1's text followed by the code map's lines: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. v1 stays exactly as it was, so its measurement goes on; v2 gets its own verdict against the same withheld starts. On the owner's projects the v2 preview is 1,407 and 1,475 characters and builds in 58 to 241 ms with the map warm.
+While the code map is on, the measurement is two arms (`ARMS.v2`): withheld against v2, which is v1's lines plus the code map's, ranked among them: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. With the map off it stays withheld against v1 (v1's code is kept). On the owner's projects the v2 preview is 1,318 to 1,407 characters and builds in 117 to 357 ms with the map warm.
 
 Known limits:
 
-- With three arms each verdict needs 20 measured starts per arm, so both take about a third longer than v1 alone.
+- Starts measured before 0.5.1 as v1 stay in their own column; new ones are v2 or withheld.
 - At a start the map gets 400 ms; a cold build (a project's first start after the dashboard starts) goes on in the background and that v2 start has no map lines.
-- Past 1,500 characters lines go from the end, so on a busy day the key files line, the stale names and the tools line are the first to go.
+- Past 1,500 characters the lowest-ranked lines go (stale names, stale paths, key files, notes, in that order); the tools line always stays.
 
 ## Next
 

@@ -2,27 +2,21 @@
 
 What changed in each version of KevMind. Dates are local. Versions before 0.5.0 are reconstructed from the commit history.
 
-## Unreleased
-
-### Added
-
-- **Code map (with the experience tools, off by default).** A fourth MCP tool, `code_map`, answers from the project's import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another through imports (or what both import), the key files, and the areas of files that work together. Answers about a file add its history (work episodes, git commits, files that change with it). It reads only those statements and the names in them, with a per-file cache, and never type-checks or edits; every answer says it is approximate, stays under 200 tokens, and points to Serena or a language server for exact references. On a real app of about 950 code files it matched TypeScript's own references for 50 names with a precision of 0.99 and a recall of 1.00.
-- **Memory tab: docs against code.** It flags `npm run` (or bun, pnpm, yarn) scripts in `CLAUDE.md`, notes and READMEs that no `package.json` of the project has, and, with the experience tools on, code names in backticks that no code file has anymore but git shows were there before (a suggestion: a note about a fixed bug names removed code on purpose). Names in a sentence that says they were removed, and names that were never in the code, are left alone.
-
-- **Session briefing v2, measured.** While the experience tools are on, a third of the session starts get v2: the same briefing followed by lines from the code map (the area the last edits fall in, with its core files and the areas around it; the most depended-on files; notes that name code the code no longer has). The Session briefing panel gets a third column and a second verdict, both against the same starts without a briefing. With the tools off nothing changes: half and half, as before.
-
-### Changed
-
-- The experience tools' rule widens from "history only" to "history, plus an approximate code map": KevMind reads import and export statements and names, read-only; exact references stay with Serena or a language server. The tools' descriptions say so.
-
 ## 0.5.1 (2026-10-02)
 
 ### Added
 
 - **All live sessions in the Brain.** A switch under the Brain's title shows either the session selected in Live or every live session at once (remembered; until you choose, all of them whenever more than one is live). Each session gets its own Claude, subagents, trails and animations; every Claude stays coral and every subagent silver, and each tag says its project ("Claude · demo-shop", "#2 · demo-shop"). The panel lists the sessions grouped by project with their agents and status: click one to follow it, hover it to light its project. A session waiting for your OK comes first in amber, and while only one session is shown, the others waiting are named under the panel. Live means working, waiting, or active in the last 10 minutes after a prompt; at most 6, the most recent first; a session that goes quiet fades out. A session in a project the brain doesn't have yet is added within seconds. On a phone the panel shows one line per session.
 - The benchmark harness plays three sessions in three projects at once (`?sessions`), and the benchmark measures it.
-- **Session briefing (optional, off by default).** At each session start (new, `/clear`, after a compaction) KevMind can give Claude a short note built only from its records and git: where the last session left off (last edits, a test or build still failing, subagents left running, the last reply), the last commit and uncommitted files per repo, recurring failures and their fixes, files read in every session, files that change together, notes that cite them. At most 1,500 characters, written as facts. `kevmind briefing on|off|status` or the Memory tab's switch.
+- **Session briefing (optional, off by default).** At each session start (new, `/clear`, after a compaction) KevMind can give Claude a short note built only from its records and git: where the last session left off (last edits, a test or build still failing, subagents left running, the last reply), the last commit and uncommitted files per repo, recurring failures and their fixes, files read in every session, files that change together, notes that cite them. At most 1,500 characters, written as facts; when there is more to say, the least important lines go first, and the line naming KevMind's tools always stays. `kevmind briefing on|off|status` or the Memory tab's switch.
 - **The briefing is measured.** Half the starts get it and half don't; the Memory tab compares them on time and steps to the first edit, re-reads, repeated failures, the files it named that were opened, and tokens from the transcript (until the first edit and per stretch), and says whether it saves tokens after 20 measured starts on each side. It shows the exact text each start received.
+- **Code map (with the experience tools, off by default).** A fourth MCP tool, `code_map`, answers from the project's import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another through imports (or what both import), the key files, and the areas of files that work together. Answers about a file add its history (work episodes, git commits, files that change with it). It reads only those statements and the names in them, with a per-file cache, and never type-checks or edits; every answer says it is approximate, stays under 200 tokens, and points to Serena or a language server for exact references. On a real app of about 950 code files it matched TypeScript's own references for 50 names with a precision of 0.99 and a recall of 1.00.
+- **Memory tab: docs against code.** It flags `npm run` (or bun, pnpm, yarn) scripts in `CLAUDE.md`, notes and READMEs that no `package.json` of the project has, and, with the experience tools on, code names in backticks that no code file has anymore but git shows were there before (a suggestion: a note about a fixed bug names removed code on purpose). Names in a sentence that says they were removed, and names that were never in the code, are left alone.
+- **Session briefing v2.** With the experience tools on, the briefing adds lines from the code map: the area the last edits fall in, with its core files and the areas around it; the most depended-on files; notes that name code the code no longer has. Then the measurement compares v2 (shown to half the starts) with no briefing (the other half); with the tools off, it compares v1 with no briefing.
+
+### Changed
+
+- The experience tools' rule widens from "history only" to "history, plus an approximate code map": KevMind reads import and export statements and names, read-only; exact references stay with Serena or a language server. The tools' descriptions say so.
 
 ### Fixed
 
