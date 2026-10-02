@@ -1,8 +1,9 @@
 // Brain benchmark over CDP in headless Edge. Never touches KevMind's data or port 4777: it serves the prototype
 // folder itself on a test port.
 //   node bench/run.mjs <out.json>
-// Per GPU mode (the machine's GPU, and SwiftShader as a worst case) and size (~600 and ~3,000 nodes): first frame,
-// the replay at 30 fps, a hidden tab, another view, animations off, Follow, idle, and Auto-rotate.
+// Per GPU mode (the machine's GPU, and SwiftShader as a worst case) and size (~600 and ~3,000 nodes): the intro (frames
+// drawn in it and the longest wait between two), first frame, the replay at 30 fps, a hidden tab, another view,
+// animations off, Follow, idle, and Auto-rotate. Everything after the intro loads with ?nointro.
 // The renderer comparison (Canvas 2D vs raw WebGL vs three.js) was run at commit e753723; see docs/BRAIN.md.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -55,7 +56,7 @@ async function sample(e, p, seconds) {
 
 const results = { runs: [] };
 const ONLY = process.env.ONLY; // e.g. ONLY=hw:0 to rerun one configuration
-for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 3000]].filter(([g, n]) => !ONLY || ONLY === `${g}:${n}`)) {
+for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 0], ['swiftshader', 3000]].filter(([g, n]) => !ONLY || ONLY === `${g}:${n}`)) {
   const e = await launch({ port: 9372, gpu });
   e.gpu = gpu;
   const p = await e.open('about:blank');
@@ -63,11 +64,20 @@ for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 3000]].filt
   await p.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   await p.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('kevmind.lang', 'en'); localStorage.removeItem('kevmind.brain.anim'); localStorage.removeItem('kevmind.brain.rotate'); } catch {}" });
   await p.send('Page.enable');
+  // The intro, on its own load: frames drawn while it plays (the cap is 30 fps) and the longest wait between two.
+  let intro = null;
+  if (process.env.INTRO !== '0') {
+    await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay${nodes ? `&nodes=${nodes}` : ''}` });
+    for (let i = 0; i < 300; i++) { await sleep(100); if (await p.eval('!!(window.__brain && __brain.intro && __brain.intro.done)').catch(() => false)) break; }
+    const st = await p.eval('JSON.stringify(__brain.introStats ? __brain.introStats() : null)');
+    intro = st === 'null' ? null : JSON.parse(st);
+    log(gpu, nodes, 'intro', JSON.stringify(intro));
+  }
   const t0 = Date.now();
-  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html${nodes ? `?nodes=${nodes}` : ''}` });
+  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?nointro${nodes ? `&nodes=${nodes}` : ''}` });
   for (let i = 0; i < 200; i++) { await sleep(100); if (await p.eval('!!(window.__brain && __brain.frames() > 0)').catch(() => false)) break; }
   const at = (s) => sleep(Math.max(0, s * 1000 - (Date.now() - t0)));
-  const run = { gpu, nodes: await p.eval('__brain.nodes'), edges: await p.eval('__brain.edges'), firstFrameMs: await p.eval('__brain.firstFrameMs()') };
+  const run = { gpu, nodes: await p.eval('__brain.nodes'), edges: await p.eval('__brain.edges'), firstFrameMs: await p.eval('__brain.firstFrameMs()'), intro };
   await at(6);
   run.replay = await sample(e, p, 12);
   log(gpu, run.nodes, 'replay', JSON.stringify(run.replay));

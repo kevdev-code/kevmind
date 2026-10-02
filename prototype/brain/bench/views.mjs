@@ -43,7 +43,7 @@ await p.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, d
 await p.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
 await p.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('kevmind.lang', 'en'); localStorage.removeItem('kevmind.brain.anim'); } catch {}" });
 const load = async (q) => {
-  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay${q}` });
+  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noreplay&nointro${q}` });
   for (let i = 0; i < 100; i++) { await sleep(100); if (await p.eval('!!(window.__brain && __brain.frames() > 0)').catch(() => false)) break; }
   await sleep(800);
 };
