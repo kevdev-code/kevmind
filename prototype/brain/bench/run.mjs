@@ -3,7 +3,8 @@
 //   node bench/run.mjs <out.json>
 // Per GPU mode (the machine's GPU, and SwiftShader as a worst case) and size (~600 and ~3,000 nodes): the intro (frames
 // drawn in it and the longest wait between two), first frame, the replay at 30 fps, a hidden tab, another view,
-// animations off, Follow, idle, and Auto-rotate. Everything after the intro loads with ?nointro.
+// animations off, Follow, idle, Auto-rotate, and three sessions at once (?sessions, with and without Follow).
+// Everything after the intro loads with ?nointro.
 // The renderer comparison (Canvas 2D vs raw WebGL vs three.js) was run at commit e753723; see docs/BRAIN.md.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -121,6 +122,17 @@ for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 0], ['swift
   await p.eval('__brain.setAutoRotate(false)');
   run.bloom = await p.eval('__brain.bloom'); // the level it ended at: 2 full, 1 light, 0 off (it steps down by itself)
   log('bloom level', run.bloom);
+  // Three sessions in three projects at once ("All live sessions"): the replay, then Follow, sampled while all three work.
+  const t1 = Date.now();
+  await p.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?nointro&sessions${nodes ? `&nodes=${nodes}` : ''}` });
+  for (let i = 0; i < 200; i++) { await sleep(100); if (await p.eval('!!(window.__brain && __brain.frames() > 0)').catch(() => false)) break; }
+  await sleep(Math.max(0, 9000 - (Date.now() - t1)));
+  run.sessions = await sample(e, p, 12);
+  log('three sessions', JSON.stringify(run.sessions));
+  await p.eval('__brain.setFollow(true)');
+  await sleep(300);
+  run.sessionsFollow = await sample(e, p, 8);
+  log('three sessions, follow', JSON.stringify(run.sessionsFollow));
   results.runs.push(run);
   try { other.ws.close(); } catch {}
   await e.close();
