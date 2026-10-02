@@ -1,6 +1,6 @@
 # KevMind
 
-Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history.
+Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history; the Brain tab (`src/brain.js`, `public/brain/`) draws all of it as a living 3D brain.
 
 Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Design system: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
 
@@ -31,9 +31,17 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 
 Read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config (never its secrets). `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
 
+## Brain tab (Phase 4)
+
+- Real data only: a node is a real file or tool, a link a real relation. `src/brain.js` builds the graph (`GET /api/brain`) from the memory report, the experience aggregate (with its thresholds) and tool counts from the logs; it only reads (`test/brain.test.mjs` enforces it). Never add decorative nodes; the shell, the tracts and the stars are scenery and are never counted.
+- The view lives in `public/brain/` (`view.js` mounts it, `gl.js` renders, `layout.js` and `shape.js` are the brain, `graph.js` places nodes, `brain.css` is scoped to `.brain-view`). None of it loads until the tab is first opened (`public/brain.js` is the glue); Live and Memory pay nothing for it. Its words are the `brain` block of `public/i18n.js`.
+- It follows the session selected in Live: past events are applied at once (no animation), new ones play. A file the graph doesn't have yet makes the page ask for a newer graph and rebuild the view where it was.
+- Owner's rules (DESIGN.md section 7): idle is fully still, and Auto-rotate is the one exception because the user turns it on (it never pauses for activity, only for the user's hand); agents are told from regions by kind, never by hue (subagents silver, Claude coral); the bloom takes only what work adds and is off on software renderers; nothing renders while the tab or the view is hidden.
+- `prototype/brain/` is the benchmark harness: the same view on synthetic data (`data.js`) at ~600 and ~3,000 nodes, with `bench/run.mjs` (headless Edge, the RTX and SwiftShader as the worst case). Any rendering change is measured there before and after, and the numbers go in `docs/BRAIN.md`.
+
 ## UI and performance budget
 
-- Follow DESIGN.md: OKLCH tokens for dark and light, one hue per meaning (working green, waiting amber, error red, read blue, edit pink; tools and finished work neutral), purple only for selection/focus/primary, system fonts, 12px floor, no side-stripe borders, no uppercase eyebrows, no glows or gradients (reserved for the future brain view).
+- Follow DESIGN.md: OKLCH tokens for dark and light, one hue per meaning (working green, waiting amber, error red, read blue, edit pink; tools and finished work neutral), purple only for selection/focus/primary, system fonts, 12px floor, no side-stripe borders, no uppercase eyebrows, no glows or gradients (reserved for the Brain view's well).
 - WCAG AA in both themes for every text pair (check the contrast of any new color on every surface it appears on), state never by color alone, keyboard reachable with a visible focus ring, `prefers-reduced-motion` respected, works at phone width (no sideways scroll at 375 px).
 - Motion only for a real change (a new feed row at a calm pace, a running agent), transform/opacity only, nothing looping when idle.
 - Rendering: SSE messages update state and request one animation frame; rows are keyed and updated in place; write only what changed (`setText`, `setClass`, `patchHTML`); no per-second layout or paint when idle; nothing renders and nothing polls while the tab is hidden (only the tab title/favicon follow "needs your OK"). Any UI change that could cost CPU gets measured before and after (idle CPU, layouts/paints per second, ms per event at 5 events/s, hidden-tab cost, heap/nodes/listeners over time) with headless Edge over CDP on a test server.

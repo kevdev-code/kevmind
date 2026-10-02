@@ -8,7 +8,7 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 
 [English](README.md) · **Español**
 
-> Estado: **0.4**. El panel en vivo, la pestaña Memoria y las herramientas de experiencia opcionales para Claude funcionan. La vista animada "cerebro" viene después (ver la hoja de ruta).
+> Estado: **0.4**. El panel en vivo, la pestaña Memoria, la pestaña Cerebro y las herramientas de experiencia opcionales para Claude funcionan.
 
 ## Qué muestra
 
@@ -21,10 +21,11 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 - **Qué dice y qué piensa Claude**: extractos cortos de sus respuestas y de sus resúmenes de razonamiento legibles, leídos de la transcripción de la sesión, con un botón para ocultar los pensamientos. Si razonó pero no devolvió nada legible, el panel lo dice con la cantidad de tokens.
 - **Tokens**: entrada, salida y caché (lectura/escritura) por sesión y por agente, contados una vez por llamada. Sin estimaciones de costo: los precios cambian.
 - **Pestaña Memoria**: lo que Claude Code y Serena recuerdan de cada proyecto, con los problemas primero. Cubre los `CLAUDE.md` y sus importaciones, la memoria automática de Claude y las notas de Serena. Muestra cuánto contexto se carga al inicio de cada sesión, y marca enlaces e importaciones rotos, notas que faltan en `MEMORY.md`, un `MEMORY.md` que pasa el límite de 200 líneas / 25 KB, archivos de instrucciones demasiado largos, rutas desactualizadas, copias en worktrees, notas grandes, posibles duplicados y notas que ninguna sesión lee. Cada problema tiene un botón "Copiar prompt de arreglo" para pegar en Claude Code. KevMind nunca edita esos archivos.
+- **Pestaña Cerebro**: todo lo anterior como un cerebro 3D vivo. Las instrucciones, las notas de memoria, las notas de Serena, los archivos de código que Claude tocó y las herramientas que usó son células agrupadas en lóbulos, con un color por tipo de conocimiento (instrucciones, documentos, lógica, interfaz, memoria, herramientas y tests, infraestructura); sus relaciones reales son fibras (notas que se enlazan o citan código, archivos que cambian juntos). Mientras una sesión trabaja, Claude (coral) y sus subagentes (plateados, numerados) viajan de archivo en archivo dejando un rastro, y lo que tocan brilla y se enfría. Orbita, acerca, busca, filtra, haz clic en una célula para ver sus detalles, o activa el giro automático. Solo datos reales, solo lectura, y queda totalmente quieto cuando no pasa nada.
 
 El panel está en inglés y español, con tema oscuro y claro (sigue al sistema, o elige uno con el interruptor arriba a la derecha), y funciona en el ancho de un teléfono. En pantallas anchas la página no se desplaza: cada columna (sesiones, centro, panel derecho) tiene su propio scroll y la actividad se desplaza dentro de su panel.
 
-Es ligero: HTML y CSS normales con fuentes del sistema, sin 3D ni GPU. Sin dependencias; solo Node 18 o superior. Solo dibuja lo que cambió, no trabaja mientras está en reposo y deja de dibujar cuando su pestaña está oculta. El sistema de diseño está en [DESIGN.md](DESIGN.md).
+Es ligero: HTML y CSS normales con fuentes del sistema. Sin dependencias; solo Node 18 o superior. Solo dibuja lo que cambió, no trabaja mientras está en reposo y deja de dibujar cuando su pestaña está oculta. La pestaña Cerebro es el único lugar que usa la GPU (WebGL 2 escrito a mano, sin dependencias): su código se carga solo al abrirla, dibuja como máximo 30 cuadros por segundo mientras algo se mueve y ninguno en reposo, y tiene un interruptor para apagar las animaciones. El sistema de diseño está en [DESIGN.md](DESIGN.md).
 
 ## Instalación
 

@@ -1,14 +1,16 @@
-# Phase 4: the brain view (prototype)
+# Phase 4: the Brain tab
 
-Status 2026-10-02: iteration 4 of a standalone prototype (a polish round on top of the rendering round), for review. Nothing in the dashboard changed; integration waits for your OK. The design rules are in [DESIGN.md, section 7](../DESIGN.md).
+Status 2026-10-02: in the dashboard, as a third tab next to Live and Memory. It was built as a standalone prototype over seven iterations (this document keeps their decisions and measurements) and then moved into the dashboard; the prototype's folder is now its benchmark harness. The design rules are in [DESIGN.md, section 7](../DESIGN.md).
+
+Open the dashboard and click **Brain**. For checks at a known size, the harness runs the same view on synthetic data:
 
 ```bash
 node prototype/brain/serve.mjs
 ```
 
-Then open http://127.0.0.1:4798/ (test port; `?nodes=3000` for the stress case, `?speed=2` for a faster replay). The data is synthetic and labeled so on the page.
+Then open http://127.0.0.1:4798/ (test port; `?nodes=3000` for the stress case, `?speed=2` for a faster replay, `?nointro`, `?noreplay`, `?bloom=off|light|full|only`). The harness says on the page that its data is synthetic.
 
-Recording: [docs/media/brain-prototype.mp4](media/brain-prototype.mp4) (33 s of the replay at 1280 x 800 with an orbit halfway through, recorded in headless Edge on the real GPU with `prototype/brain/bench/record.mjs`).
+Recording: [docs/media/brain-prototype.mp4](media/brain-prototype.mp4) (33 s of the replay at 1280 x 800 with an orbit halfway through, recorded in headless Edge on the real GPU with `prototype/brain/bench/record.mjs`; from iteration 3, before the neon cells).
 
 ## Decisions (owner, 2026-10-01)
 
@@ -103,7 +105,9 @@ Headless Edge 154 at 1440 x 900, 30 fps cap, `prototype/brain/bench/run.mjs`. It
 
 **Iteration 6 (region colors, neon cells, bloom, trails, labels on the brain)**, against iteration 5, same harness, at 597 / 3,068 nodes. RTX, with the bloom on in full: 30 fps everywhere, intro included; the GPU's 3D engine goes from 2.3% / 2.5% to 2.8% / 3.0% during the replay, 1.8% / 2.2% to 2.2% / 2.7% with Follow and 3.8% / 2.8% to 3.9% / 5.0% while auto-rotating; idle stays at 0.03% and 0.08 fps. SwiftShader, where the bloom is off: replay 28.8 / 28.8 fps (unchanged; the GPU process uses 278% / 328% of a core, from 260% / 340%), Follow 28.7 / 26.2 → 28.7 / 25.6, auto-rotate 28.7 / 23.2 → 28.9 / 24.1, intro 26.0 / 26.0 → 26.5 / 25.9. The bloom itself, measured on SwiftShader during the replay at 597 nodes: 279% of a core without it, 430% with its tight octave, 443% with both, at the same 28.8 fps; so a software renderer gets none (`?bloom=light` or `full` turns it on for a check). Hidden tab and the other view: 0 fps, as before.
 
-**Iteration 7 (outlines by room, capped heat, silver subagents, Auto-rotate)**, against iteration 6, same harness, at 597 / 3,068 nodes. RTX, bloom on: 30 fps everywhere; the GPU's 3D engine drops from 2.8% / 3.0% to 1.5% / 1.5% during the replay and from 3.9% / 5.0% to 2.1% / 2.6% while auto-rotating (fewer and smaller sprites, a narrower bloom). SwiftShader, bloom off: replay 28.8 / 28.8 fps (276% / 327% of a core, from 278% / 328%), Follow 28.7 / 25.1, auto-rotate 28.8 / 23.3, intro 26.3 / 25.9: unchanged. Auto-rotate with the labels on (they are laid out every frame while it turns), RTX at 3,068 nodes: 30 fps, the main thread at 4.1% against 2.5% with the labels off, no layouts (0.5 a second, from reading the panels' boxes), 42 style recalculations a second.
+**Iteration 7 (outlines by room, capped heat, silver subagents, Auto-rotate)**, against iteration 6, same harness, at 597 / 3,068 nodes. RTX, bloom on: 30 fps everywhere; the GPU's 3D engine is where it was: 2.7% / 3.0% during the replay (from 2.8% / 3.0%), 2.3% / 2.3% with Follow, 3.9% / 4.9% while auto-rotating (from 3.9% / 5.0%). (The first run of this round read about half of that on the GPU counters, which looked like a gain from fewer sprites; three more runs did not repeat it, so it was the counter, not the code.) SwiftShader, bloom off: replay 28.8 / 28.8 fps (276% / 312% of a core, from 278% / 328%), Follow 28.7 / 25.4, auto-rotate 28.8 / 25.0, intro 26.0 / 25.8: unchanged. Auto-rotate with the labels on (they are laid out every frame while it turns), RTX at 3,068 nodes: 30 fps, the main thread at 4.1% against 2.5% with the labels off, no layouts (0.5 a second, from reading the panels' boxes), 42 style recalculations a second.
+
+**In the dashboard (integration)**, 2026-10-02. The numbers above are the integrated view's: the harness mounts the same `view.js` the dashboard does, and the run after the move gave them (idle is now 0 frames in 12 s; hidden tab and other view: 0 fps). On real data (three workspaces, 276 nodes and 351 links on this machine) the graph takes about 0.9 s to build the first time on the server (the memory reports are most of it; cached for 20 s) and the response is 68 KB. What the tab costs the rest of the dashboard, measured on a throwaway server with a 300-event session, twice each way, Live view shown, 5 events a second for 20 s: 4.0 ms of main thread per event before and after, 1.84% against 1.82 to 1.85% of the main thread, 4.6 layouts a second both, idle 0.21 to 0.23% both; the page has 9 more nodes and 1 more listener. The session summary each event sends grew from 80 KB to 95 KB in that test, because read and edit events now carry their file (long synthetic paths; shorter in practice).
 
 - **Two caches.** The deep cache (ground, shell, dendrites, tracts) is redrawn only when the camera or what is shown changes (filters, focus, search, the cut); the main cache (the deep one plus haze and links) also when the activity lighting changes (0.5 rebuilds per second during the replay). Each frame copies the main cache and draws the glow, the active neurons, nodes, beams and sprites on top. Activity never redraws the tens of thousands of strands and dendrite segments: the neurons just touched are drawn on their own, every frame (at most 40), and a busy lobe's glow uses the shell's points, not its strands.
 - **No instancing.** The first version of this round drew strands and fiber segments as instances and fell to 3.4 fps on SwiftShader's replay and 2.3 rotating at 3,068 nodes. Profiling by layer showed the cost was per instance (about 5–6 µs each on SwiftShader, whatever its size: 7,400 short strands cost 49 ms a frame for 30,000 vertices). Strands and segments are now pulled from float textures by vertex id and drawn as plain triangles, which is what made SwiftShader faster than before; on the RTX it changes nothing. While the camera moves, strands and links draw straight (one segment each); everything else stays, so nothing pops when it stops.
@@ -122,20 +126,25 @@ Iteration 2: your inspiration and the iteration-2 list were the pinned direction
 
 Iteration 1: your inspiration images were the pinned direction (no concept round). The reviewer returned **fix** with 8 items, all resolved over two batches.
 
-## Integration plan (after your OK)
+## How it is integrated
 
-1. Server: `GET /api/brain?key=<project>|all` builds the graph from what KevMind already has: the memory report (instructions and imports, notes, `MEMORY.md` index, links, cites, Serena), the experience aggregate (touched files with reads and edits from episodes, co-change pairs from episodes and git through `partners`, read-before-edit through `readFirst`, with the existing thresholds), and tool counts from the logs. Cached per project and rebuilt when those change. Read-only, like the Memory tab.
-2. Client: `public/brain.js` (the renderer from `gl.js` plus the view) behind a third view button. Live activity from the existing `/stream` events: `read`, `edit`, `command`, `error`, `thinks`, `agent_start`, `agent_done` map one-to-one to the replay's kinds; the trace uses the event rate and the transcript's thinking tokens. Layout runs on load (about 50 ms at 600 nodes and 160 ms at 3,000 in Node) or in a worker if real projects get bigger.
-3. Settle the breakpoints with the dashboard's (720, 900, 1,100 px) and move the brain's tokens from `prototype/brain/style.css` into `public/style.css`.
-4. The benchmark and `test/brain-prototype.test.mjs` move with it.
+1. **Server.** `GET /api/brain` (`src/brain.js`) builds one graph for the projects seen in sessions (the 12 most recent), from what KevMind already has: the memory report of each (instruction files and their imports, `MEMORY.md` and its notes, their links, what they cite, Serena's notes), the experience aggregate (the files Claude read and edited in the last 90 days, files edited together and files read before an edit, at the existing thresholds) and how often each tool was used and failed (counted from the logs; every tool of an MCP server is one node). A repo nested in a workspace (OdonMind's `frontend/`) is part of that workspace: one project, each file once. A file is one node whoever mentions it. At most 1,200 code files per project and 4,000 nodes in all; the most active are kept. Cached for 20 s. It only reads: `test/brain.test.mjs` fails if `src/brain.js` could write a file or start a process.
+2. **Events.** A read or edit event now carries its file, relative to the session's folder (`src/state.js`), so the page finds its node; the feed still shows only the name.
+3. **Page.** A third view button. Nothing of the view loads until it is first opened: `public/brain.js` (9 KB of glue, loaded with the page) then loads `public/brain/brain.css` and imports `public/brain/view.js`, fetches the graph, places each node in a lobe and a region (`graph.js`) and mounts the view. It follows the session selected in Live: what already happened is applied at once (agents where they are, what was touched still warm by its age, the trace's last five minutes), and each new event plays (a read or an edit goes to its file, a command to its tool's node, an error flashes where the agent is, thinking ripples; a subagent appears with its number and type). A burst, or what piled up while another view was shown, is applied at once too. When Claude touches a file the graph doesn't have, the page asks for a newer graph (6 to 30 s later) and rebuilds the view where it was: same camera, no intro.
+4. **Views and themes.** Live and Memory are untouched: with the Brain tab shown, Live stops rendering (it catches up when shown again), and the brain stops while another view or tab is shown. The rail follows the page's theme; the well is always dark. The styles are scoped to `.brain-view`, so nothing leaks either way.
+5. **Phone.** "View on phone" serves the tab like the rest, read-only: the graph, the code and the styles need the link's token (`test/share.test.mjs`). A phone gets the lighter brain (fewer shell points, 20 fps, the tight bloom only) and one region label at most.
+6. **Harness.** `prototype/brain/` mounts the same `view.js` on synthetic data with a replay, for the benchmark and for screenshots at ~600 and ~3,000 nodes.
 
 ## Files
 
-- `prototype/brain/index.html`, `style.css`, `app.js`: the page (camera, labels, chips, trace, filters, focus, search, replay, frame loop).
-- `prototype/brain/gl.js`: the WebGL2 renderer (ground and stars, the filament shell and its junctions, somas, fibers for links, dendrites, tracts and beams, glow sprites, the two caches and the intro composite, matrices).
-- `prototype/brain/layout.js`: the 3D brain from the region map, lobes, hemispheres, node layout, the shell's points and filaments, the cerebellum's rings, Purkinje cells, the brainstem's axis and the corpus callosum's arch.
-- `prototype/brain/shape.js`: the side view's region map and the three outline profiles, traced from the references.
+- `src/brain.js`: the graph from the memory report, the experience aggregate and tool counts (read-only).
+- `public/brain.js`: the dashboard's glue (lazy loading, the graph, following the selected session).
+- `public/brain/view.js`: the view (`mountBrain`): camera, labels, agent tags, trace, filters, focus, search, the frame loop.
+- `public/brain/gl.js`: the WebGL2 renderer (ground and stars, the filament shell and its junctions, cells, fibers for links, dendrites, tracts and beams, glow sprites, the bloom, the two caches and the intro composite, matrices).
+- `public/brain/layout.js`: the 3D brain from the region map, lobes, hemispheres, node layout, the shell's points and filaments, the cerebellum's folia, Purkinje cells, the brainstem's axis and the corpus callosum's arch.
+- `public/brain/shape.js`: the side view's region map and the three outline profiles, traced from the references.
+- `public/brain/graph.js`: where a node lives (lobe and region from its type and path), and how an event finds its node.
+- `public/brain/brain.css`: the view's styles, scoped to `.brain-view`.
 - `docs/reference/`: the public-domain plates (Gray 718, 725, 703), two mirrored composites for the overlays, and their sources.
-- `prototype/brain/data.js`: synthetic data and the replay.
-- `prototype/brain/serve.mjs`: static server on 127.0.0.1.
-- `prototype/brain/bench/`: `cdp.mjs` (DevTools driver), `run.mjs` (the numbers above), `views.mjs` (six fixed views with measured outlines), `shot.mjs`, `record.mjs`.
+- `prototype/brain/`: the harness. `index.html` and `harness.js` (the page and the replay), `data.js` (synthetic data), `serve.mjs` (static server on 127.0.0.1, also serving `public/`), `bench/`: `cdp.mjs` (DevTools driver), `run.mjs` (the numbers above), `views.mjs` (six fixed views with measured outlines), `shot.mjs`, `record.mjs`.
+- `test/brain.test.mjs` (the graph, node lookup, read-only), `test/brain-layout.test.mjs` (the brain's shape, the shell, the palette).

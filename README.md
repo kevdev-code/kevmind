@@ -8,7 +8,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 **English** · [Español](README.es.md)
 
-> Status: **0.4**. The live dashboard, the Memory tab and the optional experience tools for Claude work. An animated "brain" view comes next (see the roadmap).
+> Status: **0.4**. The live dashboard, the Memory tab, the Brain tab and the optional experience tools for Claude work.
 
 ## What it shows
 
@@ -21,10 +21,11 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 - **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
+- **Brain tab**: everything above as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells grouped in lobes, one color per kind of knowledge (instructions, docs, logic, interface, memory, tools and tests, infrastructure); their real links are fibers (notes that link or cite code, files that change together). While a session works, Claude (coral) and its subagents (silver, numbered) travel from file to file, leaving a trail, and what they touch glows and cools. Orbit, zoom, search, filter, click a cell for its details, or turn on Auto-rotate. Only real data, read-only, and it rests completely when nothing happens.
 
 The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width. On wide screens the page stays still and each column (sessions, center, right rail) scrolls on its own; the activity feed scrolls inside its panel.
 
-It's lightweight: plain HTML and CSS with system fonts, no 3D, no GPU. Zero dependencies; just Node 18+. It renders only what changed, does no work while idle, and stops rendering while its tab is hidden. The design system is documented in [DESIGN.md](DESIGN.md).
+It's lightweight: plain HTML and CSS with system fonts. Zero dependencies; just Node 18+. It renders only what changed, does no work while idle, and stops rendering while its tab is hidden. The Brain tab is the one place that uses the GPU (WebGL 2, hand-written, still no dependencies): its code loads only when you open it, it draws at most 30 frames a second while something moves and none at rest, and it has a switch to turn animations off. The design system is documented in [DESIGN.md](DESIGN.md).
 
 ## Install
 
@@ -199,7 +200,7 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 - [x] Tokens per session and per agent, from transcripts (no cost estimates: prices change).
 - [x] Memory tab: `CLAUDE.md` files, auto memory and Serena notes, flagging stale, duplicate or broken-link notes.
 - [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
-- [ ] Optional animated "brain" view (next).
+- [x] Brain tab: memory, files, tools and live agents as a 3D brain.
 - [ ] Replay a past session step by step.
 - [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
 

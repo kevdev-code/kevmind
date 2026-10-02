@@ -33,14 +33,28 @@ Status as of 2026-10-01. Version **0.4.2** in the repo; **0.4.1** is on npm (0.4
 - **Tooling not in the repo:** the UI benchmark (headless Edge over CDP, synthetic events) and the GIF recorder lived in a session scratch folder; recreate them if needed.
 - **Planned:** read `.serena/memories` in the Memory tab (never reimplement indexing). Re-run the Impeccable critique on the new design.
 
-## Next: Phase 4, brain view
+## Phase 4: Brain tab (in the dashboard since 2026-10-02)
 
-An optional, animated view of the project's memory and activity. Status 2026-10-01: a standalone prototype, the renderer comparison and the measurements are in [BRAIN.md](BRAIN.md), waiting for review before integration. Requirements:
+A third tab next to Live and Memory: what KevMind knows about your projects as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells in lobes (one hue per kind of knowledge); their real links are fibers; the session selected in Live plays on it (Claude in coral, subagents in silver). How it looks and why is in [DESIGN.md, section 7](../DESIGN.md); how it was built, measured and integrated is in [BRAIN.md](BRAIN.md).
 
-- A separate tab next to Live and Memory; the everyday panels stay as they are.
-- A switch to turn animations off (and `prefers-reduced-motion` respected).
-- No rendering at all while the tab is hidden or the view isn't shown.
-- Real data only (sessions, files, agents, memory, experience), no decorative fake nodes.
-- Smooth with ~3,000 nodes on an integrated GPU; measure it with the same CDP benchmark approach.
-- Compare renderer options (e.g. Canvas 2D, WebGL, SVG) with measurements before choosing one; still zero runtime dependencies unless the user agrees otherwise.
-- Glows and gradients are allowed here (and only here), per DESIGN.md.
+What the requirements became:
+
+- A separate tab; Live and Memory are as they were, and load none of its code until it is first opened.
+- Real data only: `GET /api/brain` builds the graph from the memory report, the experience aggregate and tool counts. Read-only.
+- A switch for animations (`prefers-reduced-motion` sets it off by default); idle is fully still unless Auto-rotate is on.
+- Nothing renders while the tab is hidden or another view is shown.
+- Raw WebGL2, zero dependencies; 30 fps on the RTX at ~600 and ~3,000 nodes; on SwiftShader (the stand-in for a machine without a GPU) 28.8 fps in normal use and about 25 with the camera moving at 3,000 nodes.
+- Works on a phone through "View on phone" (read-only), with a lighter brain.
+
+Known limits:
+
+- It follows one session at a time (the one selected in Live), not every live session at once.
+- A file Claude touches for the first time appears after the next graph refresh (about 6 to 30 s): the view is rebuilt in place, which shows as a short blink.
+- At most 1,200 code files per project and 4,000 nodes in all (the most active are kept); tools are shared by all projects.
+- Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
+- The version is not bumped: the next release (0.5.0) is yours to cut and publish.
+
+## Next
+
+- Replay a past session step by step (the Brain tab would be a good stage for it).
+- `CLAUDE.md` suggestions based on what Claude keeps re-reading.

@@ -306,7 +306,7 @@ Rows of time, kind and text. A time prints only when it changes from the row abo
 
 ## 7. Brain view
 
-The Brain tab (Phase 4, prototyped standalone in `prototype/brain/`) is a second world nested inside the instrument: a night well holding a living 3D brain of the project, where regions are colored lobes, links are glowing fibers and agents travel as white-cored beams. Everything outside the well (header, rail, filters, switches, buttons) stays the dashboard above, unchanged. Everything inside the well is drawn as additive light on a dark ground, which is why the well has its own rules.
+The Brain tab (Phase 4; `public/brain/`, with its benchmark harness in `prototype/brain/`) is a second world nested inside the instrument: a night well holding a living 3D brain of the project, where regions are colored lobes, links are glowing fibers and agents travel as white-cored beams. Everything outside the well (header, rail, filters, switches, buttons) stays the dashboard above, unchanged. Everything inside the well is drawn as additive light on a dark ground, which is why the well has its own rules.
 
 ### Colors
 
