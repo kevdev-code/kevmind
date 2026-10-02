@@ -188,6 +188,8 @@ body.view-brain .memory-view { display: none; }
 .brain-view .others button:hover .nowproj { text-decoration: underline; text-underline-offset: 2px; }
 .brain-view .chip .pj { color: var(--text-2); font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .brain-view .chip .pj:empty { display: none; }
+.brain-view .chip.tap { pointer-events: auto; cursor: pointer; min-height: 24px; } /* narrow screens: a tap opens the tag */
+.brain-view .chip.wait { border-color: var(--waiting); }
 
 .brain-view .card { position: absolute; z-index: 3; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); color: var(--text); }
 .brain-view .fcard { top: 56px; right: var(--sp-4); width: 300px; max-height: calc(100% - 56px - var(--now-h, 0px) - var(--sp-4) - var(--sp-3)); overflow-y: auto; scrollbar-width: thin; }

@@ -70,13 +70,18 @@ test('"All live sessions": working and waiting ones, then the recently active; w
   assert.deepEqual(pick([]), []);
 });
 
-test('an agent\'s tag names its project when several sessions are shown', () => {
-  const tagOf = lift('../public/brain/view.js', 'tagOf');
+test('an agent\'s tag names its project when several sessions are shown; small tags say its initials', () => {
+  const initialsOf = lift('../public/brain/view.js', 'initialsOf');
+  const tagOf = lift('../public/brain/view.js', 'tagOf', { initialsOf });
   assert.deepEqual(tagOf(true, 'Claude', 'main', '', false), ['Claude', '']);
   assert.deepEqual(tagOf(false, '#2', 'general-purpose', '', false), ['#2 general-purpose', '']);
   assert.deepEqual(tagOf(false, '#2', 'general-purpose', '', true), ['#2', ''], 'a phone: the number only');
   assert.deepEqual(tagOf(true, 'Claude', 'main', 'OdonMind', false), ['Claude', '· OdonMind']);
   assert.deepEqual(tagOf(false, '#2', 'general-purpose', 'OdonMind', false), ['#2', '· OdonMind'], 'the type gives way to the project');
+  // Narrow screens, several sessions: the dot and the project's initials, until tapped.
+  assert.deepEqual(tagOf(true, 'Claude', 'main', 'OdonMind', true), ['OM', '']);
+  assert.deepEqual(tagOf(false, '#2', 'Explore', 'demo-agency', true), ['#2 DA', '']);
+  assert.deepEqual(['demo-agency', 'OdonMind', 'KevMind', 'kevmind', 'traditio.backend', 'API'].map(initialsOf), ['DA', 'OM', 'KM', 'K', 'TB', 'A']);
 });
 
 test('the benchmark\'s multi-session replay: three projects working at the same time, each in its own cells', async () => {

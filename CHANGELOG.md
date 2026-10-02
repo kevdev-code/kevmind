@@ -13,6 +13,7 @@ Changes since 0.5.0, for 0.5.1.
 
 ### Fixed
 
+- The Brain on a phone: agent tags near the bottom no longer hide behind the sessions panel, and on narrow screens a tag is small (the dot and the project's initials, "DA", "#2 DA") and opens on a tap, so tags cover much less of the brain. A tag whose session waits for your OK has an amber edge.
 - The Brain: a session that was waiting for your OK when the view caught up with it lost its amber marker.
 
 ### Docs

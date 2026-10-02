@@ -26,10 +26,16 @@ const FX_ICONS = {
   done: '<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="8" opacity=".4"/>',
 };
 // An agent's name on its tag: "Claude", or a subagent's number ("#2", with its type when there is room). With several
-// sessions on screen its project follows as a badge ("Claude · OdonMind", "#2 · OdonMind": the type gives way).
-function tagOf(main, label, type, project, compact) {
-  const who = main || project || compact || !type ? label : `${label} ${type}`;
+// sessions on screen its project follows as a badge ("Claude · OdonMind", "#2 · OdonMind": the type gives way). Small
+// (a narrow screen, until tapped): the project's initials only ("OM", "#2 OM"); the dot's color says who.
+function tagOf(main, label, type, project, small) {
+  if (small) { const ini = project ? initialsOf(project) : ''; return [main ? ini || label : ini ? `${label} ${ini}` : label, '']; }
+  const who = main || project || !type ? label : `${label} ${type}`;
   return [who, project ? `· ${project}` : ''];
+}
+// A project's initials, for small tags: "demo-agency" → "DA", "OdonMind" → "OM", "kevmind" → "K".
+function initialsOf(name) {
+  return (String(name).match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+/g) || [String(name)]).map((w) => w[0].toUpperCase()).join('').slice(0, 3);
 }
 const TEMPLATE = `
 <aside class="rail" id="rail">
@@ -1750,7 +1756,13 @@ export function mountBrain(host, env) {
   }
   function placeChips(now) {
     const placed = [];
+    // Narrow screens: a compact tag (the dot and the project's initials, or the number) that a tap opens for a moment.
     const compact = W < 520;
+    // The panels: a stack of tags never covers one, and stays between those that span the screen (on a phone, the
+    // top controls and the sessions panel at the bottom). Read before anything below writes.
+    const taken = panelBoxes(now), wide = taken.filter((b) => b[2] > W * 0.5);
+    const ceil = Math.max(8, ...wide.filter((b) => b[1] + b[3] / 2 < H / 2).map((b) => b[1] + b[3] + 6));
+    const floor = Math.min(H - 8, ...wide.filter((b) => b[1] + b[3] / 2 >= H / 2).map((b) => b[1] - 6));
     for (const a of agents.values()) {
       const show = a.pos && !(a.hideAt && now > a.hideAt + 400);
       if (!a.chip) {
@@ -1768,15 +1780,19 @@ export function mountBrain(host, env) {
       const { verb, text, cls } = saying(a);
       const label = a.main ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
       const S = sessions.get(a.sid), badge = sessions.size > 1 && S && S.project != null ? pname(S.project) : '';
-      const key = `${label}|${badge}|${verb}|${a.kind}|${text}|${compact}|${a.def.type}`;
+      const small = compact && !(a.openUntil > now); // a tapped tag says everything for a moment
+      const key = `${label}|${badge}|${verb}|${a.kind}|${text}|${small}|${a.def.type}`;
       if (a.chipKey !== key) {
         a.chipKey = key;
-        const [name, tag] = tagOf(a.main, label, a.def.type, badge, compact);
+        const [name, tag] = tagOf(a.main, label, a.def.type, badge, small);
         setText(who, name);
         setText(pj, tag);
-        setText(k, compact ? '' : verb);
+        setText(k, small ? '' : verb);
         k.className = `k ${cls}`;
-        setText(code, compact ? '' : text);
+        setText(code, small ? '' : text);
+        a.chip.classList.toggle('tap', compact);
+        a.chip.classList.toggle('wait', cls === 'wait'); // waiting for the OK: an amber edge, which a small tag keeps
+        a.chip.title = compact ? `${a.def.label}${badge ? ` · ${badge}` : ''}` : '';
         a.chipW = 0;
       }
       placed.push([a, p[0], p[1]]);
@@ -1798,9 +1814,11 @@ export function mountBrain(host, env) {
     for (const g of groups) {
       const cx = g.reduce((t, it) => t + it[1], 0) / g.length, top = Math.min(...g.map((it) => it[2])), bot = Math.max(...g.map((it) => it[2]));
       const w = Math.max(...g.map(([a]) => a.chipW)), h = g.length * 25 - 3, gap = g.length > 1 ? 26 : 14;
-      const spots = [[cx + gap, top - h - 8], [cx - w - gap, top - h - 8], [cx + gap, bot + 10], [cx - w - gap, bot + 10]].map(([x, y]) => [clamp(x, 8, W - w - 8), clamp(y, 8, H - h - 8), w, h]);
-      let b = spots.find((s) => !labels.some((l) => hit(s, l)) && !boxes.some((o) => hit(s, o)));
-      if (!b) { b = spots[0]; for (const o of boxes) if (hit(b, o)) b = [b[0], o[1] + o[3] + 3, w, h]; }
+      const low = Math.max(ceil, floor - h); // the lowest a stack may sit
+      const spots = [[cx + gap, top - h - 8], [cx - w - gap, top - h - 8], [cx + gap, bot + 10], [cx - w - gap, bot + 10]].map(([x, y]) => [clamp(x, 8, W - w - 8), clamp(y, ceil, low), w, h]);
+      const free = (s) => !taken.some((t) => hit(s, t)) && !boxes.some((o) => hit(s, o));
+      let b = spots.find((s) => free(s) && !labels.some((l) => hit(s, l))) || spots.find(free);
+      if (!b) { b = spots[0]; for (const o of boxes) if (hit(b, o)) b = [b[0], Math.min(o[1] + o[3] + 3, low), w, h]; }
       boxes.push(b);
       g.forEach(([a, px, py], k) => {
         const y = b[1] + k * 25;
@@ -1906,6 +1924,17 @@ export function mountBrain(host, env) {
     ul.hidden = !list.length;
   }
   $('othersList').addEventListener('click', (e) => { const b = e.target.closest('button[data-sid]'); if (b) env.onPick?.(b.dataset.sid); });
+  // A small tag (narrow screens) opens on a tap and says everything for 5 s; a second tap closes it.
+  const OPEN_MS = 5000;
+  chipBox.addEventListener('click', (e) => {
+    const el = e.target.closest('.chip.tap'), a = el && [...agents.values()].find((x) => x.chip === el);
+    if (!a) return;
+    const now = performance.now();
+    a.openUntil = a.openUntil > now ? 0 : now + OPEN_MS;
+    labelsDirty = true;
+    request();
+    setTimeout(() => { labelsDirty = true; request(); }, OPEN_MS + 50);
+  });
 
   // ---- the activity trace: events and thinking tokens over the last 5 minutes (real data only) --------------------
   const trace = {
