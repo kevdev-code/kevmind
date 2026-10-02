@@ -47,6 +47,10 @@ const RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'docker', '
 const SYSTEM_PROMPT_RE = /^\s*<(task-notification|bash-notification|bash-stdout|bash-stderr|system-reminder|command-message|local-command-stdout)[\s>]/i;
 // Lockfiles, generated and binary files: they change with everything, or are outputs, so they say nothing as partners.
 const LOCK_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Cargo\.lock|poetry\.lock|Gemfile\.lock|go\.sum)$|\.min\.(js|css)$|\.map$|(^|\/)(dist|build|out|coverage|generated|__generated__|graphify-out)\/|\.(pdf|png|jpe?g|gif|webp|ico|svgz|zip|gz|tgz|7z|rar|woff2?|ttf|otf|eot|mp[34]|mov|exe|dll|so|dylib|class|jar|pyc|wasm|bin)$/i;
+// A shell syntax mistake in the command itself (a heredoc or a quote left open, a stray token, a mistyped command) is
+// not a failure of the project: never a known failure, and not counted as one by the briefing's measurement.
+const SHELL_ERROR_RE = /unexpected EOF while looking for matching|syntax error near unexpected token|syntax error: unexpected end of file|unterminated quoted string|unmatched ['"`]|bad substitution|command not found/i;
+export const isShellError = (sig) => SHELL_ERROR_RE.test(String(sig || ''));
 const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|revert|arregl\w*|correg\w*|corrig\w*)\b/i;
 const GIT_READ = new Set(['log']);
 export const MCP_TOOL_RE = /^mcp__(?:plugin_kevmind_experience|kevmind(?:-experience)?)__(\w+)$/; // plugin and manual installs
@@ -445,7 +449,7 @@ export function failures(proj, now = Date.now(), prefix = '') {
     const edits = list.flatMap((x) => x.ep.ed);
     for (let i = 0; i < runs.length; i++) {
       const { r: [ts, fam, ok, sig], x } = runs[i];
-      if (ok || !isEpisode(x.ep)) continue;
+      if (ok || !isEpisode(x.ep) || isShellError(proj.sigs[sig])) continue;
       const famName = proj.fams[fam];
       if (prefix && !famName.startsWith(prefix.toLowerCase())) continue;
       const key = `${fam}|${sig}`;

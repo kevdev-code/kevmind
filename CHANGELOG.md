@@ -16,6 +16,7 @@ Changes since 0.5.0, for 0.5.1.
 ### Fixed
 
 - The Brain on a phone: agent tags near the bottom no longer hide behind the sessions panel, and on narrow screens a tag is small (the dot and the project's initials, "DA", "#2 DA") and opens on a tap, so tags cover much less of the brain. A tag whose session waits for your OK has an amber edge.
+- Known failures no longer include shell syntax mistakes in the command itself (a heredoc or a quote left open, a stray token, a mistyped command): the experience tools, the Experience panel and the briefing ignore them, however often they repeat.
 - The Brain: a session that was waiting for your OK when the view caught up with it lost its amber marker.
 
 ### Docs

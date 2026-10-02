@@ -132,6 +132,35 @@ test('a recurring failure needs 2 episodes on 2 days and the same fix; grep with
   assert.equal(errorSignature('Exit code 2\n  src/a.ts(12,3): error TS2304'), 'exit 2: <path>(#,#): error TS#');
 });
 
+test('a shell syntax mistake in the command is not a known project failure, however often it repeats', async () => {
+  const root = tmp();
+  const agg = emptyAggregate();
+  // The case seen in KevMind's own history: a heredoc left open, "fixed" by running sed, in 4 episodes on 3 days.
+  const eof = "Exit code 2\n/usr/bin/bash: -c: line 108: unexpected EOF while looking for matching `''";
+  const heredoc = { cmd: "cat > patch.cjs <<'EOF'\nconst a = `x`;\nEOF", error: eof };
+  const others = [
+    { cmd: "node -e \"console.log('a')\" | grep (", error: "Exit code 2\n/usr/bin/bash: -c: line 1: syntax error near unexpected token `('" },
+    { cmd: 'nmp test', error: 'Exit code 127\n/usr/bin/bash: line 1: nmp: command not found' },
+  ];
+  const real = { cmd: 'npm test', error: 'Exit code 1\nFAIL test/cart.test.js' };
+  const runs = [heredoc, { cmd: 'sed -i s/a/b/ patch.cjs' }, { cmd: 'cat patch.cjs' }, ...others, { cmd: 'npm test' }, real, { edit: 'src/cart.js' }, { cmd: 'npm test' }];
+  turn(agg, root, 'q', NOW - 4 * DAY, { runs });
+  turn(agg, root, 'q', NOW - 3 * DAY, { runs });
+  turn(agg, root, 'q', NOW - 2 * DAY, { runs });
+  turn(agg, root, 'q', NOW - 2 * DAY + 3_600_000, { runs });
+  const p = projOf(agg, root);
+  assert.ok(answerKnownFailures(p, 'P', 'cat', NOW).startsWith(NO_DATA), 'the open heredoc is not served');
+  for (const cmd of ['node', 'nmp test']) assert.ok(answerKnownFailures(p, 'P', cmd, NOW).startsWith(NO_DATA), `${cmd}: a shell mistake is not served`);
+  const all = answerKnownFailures(p, 'P', '', NOW);
+  assert.match(all, /`npm test` failed with "exit 1: FAIL <path>"/, 'a real failure still is');
+  assert.ok(!/unexpected EOF|syntax error|command not found/.test(all), all);
+  assert.deepEqual(preview(p, NOW).failures.map((f) => f.fam), ['npm test'], 'and the Experience panel shows the same');
+  const { gatherFacts, briefingText } = await import('../src/briefing.js');
+  const facts = await gatherFacts({ agg, root, name: 'P', sid: 'new', source: 'startup', now: NOW, git: async () => null });
+  const { text } = briefingText(facts);
+  assert.ok(!/`cat`|unexpected EOF/.test(text), 'the briefing names no shell mistake');
+});
+
 test('git co-change works from day one; episode evidence ranks above git', { skip: !hasGit() && 'needs git' }, async () => {
   const root = tmp();
   const run = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore', windowsHide: true });

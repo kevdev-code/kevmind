@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { keyOf } from './memory.js';
-import { relPath, failures, partners } from './experience.js';
+import { relPath, failures, partners, isShellError } from './experience.js';
 
 // Every limit in one place.
 export const BRIEF = {
@@ -71,8 +71,9 @@ export function sessionsOf(projs) {
 }
 const fileName = (x, f) => x.pre + x.p.files[f];
 
-// A failed command that only said "Exit code 1" answered a question (git check-ignore, a test -f): not a failure.
-const silent = (sig) => /^exit 1: $/.test(sig || '');
+// A failed command that only said "Exit code 1" answered a question (git check-ignore, a test -f), and a shell syntax
+// mistake in the command itself is not the project failing: neither counts as a failure.
+const silent = (sig) => /^exit 1: $/.test(sig || '') || isShellError(sig);
 // "Still failing" is about builds, tests and scripts: commands run by a runner. A shell chain that ended in a grep
 // with no match, or a git probe, is not.
 const RUNNER_RE = /^(npm|pnpm|yarn|bun|bunx|npx|node|deno|tsx|tsc|vitest|jest|eslint|python3?|py|pytest|pip|uv|ruff|mypy|cargo|go|make|cmake|dotnet|mvn|gradle|php|composer|artisan|docker|flutter|dart|swift|xcodebuild)\b/;
