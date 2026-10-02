@@ -20,6 +20,8 @@ if (focus) document.body.classList.add('focus');
 // Writes that skip the DOM when nothing changed: the 1 s tick and every frame go through these.
 const setText = (el, v) => { v = String(v ?? ''); if (el._t !== v) { el._t = v; el.textContent = v; } };
 const setClass = (el, v) => { if (el._c !== v) { el._c = v; el.className = v; } };
+// A stat tile: the number and, next to it, its word in the singular or plural the number asks for.
+const stat = (id, n, word) => { setText($(id), n); setText($(id).nextElementSibling, word(n)); };
 const setAttr = (el, k, v) => { if (el.getAttribute(k) !== v) el.setAttribute(k, v); };
 const setHidden = (el, h) => { if (el.hidden !== h) el.hidden = h; };
 const patchHTML = (el, html) => { if (el._h !== html) { el._h = html; el.innerHTML = html; } };
@@ -378,7 +380,7 @@ function clearSession() {
   setClass($('nowStatus'), 'status');
   setClass($('nowDot'), 'dot');
   setClass($('now'), 'panel now');
-  for (const id of ['stAgents', 'stActions', 'stPrompts']) setText($(id), '0');
+  stat('stAgents', 0, T.activeAgents); stat('stActions', 0, T.actions); stat('stPrompts', 0, T.messages);
   setText($('stTime'), '0 min');
   for (const id of ['stTokens', 'stCache']) { setText($(id), '—'); setClass($(id), 'none'); }
   for (const id of ['gantt', 'feed', 'alerts', 'files', 'tools']) patchHTML($(id), '');
@@ -408,9 +410,9 @@ function renderNow(s) {
     setText($('nowAskText'), ask?.detail || T.askTitle);
     setText($('nowAskAgo'), `· ${T.ago(secondsSince(ask?.ts || s.lastAt))}`);
   }
-  setText($('stAgents'), s.agents.filter((a) => isLive(agentStatus(a, s))).length);
-  setText($('stActions'), s.agents.reduce((n, a) => n + a.actions, 0));
-  setText($('stPrompts'), s.prompts);
+  stat('stAgents', s.agents.filter((a) => isLive(agentStatus(a, s))).length, T.activeAgents);
+  stat('stActions', s.agents.reduce((n, a) => n + a.actions, 0), T.actions);
+  stat('stPrompts', s.prompts, T.messages);
   setText($('stTime'), fmtMin(((isLive(st) || st === 'waiting' ? Date.now() : s.lastAt) - s.startedAt) / 60000));
   const t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const known = t.input || t.output || t.cacheRead || t.cacheWrite;

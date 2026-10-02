@@ -1512,7 +1512,7 @@ export function mountBrain(host, env) {
     else {
       bits.push(`<span><b>${st.reads}</b> ${T.reads(st.reads)}</span>`);
       if (n.type === 'file') bits.push(`<span><b>${st.edits}</b> ${T.edits(st.edits)}</span>`);
-      if (n.tokens) bits.push(`<span><b>${n.tokens.toLocaleString(lang)}</b> ${T.tokens}</span>`);
+      if (n.tokens) bits.push(`<span><b>${n.tokens.toLocaleString(lang)}</b> ${T.tokens(n.tokens)}</span>`);
       if (n.type === 'memory' && n.noteType !== 'index') bits.push(`<span>${adj[i].some((k) => edges[k].type === 'index') ? T.indexed : T.notIndexed}</span>`);
     }
     bits.push(`<span><b>${adj[i].length}</b> ${T.links(adj[i].length)}</span>`);

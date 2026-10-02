@@ -309,7 +309,7 @@ function renderExperience(x) {
     </div>
     <h3 class="exp-h">${esc(T.expUse)}</h3>
     <div class="stats">
-      <div><b>${m.calls}</b><span>${esc(T.expCalls)}</span></div>
+      <div><b>${m.calls}</b><span>${esc(T.expCalls(m.calls))}</span></div>
       <div><b>${esc(fmtK(m.tokens))}</b><span>${esc(T.expTokens)}</span></div>
       <div><b>${m.calls ? pct(m.noData / m.calls) : '—'}</b><span>${esc(T.expNoData)}</span></div>
       <div><b>${pct(m.followRate)}</b><span>${esc(T.expFollow(m.withSuggestions))}</span></div>
