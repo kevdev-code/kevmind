@@ -18,7 +18,7 @@ Calm, precise, quietly confident. The tone of a well-made instrument rather than
 
 ## Anti-references
 
-- Neon "AI dashboard": glows, gradients, glassmorphism, purple haze. Glows and gradients are reserved for the future, optional brain view, never the everyday panels.
+- Neon "AI dashboard": glows, gradients, glassmorphism, purple haze. Glows and gradients are reserved for the Brain tab's well, never the everyday panels.
 - Grafana wall: every panel at the same volume, chart overload.
 - SaaS admin template: identical cards, big hero numbers with tiny labels, generic icon tiles.
 - Hacker terminal: green on black, monospace everywhere, retro CRT. Monospace is for paths, commands and file names only.

@@ -31,7 +31,7 @@ It's lightweight: plain HTML and CSS with system fonts. Zero dependencies; just 
 
 ![The Brain tab while a session works: Claude and three subagents travel along the links between files](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-live.webp)
 
-Claude (coral) and its subagents (silver, numbered) at work, on demo data. Every cell is a real file, note or tool and every fiber a real relation; the anatomy is traced from public-domain plates.
+Claude (coral) and its subagents (silver, numbered) at work, on demo data. Every cell is a real file, note or tool and every fiber a real relation; the anatomy is traced from public-domain plates. A 33-second recording on the same demo data (the intro, agents at work, Auto-rotate, the labels and the Cut): [brain-demo.mp4](https://github.com/kevdev-code/kevmind/raw/main/docs/media/brain-demo.mp4) (4 MB download).
 
 ![One short animation per kind of action: read, edit, new file, search, command, web, subagent, needs your OK, error, done](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-actions.webp)
 
@@ -202,6 +202,7 @@ Restarts the server whenever something under `src/` or `bin/` changes, and the o
 
 - To know which subagent performed each action, KevMind uses the hook's `agent_id` field when Claude Code sends it. If your version doesn't, subagent actions are attributed to "Claude", although the timeline of when each subagent starts and ends still works.
 - Each hook starts a Node process (~50 ms). Not noticeable in normal use.
+- The Brain tab follows one session at a time (the one selected in Live), and reads imports only for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML.
 
 ## Adding a language
 
@@ -213,6 +214,7 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 - [x] Memory tab: `CLAUDE.md` files, auto memory and Serena notes, flagging stale, duplicate or broken-link notes.
 - [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
 - [x] Brain tab: memory, files, tools and live agents as a 3D brain.
+- [ ] Brain tab: every live session at once.
 - [ ] Replay a past session step by step.
 - [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
 
