@@ -310,6 +310,16 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .exp-list small { display: block; color: var(--text-3); }
 .exp-grid .none { margin: 0; color: var(--text-3); font-size: var(--fs-xs); }
 .verdict { color: var(--text-3); font-size: var(--fs-xs); max-width: 75ch; margin: var(--sp-3) 0 0; }
+/* The session briefing: the exact text Claude received, and the comparison with and without it. */
+.brief-how { color: var(--text-3); font-size: var(--fs-xs); max-width: 75ch; margin: var(--sp-2) 0 0; }
+.brief-text { font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--raised); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); margin: 6px 0 0; max-height: 360px; overflow-y: auto; }
+.brief-starts { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); }
+.brief-starts summary { cursor: pointer; }
+.brief-starts .arm-shown { color: var(--text); font-weight: 600; }
+.brief-starts small { color: var(--text-3); }
+.brief-preview { margin-top: var(--sp-2); }
+table.brief-cmp { max-width: 640px; }
+.brief-cmp th:first-child, .brief-cmp td:first-child { width: 60%; white-space: normal; }
 
 .mem-table { overflow-x: auto; }
 .mem-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
