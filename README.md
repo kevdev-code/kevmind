@@ -31,7 +31,11 @@ It's lightweight: plain HTML and CSS with system fonts. Zero dependencies; just 
 
 ![The Brain tab while a session works: Claude and three subagents travel along the links between files](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-live.webp)
 
-Claude (coral) and its subagents (silver, numbered) at work, on demo data. Every cell is a real file, note or tool and every fiber a real relation; the anatomy is traced from public-domain plates. A 33-second recording on the same demo data (the intro, agents at work, Auto-rotate, the labels and the Cut): [brain-demo.mp4](https://github.com/kevdev-code/kevmind/raw/main/docs/media/brain-demo.mp4) (4 MB download).
+Claude (coral) and its subagents (silver, numbered) at work, on demo data. Every cell is a real file, note or tool and every fiber a real relation; the anatomy is traced from public-domain plates.
+
+https://github.com/user-attachments/assets/a6ae002e-35aa-4a21-8e9f-80fc2a9ad993
+
+A 33-second recording on the same demo data: the intro, agents at work, Auto-rotate, the labels and the Cut. If the player doesn't show (on npm, for example), the file is in the repo: [brain-demo.mp4](https://github.com/kevdev-code/kevmind/raw/main/docs/media/brain-demo.mp4) (4 MB download).
 
 ![One short animation per kind of action: read, edit, new file, search, command, web, subagent, needs your OK, error, done](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-actions.webp)
 

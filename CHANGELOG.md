@@ -8,7 +8,7 @@ Changes since 0.5.0, for 0.5.1.
 
 ### Docs
 
-- A 33-second recording of the Brain tab on demo data (`docs/media/brain-demo.mp4`, linked from the README), in place of the prototype's recording; `prototype/brain/bench/record.mjs` records it.
+- A 33-second recording of the Brain tab on demo data (`docs/media/brain-demo.mp4`; the README plays it inline on GitHub, with the file in the repo as a fallback), in place of the prototype's recording; `prototype/brain/bench/record.mjs` records it.
 - The README's Live demo GIF and light screenshot taken again: the "View on phone" button, counters in the singular.
 - The README lists the Brain tab's known limitations and the all-sessions option on its roadmap.
 - Stale paths and statements fixed in `docs/BRAIN.md`, `DESIGN.md`, `PRODUCT.md` and the roadmap.

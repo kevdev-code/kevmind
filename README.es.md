@@ -31,7 +31,11 @@ Es ligero: HTML y CSS normales con fuentes del sistema. Sin dependencias; solo N
 
 ![La pestaña Cerebro mientras una sesión trabaja: Claude y tres subagentes viajan por las conexiones entre archivos](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-live.webp)
 
-Claude (coral) y sus subagentes (plateados, numerados) trabajando, con datos de demostración. Cada célula es un archivo, una nota o una herramienta real y cada fibra una relación real; la anatomía está trazada a partir de láminas de dominio público. Una grabación de 33 segundos con los mismos datos de demostración (la intro, los agentes trabajando, el giro automático, las etiquetas y el corte): [brain-demo.mp4](https://github.com/kevdev-code/kevmind/raw/main/docs/media/brain-demo.mp4) (descarga de 4 MB).
+Claude (coral) y sus subagentes (plateados, numerados) trabajando, con datos de demostración. Cada célula es un archivo, una nota o una herramienta real y cada fibra una relación real; la anatomía está trazada a partir de láminas de dominio público.
+
+https://github.com/user-attachments/assets/a6ae002e-35aa-4a21-8e9f-80fc2a9ad993
+
+Una grabación de 33 segundos con los mismos datos de demostración: la intro, los agentes trabajando, el giro automático, las etiquetas y el corte. Si el reproductor no aparece (en npm, por ejemplo), el archivo está en el repositorio: [brain-demo.mp4](https://github.com/kevdev-code/kevmind/raw/main/docs/media/brain-demo.mp4) (descarga de 4 MB).
 
 ![Una animación breve por tipo de acción: lectura, edición, archivo nuevo, búsqueda, comando, web, subagente, necesita tu OK, error, terminó](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-actions-es.webp)
 
