@@ -14,7 +14,7 @@ Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Br
 
 ## Key decisions and why
 
-- **History only, no code parsing; coexist with Serena.** Serena already indexes code; KevMind reports what happened (sessions, git). Two tools doing structure would conflict and cost context.
+- **History, plus an approximate code map; coexist with Serena.** KevMind reports what happened (sessions, git). Since the code map (after 0.5.1) it also reads import and export statements and the names in them, with a per-file cache, read-only, never type-checking or editing: enough for "where is this used, what depends on what" in under 200 tokens. Exact references and definitions stay with Serena or a language server; reimplementing them would conflict and cost context. (Until 0.5.1 the rule was "history only, no code parsing".)
 - **Work episodes, not sessions.** Many users (the owner included) work in 1–3 long sessions; an episode (a prompt turn ending with an edit) is the unit that repeats.
 - **At least 2 distinct local days per insight.** Patterns that only repeat inside one conversation are not knowledge. Days are local, not UTC, so an evening isn't counted twice.
 - **Read-only Memory tab.** It reports and hands out fix prompts; Claude Code (with the user) makes the changes.
@@ -65,9 +65,21 @@ Known limits:
 - A session's last reply and its running subagents are known only for sessions of the last 24 hours (the server's live state); older ones get the rest.
 - Tokens come from the transcript tailer, which follows sessions of the last 24 hours: a start whose stretch settles later is measured without tokens.
 
+## Code map (unreleased)
+
+`src/codemap.js` and the `code_map` MCP tool (behind the experience tools' switch, off by default): which files use an exported name, what a file exports and who imports it, how one file reaches another, key files (PageRank over imports, shared infrastructure apart) and areas (label propagation, named from folder and file names). Each file answer adds its history. The Memory tab also checks docs against code: `npm run` scripts no package.json has, and code names no code file has anymore that `git log -S` shows were there before.
+
+Measured on the owner's machine: a real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links, 71 areas); KevMind itself in 68 / 34 ms. Against TypeScript's `findReferences` on 50 exported names of that app's frontend (391 using files): precision 0.990, recall 1.000, 48 names exact.
+
+Known limits:
+
+- Names are read for JavaScript, TypeScript and Dart; links for every import language of the Brain tab. A name used through a member (`api.fetchUser`) or a namespace import counts when the importer mentions it; a local variable with the same name is a false positive.
+- A stale name in a note about a fixed bug is history on purpose, so it is a suggestion, not a warning. The first Memory report waits at most 1.5 s for `git log -S`; names it hasn't checked yet show up on a later report.
+- `bun run` and `yarn run` also run binaries and files: those are skipped. A monorepo with `workspaces` skips the script check.
+
 ## Next
 
-- The code map (exported names and who uses them, key files, areas, one MCP query tool, docs-vs-code name checks), then briefing v2 (map lines) as a new arm of the same measurement.
+- Briefing v2: lines from the code map (the areas and key files the last session touched, stale names) as a new arm of the same measurement.
 
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.

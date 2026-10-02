@@ -1,6 +1,6 @@
 # KevMind
 
-Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history; the Brain tab (`src/brain.js`, `public/brain/`) draws all of it as a living 3D brain.
+Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history and an approximate code map (`src/codemap.js`); the Brain tab (`src/brain.js`, `public/brain/`) draws all of it as a living 3D brain.
 
 Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Design system: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
 
@@ -22,7 +22,7 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 
 ## Experience tools (Phase 3)
 
-- History only: no code parsing, symbols or indexing, ever, and no writes; git only through `git log`. `test/experience-readonly.test.mjs` enforces it. For code structure, Claude uses Serena; KevMind coexists with it and never reimplements indexing.
+- History, plus the code map; no writes, ever. `src/experience.js` runs git only through `git log`. `src/codemap.js` (the `code_map` tool) reads only import and export statements and the names they carry (regex: JS/TS and Dart for names, `src/imports.js` for links), keeps a per-file cache keyed by size and mtime, and never type-checks, resolves members, indexes symbols or edits; git only `ls-files` and `log` (`log -S` for names the docs still mention). `test/experience-readonly.test.mjs` enforces it. Exact references and definitions stay with Serena or a language server; KevMind coexists with them and never reimplements them. Every `code_map` answer says it is approximate and stays under 200 tokens.
 - Evidence is counted in work episodes (a prompt turn that ends with at least one edit; without prompts, a block separated by more than 30 min). Every episode-based insight also needs at least 2 distinct local days. Every threshold is a named constant in `THRESHOLDS` in `src/experience.js`; nothing below a threshold is served; answers stay under 400 tokens and cite their counts.
 - Paths are routed to the git repo that holds them when it is nested inside the session's folder (e.g. `frontend/` with its own `.git`); repos outside the session folder are never answered.
 - The dashboard server owns `~/.kevmind/experience.json` (written atomically); the MCP server only reads it. The on/off switch is `~/.kevmind/config.json` (`src/config.js`), written by `kevmind tools on|off` and the dashboard toggle; it wins over the plugin option. Changes take effect in the next Claude Code session.
@@ -37,6 +37,8 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 ## Memory tab (Phase 2)
 
 Read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config (never its secrets). `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
+
+Docs ↔ code checks: `npm run x` (or bun, pnpm, yarn) that no package.json of the project has, always; and, with the experience tools on, code names in backticks that no code file has anymore, flagged only when `git log -S` (through `codemap.js`, never `memory.js`) shows they were in the code before, never in a negated sentence. Names never in the code are planned work or not code: not flagged. `test/codemap.test.mjs` holds the cases.
 
 ## Brain tab (Phase 4)
 

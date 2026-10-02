@@ -2,6 +2,17 @@
 
 What changed in each version of KevMind. Dates are local. Versions before 0.5.0 are reconstructed from the commit history.
 
+## Unreleased
+
+### Added
+
+- **Code map (with the experience tools, off by default).** A fourth MCP tool, `code_map`, answers from the project's import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another through imports (or what both import), the key files, and the areas of files that work together. Answers about a file add its history (work episodes, git commits, files that change with it). It reads only those statements and the names in them, with a per-file cache, and never type-checks or edits; every answer says it is approximate, stays under 200 tokens, and points to Serena or a language server for exact references. On a real app of about 950 code files it matched TypeScript's own references for 50 names with a precision of 0.99 and a recall of 1.00.
+- **Memory tab: docs against code.** It flags `npm run` (or bun, pnpm, yarn) scripts in `CLAUDE.md`, notes and READMEs that no `package.json` of the project has, and, with the experience tools on, code names in backticks that no code file has anymore but git shows were there before (a suggestion: a note about a fixed bug names removed code on purpose). Names in a sentence that says they were removed, and names that were never in the code, are left alone.
+
+### Changed
+
+- The experience tools' rule widens from "history only" to "history, plus an approximate code map": KevMind reads import and export statements and names, read-only; exact references stay with Serena or a language server. The tools' descriptions say so.
+
 ## 0.5.1 (2026-10-02)
 
 ### Added
