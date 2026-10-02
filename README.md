@@ -8,7 +8,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 **English** · [Español](README.es.md)
 
-> Status: **0.4**. The live dashboard, the Memory tab, the Brain tab and the optional experience tools for Claude work.
+> Status: **0.5**. The live dashboard, the Memory tab, the Brain tab, View on your phone and the optional experience tools for Claude work. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## What it shows
 
@@ -26,6 +26,16 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width. On wide screens the page stays still and each column (sessions, center, right rail) scrolls on its own; the activity feed scrolls inside its panel.
 
 It's lightweight: plain HTML and CSS with system fonts. Zero dependencies; just Node 18+. It renders only what changed, does no work while idle, and stops rendering while its tab is hidden. The Brain tab is the one place that uses the GPU (WebGL 2, hand-written, still no dependencies): its code loads only when you open it, it draws at most 30 frames a second while something moves and none at rest, and it has a switch to turn animations off. The design system is documented in [DESIGN.md](DESIGN.md).
+
+## The Brain tab
+
+![The Brain tab while a session works: Claude and three subagents travel along the links between files](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-live.webp)
+
+Claude (coral) and its subagents (silver, numbered) at work, on demo data. Every cell is a real file, note or tool and every fiber a real relation; the anatomy is traced from public-domain plates.
+
+![One short animation per kind of action: read, edit, new file, search, command, web, subagent, needs your OK, error, done](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-actions.webp)
+
+Each kind of action has its own short animation, built only on what the hook events say. The legend is one click away in the tab.
 
 ## Install
 
@@ -125,6 +135,8 @@ The **Experience** panel in the Memory tab shows what would be served today even
 ## View on your phone
 
 Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** in the Live tab (or run `npx kevmind share`) and scan the QR code.
+
+<img src="https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-phone.webp" alt="The Brain tab at phone width, on demo data" width="300">
 
 - **Off by default.** Until you turn it on, the dashboard listens on `127.0.0.1` only. While it's on, the header shows **Shared on your network** with a button to stop.
 - **Home network only.** It listens on your Wi-Fi or Ethernet address, never on VPN, WSL, Docker or Hyper-V adapters, and nothing goes through the internet (no tunnels).

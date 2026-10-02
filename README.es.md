@@ -8,7 +8,7 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 
 [English](README.md) · **Español**
 
-> Estado: **0.4**. El panel en vivo, la pestaña Memoria, la pestaña Cerebro y las herramientas de experiencia opcionales para Claude funcionan.
+> Estado: **0.5**. El panel en vivo, la pestaña Memoria, la pestaña Cerebro, Ver en tu teléfono y las herramientas de experiencia opcionales para Claude funcionan. Qué cambió en cada versión: [CHANGELOG.md](CHANGELOG.md) (en inglés).
 
 ## Qué muestra
 
@@ -26,6 +26,16 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 El panel está en inglés y español, con tema oscuro y claro (sigue al sistema, o elige uno con el interruptor arriba a la derecha), y funciona en el ancho de un teléfono. En pantallas anchas la página no se desplaza: cada columna (sesiones, centro, panel derecho) tiene su propio scroll y la actividad se desplaza dentro de su panel.
 
 Es ligero: HTML y CSS normales con fuentes del sistema. Sin dependencias; solo Node 18 o superior. Solo dibuja lo que cambió, no trabaja mientras está en reposo y deja de dibujar cuando su pestaña está oculta. La pestaña Cerebro es el único lugar que usa la GPU (WebGL 2 escrito a mano, sin dependencias): su código se carga solo al abrirla, dibuja como máximo 30 cuadros por segundo mientras algo se mueve y ninguno en reposo, y tiene un interruptor para apagar las animaciones. El sistema de diseño está en [DESIGN.md](DESIGN.md).
+
+## La pestaña Cerebro
+
+![La pestaña Cerebro mientras una sesión trabaja: Claude y tres subagentes viajan por las conexiones entre archivos](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-live.webp)
+
+Claude (coral) y sus subagentes (plateados, numerados) trabajando, con datos de demostración. Cada célula es un archivo, una nota o una herramienta real y cada fibra una relación real; la anatomía está trazada a partir de láminas de dominio público.
+
+![Una animación breve por tipo de acción: lectura, edición, archivo nuevo, búsqueda, comando, web, subagente, necesita tu OK, error, terminó](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-actions-es.webp)
+
+Cada tipo de acción tiene su propia animación breve, construida solo con lo que dicen los eventos de los hooks. La leyenda está a un clic en la pestaña.
 
 ## Instalación
 
@@ -124,6 +134,8 @@ El panel **Experiencia**, en la pestaña Memoria, muestra lo que se entregaría 
 ## Ver en tu teléfono
 
 Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el teléfono** en la pestaña En vivo (o ejecuta `npx kevmind share`) y escanea el código QR.
+
+<img src="https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/brain-phone.webp" alt="La pestaña Cerebro en el ancho de un teléfono, con datos de demostración" width="300">
 
 - **Apagado por defecto.** Hasta que lo enciendas, el panel solo escucha en `127.0.0.1`. Mientras está encendido, la cabecera muestra **Compartido en tu red** con un botón para detenerlo.
 - **Solo tu red doméstica.** Escucha en tu dirección de Wi-Fi o Ethernet, nunca en adaptadores de VPN, WSL, Docker o Hyper-V, y nada pasa por internet (sin túneles).
