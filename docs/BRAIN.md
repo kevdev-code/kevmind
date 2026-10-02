@@ -126,9 +126,42 @@ Iteration 2: your inspiration and the iteration-2 list were the pinned direction
 
 Iteration 1: your inspiration images were the pinned direction (no concept round). The reviewer returned **fix** with 8 items, all resolved over two batches.
 
+## The links, and what is scenery
+
+Six kinds of link, each a real relation read from your files or from what Claude did. A link is drawn only between two nodes.
+
+| Link | From, to | Built from |
+|---|---|---|
+| Links between notes | note to note | A `[[name]]` in a memory note, or a `mem:name` in a Serena note, that names another note of the same project. They are the Memory tab's links; a link to no note is a problem there and nothing here. |
+| Index entries | `MEMORY.md` to note | Each note `MEMORY.md` lists. |
+| Imports | file to file | An `@path` import between instruction files, and the import statements of code files (below). |
+| Notes citing code | note or instruction file to file | A file path written in the note's text that is there in the working tree. Paths in code blocks, in negated sentences and under "don't" headings are skipped, as in the Memory tab. A cited file is a node even when Claude never touched it. |
+| Changed together | file and file | The experience tools' answer: edited in the same work episode at least 3 times, on at least 2 days, in at least half of the file's edit episodes; or committed together in git (from `git log`, at its own thresholds). A hub that changes with everything is left out. |
+| Read before edit | file to file | Also the experience tools': read before the file's first edit in at least 3 episodes, on at least 2 days, in at least 60% of its edit episodes. |
+
+**Imports of code files** (`src/imports.js`). For every code file that is a node, its import statements are read (only those: no symbols, no index) and each one is resolved to a file the way its language does. When that file is a node too, it is a link; an import never adds a node. What is not a file of the project is no link: an npm or pub package, the standard library, a commented-out line.
+
+| Language | What is read | How it finds the file |
+|---|---|---|
+| JavaScript, TypeScript (`.js .jsx .mjs .cjs .ts .tsx .mts .cts`, and the scripts of `.vue .svelte .astro`) | `import … from`, `import '…'`, `export … from`, `import('…')`, `require('…')` | Relative paths with or without extension (`./x.js` written for `x.ts`), a folder's `index` file (a barrel is a file: the importer links to it, and it links to what it re-exports), aliases from the nearest `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`, what it `extends` or references, comments allowed), and `@/` or `~/` as the package's `src` when no config says. |
+| Dart | `import`, `export`, `part`, `part of`, conditional imports | Relative paths, and `package:name/…` when `name` is the one in the nearest `pubspec.yaml` (its `lib` folder). |
+| Python | `import a.b`, `from a.b import c`, `from . import x`, `from ..pkg import (y, z)` | Dots are relative; otherwise the nearest folder above the file (or its `src`) that holds the package. `from pkg import name` goes to the submodule when there is one, else to the package. |
+| PHP | `use A\B\C;` (grouped, aliased), `require`/`include` | `composer.json`'s PSR-4 folders (`App\` is `app/`), and paths relative to the file. |
+| C# | `using N;`, `using static N.T;`, `using X = N.T;`, the file's own namespace | A `using` names a namespace, not a file, so the link goes to the files that declare that namespace and whose type (the file's name) the importing file mentions. |
+| CSS, Sass, Less | `@import`, `@use`, `@forward` | Relative paths, Sass partials (`_name.scss`). |
+| HTML | `<script src>`, `<link href>` | Relative paths, and `/x` from a folder above the page (or its `public` folder). |
+
+Not read yet: Go, Rust, Java, Kotlin, Swift, Ruby, C and C++. Also not followed: packages of a monorepo imported by name (`@scope/pkg`), `package.json` `imports` that no tsconfig repeats, and C#'s global and implicit usings. The styles above are the cases of `test/imports.test.mjs`.
+
+**Scenery, never counted:** the shell's filaments and junctions, each cell's dendrites and axon, the ground and the stars, the corpus callosum's arch, the brainstem's bundle and the cerebellum's Purkinje cells. **Tracts are the real links again, added up:** the links between two lobes are counted, and the busiest lanes (at most 10, each with at least 3 links and 3% of the links between lobes) are drawn as a bundle whose thickness and brightness follow the count. A bundle's strands are its shape, not one per link. The corpus callosum is always drawn; only its brightness follows the share of links that cross between hemispheres.
+
+**On real data** (this machine, 2026-10-02): 282 nodes and 453 links: 113 changed together, 97 citations, 98 imports (KevMind 74, OdonMind 24, Indaba none: its 6 code nodes don't import each other), 75 index entries, 69 links between notes, 1 read before edit. Imports were 0 before: only `@path` imports between instruction files were links, and no `CLAUDE.md` here uses them. Read before edit is rare by its thresholds: of the 479 pairs (a file read, another edited later in the episode) in KevMind's 38 edit episodes, 469 happened in fewer than 3 episodes, 7 on a single day and 2 in under 60% of the file's edit episodes; one passes (`src/server.js` before `bin/kevmind.js`). OdonMind and Indaba have 2 to 3 edit episodes each, too few for any pattern. Most "changed together" links here come from git (the episodes alone give fewer than 20).
+
+**What reading imports costs.** On the real graph's 177 files: 34 ms the first time, 16 ms after (what a file imports is remembered until the file changes; folders are listed once per build). As a stress test, over every source file of a workspace: 1,086 files (OdonMind) in 1.1 s, then 0.13 s; 2,807 files (Indaba) in 1.5 s, then 0.21 s. The scan yields every 100 files, so the server keeps answering hooks meanwhile. The response grew from 68 KB to 71 KB. The view draws 453 links instead of 355; nothing in the renderer changed (the harness runs it at 773 and 4,021 links).
+
 ## How it is integrated
 
-1. **Server.** `GET /api/brain` (`src/brain.js`) builds one graph for the projects seen in sessions (the 12 most recent), from what KevMind already has: the memory report of each (instruction files and their imports, `MEMORY.md` and its notes, their links, what they cite, Serena's notes), the experience aggregate (the files Claude read and edited in the last 90 days, files edited together and files read before an edit, at the existing thresholds) and how often each tool was used and failed (counted from the logs; every tool of an MCP server is one node). A repo nested in a workspace (OdonMind's `frontend/`) is part of that workspace: one project, each file once. A file is one node whoever mentions it. At most 1,200 code files per project and 4,000 nodes in all; the most active are kept. Cached for 20 s. It only reads: `test/brain.test.mjs` fails if `src/brain.js` could write a file or start a process.
+1. **Server.** `GET /api/brain` (`src/brain.js`) builds one graph for the projects seen in sessions (the 12 most recent), from what KevMind already has: the memory report of each (instruction files and their imports, `MEMORY.md` and its notes, their links, what they cite, Serena's notes), the import statements of the code files in the graph (`src/imports.js`), the experience aggregate (the files Claude read and edited in the last 90 days, files edited together and files read before an edit, at the existing thresholds) and how often each tool was used and failed (counted from the logs; every tool of an MCP server is one node). A repo nested in a workspace (OdonMind's `frontend/`) is part of that workspace: one project, each file once. A file is one node whoever mentions it. At most 1,200 code files per project and 4,000 nodes in all; the most active are kept. Cached for 20 s. It only reads: `test/brain.test.mjs` fails if `src/brain.js` could write a file or start a process.
 2. **Events.** A read or edit event now carries its file, relative to the session's folder (`src/state.js`), so the page finds its node; the feed still shows only the name.
 3. **Page.** A third view button. Nothing of the view loads until it is first opened: `public/brain.js` (9 KB of glue, loaded with the page) then loads `public/brain/brain.css` and imports `public/brain/view.js`, fetches the graph, places each node in a lobe and a region (`graph.js`) and mounts the view. It follows the session selected in Live: what already happened is applied at once (agents where they are, what was touched still warm by its age, the trace's last five minutes), and each new event plays (a read or an edit goes to its file, a command to its tool's node, an error flashes where the agent is, thinking ripples; a subagent appears with its number and type). A burst, or what piled up while another view was shown, is applied at once too. When Claude touches a file the graph doesn't have, the page asks for a newer graph (6 to 30 s later) and rebuilds the view where it was: same camera, no intro.
 4. **Views and themes.** Live and Memory are untouched: with the Brain tab shown, Live stops rendering (it catches up when shown again), and the brain stops while another view or tab is shown. The rail follows the page's theme; the well is always dark. The styles are scoped to `.brain-view`, so nothing leaks either way.
@@ -138,6 +171,7 @@ Iteration 1: your inspiration images were the pinned direction (no concept round
 ## Files
 
 - `src/brain.js`: the graph from the memory report, the experience aggregate and tool counts (read-only).
+- `src/imports.js`: which of the graph's code files import which, from their import statements (read-only).
 - `public/brain.js`: the dashboard's glue (lazy loading, the graph, following the selected session).
 - `public/brain/view.js`: the view (`mountBrain`): camera, labels, agent tags, trace, filters, focus, search, the frame loop.
 - `public/brain/gl.js`: the WebGL2 renderer (ground and stars, the filament shell and its junctions, cells, fibers for links, dendrites, tracts and beams, glow sprites, the bloom, the two caches and the intro composite, matrices).
@@ -147,4 +181,4 @@ Iteration 1: your inspiration images were the pinned direction (no concept round
 - `public/brain/brain.css`: the view's styles, scoped to `.brain-view`.
 - `docs/reference/`: the public-domain plates (Gray 718, 725, 703), two mirrored composites for the overlays, and their sources.
 - `prototype/brain/`: the harness. `index.html` and `harness.js` (the page and the replay), `data.js` (synthetic data), `serve.mjs` (static server on 127.0.0.1, also serving `public/`), `bench/`: `cdp.mjs` (DevTools driver), `run.mjs` (the numbers above), `views.mjs` (six fixed views with measured outlines), `shot.mjs`, `record.mjs`.
-- `test/brain.test.mjs` (the graph, node lookup, read-only), `test/brain-layout.test.mjs` (the brain's shape, the shell, the palette).
+- `test/brain.test.mjs` (the graph, node lookup, read-only), `test/imports.test.mjs` (import styles per language), `test/brain-layout.test.mjs` (the brain's shape, the shell, the palette).

@@ -40,7 +40,7 @@ A third tab next to Live and Memory: what KevMind knows about your projects as a
 What the requirements became:
 
 - A separate tab; Live and Memory are as they were, and load none of its code until it is first opened.
-- Real data only: `GET /api/brain` builds the graph from the memory report, the experience aggregate and tool counts. Read-only.
+- Real data only: `GET /api/brain` builds the graph from the memory report, the experience aggregate, the import statements of the code files in it and tool counts. Read-only. How each kind of link is built: [BRAIN.md](BRAIN.md#the-links-and-what-is-scenery).
 - A switch for animations (`prefers-reduced-motion` sets it off by default); idle is fully still unless Auto-rotate is on.
 - Nothing renders while the tab is hidden or another view is shown.
 - Raw WebGL2, zero dependencies; 30 fps on the RTX at ~600 and ~3,000 nodes; on SwiftShader (the stand-in for a machine without a GPU) 28.8 fps in normal use and about 25 with the camera moving at 3,000 nodes.
@@ -51,10 +51,12 @@ Known limits:
 - It follows one session at a time (the one selected in Live), not every live session at once.
 - A file Claude touches for the first time appears after the next graph refresh (about 6 to 30 s): the view is rebuilt in place, which shows as a short blink.
 - At most 1,200 code files per project and 4,000 nodes in all (the most active are kept); tools are shared by all projects.
+- Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
 - The version is not bumped: the next release (0.5.0) is yours to cut and publish.
 
 ## Next
 
+- An option for the Brain tab to show every live session at once (all their agents on the same brain) instead of only the session selected in Live.
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.
