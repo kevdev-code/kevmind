@@ -833,7 +833,9 @@ function frame(now) {
     mid, radiusPx: (BRAIN_RADIUS * PX) / mid[2], waveR: BRAIN_RADIUS },
   { haze, deepKey, mainKey: staticKey, skip: SKIP, lod: moving && !intro.on ? 1 : 0, glow: glowLayer(now, dt), introOn: intro.on });
   if (intro.on && intro.t0 == null && ++intro.warm >= 2) intro.t0 = performance.now();
-  if (labelsDirty) layoutLabels();
+  // Labels fade out while the camera moves and are laid out again once it stops (no jumping while it turns).
+  if (moving !== labelsAway) { labelsAway = moving; labelBox.classList.toggle('away', moving); if (!moving) labelsDirty = true; }
+  if (labelsDirty && !labelsAway) layoutLabels();
   placeChips(now);
   if (anim && (now < busyUntil || moving || thinking() || intro.on)) request();
 }
@@ -969,11 +971,14 @@ function regionName(g) {
   const parts = g.label.split('/');
   return parts[parts.length - 1] === 'api' || parts[parts.length - 1] === '__tests__' ? parts.slice(-2).join('/') : parts[parts.length - 1];
 }
-// Lobe labels: one per lobe, at the projected center of its nodes in both hemispheres, so they follow the anatomy in
-// every view. The lobe once, small, and under it its groups in their region colors, the most important first (where
-// agents work, the focused node's region, the working project, then size), names deduplicated across projects. When
-// that spot is taken (another label, a panel, an agent), the label moves outside the brain's outline, straight out
-// from the brain's center, with a leader line back to the lobe's center.
+// Lobe labels: callouts around the brain, never on it. One line by default, plain text over a soft dark glow: a dot
+// and the lobe's name in its color, its role dimmer ("● Frontal · docs"); its folders under it only for the lobe under
+// the pointer, or the lobes in the middle of the view when zoomed in. Each sits just outside the outline, on its
+// lobe's side of the brain's middle, at the height of the lobe's projected center, with a thin leader line back to that
+// center. On each side the labels keep their order by height and are spaced apart, so they never overlap and follow
+// the anatomy without jumping; they fade out while the camera moves and are laid out again once it stops. Where agents
+// work the label brightens and the others dim; an agent's tag wins, and a label under one fades. On a phone, only the
+// lobes where agents work, if any.
 const lobeEls = new Map();
 let chipBoxes = [];
 const chipLines = { svg: null, key: '' };
@@ -985,31 +990,32 @@ chipLines.svg = document.createElementNS(NS, 'svg');
 chipLines.svg.setAttribute('class', 'leaders chip-leaders');
 chipBox.prepend(chipLines.svg);
 const leaderEls = new Map();
-// The outline: the farthest projected shell point from the outline's center, in 48 directions.
-function silhouette() {
-  const pts = [];
-  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
-  for (let i = 0; i < shellXYZ.length; i += 20) {
+let labelsAway = false; // faded out while the camera moves
+// The outline, row by row: the leftmost and rightmost projected shell point in each 6 px band of height.
+function outlineRows() {
+  const rows = new Map();
+  let x0 = 1e9, x1 = -1e9;
+  for (let i = 0; i < shellXYZ.length; i += 40) {
     const p = project([shellXYZ[i], shellXYZ[i + 1], shellXYZ[i + 2]]);
     if (p[2] <= 0) continue;
-    pts.push(p);
-    x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+    const r = Math.floor(p[1] / 6), o = rows.get(r);
+    if (o) { o[0] = Math.min(o[0], p[0]); o[1] = Math.max(o[1], p[0]); } else rows.set(r, [p[0], p[0]]);
+    x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]);
   }
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rad = new Float32Array(48);
-  for (const p of pts) {
-    const b = Math.round((Math.atan2(p[1] - cy, p[0] - cx) / (2 * Math.PI)) * 48 + 48) % 48;
-    rad[b] = Math.max(rad[b], Math.hypot(p[0] - cx, p[1] - cy));
-  }
-  const at = (a) => { const b = Math.round((a / (2 * Math.PI)) * 48 + 48) % 48; return Math.max(rad[b], rad[(b + 1) % 48], rad[(b + 47) % 48]); };
-  return { cx, cy, at };
+  // The outline's left and right over a band of height (null above or below the brain).
+  const span = (ya, yb) => {
+    let a = 1e9, b = -1e9;
+    for (let r = Math.floor(ya / 6) - 1; r <= Math.floor(yb / 6) + 1; r++) { const o = rows.get(r); if (o) { a = Math.min(a, o[0]); b = Math.max(b, o[1]); } }
+    return a <= b ? [a, b] : null;
+  };
+  return { x0, x1, cx: (x0 + x1) / 2, span };
 }
 function layoutLabels() {
   labelsDirty = false;
-  // The panels over the well count as taken, so no label hides under them (read before this function writes anything).
+  // The panels over the well (read before this function writes anything): labels stay clear of them.
   const wr = $('well').getBoundingClientRect();
   const taken = ['now', 'trace', 'focusCard'].map($).concat([...document.querySelectorAll('.seg.camera, .overlay.tl, .overlay.tr')]).filter((el) => el && !el.hidden && el.offsetParent)
     .map((el) => { const r = el.getBoundingClientRect(); return [r.left - wr.left, r.top - wr.top, r.width, r.height]; });
-  const hit = (x, y, w, h, list) => list.some((r) => x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + h);
   const live = new Set();
   for (const a of agents.values()) if (a.node != null && a.status !== 'done') live.add(nodes[a.node].region);
   const wc = project(BRAIN_CENTER)[2];
@@ -1023,79 +1029,93 @@ function layoutLabels() {
     if (!byLobe.has(g.lobe)) byLobe.set(g.lobe, []);
     byLobe.get(g.lobe).push([g, pr]);
   }
-  const cands = [...byLobe].map(([lobe, list]) => {
+  let cands = [...byLobe].map(([lobe, list]) => {
     list.sort((x, y) => y[1] - x[1]);
     const c = [0, 0, 0];
     let n = 0;
     for (const [g] of list) { const k = L.count[g.id]; n += k; for (let a = 0; a < 3; a++) c[a] += L.centroid[g.id][a] * k; }
     const names = [], seen = new Set();
     for (const [g] of list) { const nm = regionName(g); if (!seen.has(nm)) { seen.add(nm); names.push([nm, g.id]); } }
-    return { lobe, top: list[0][1], live: list.some(([, pr]) => pr >= 1000), at: project(c.map((v) => v / n)), names };
-  }).sort((x, y) => y.top - x.top)
+    return { lobe, live: list.some(([, pr]) => pr >= 1000), at: project(c.map((v) => v / n)), names };
+  })
     // A lobe on the far side of the brain (prefrontal from the back) has no label, unless agents work there.
-    .filter((c) => c.live || c.at[2] - wc < 0.25 * BRAIN_RADIUS)
+    .filter((c) => c.at[2] > 0 && (c.live || c.at[2] - wc < 0.25 * BRAIN_RADIUS))
     // At overview, only the lobe under the pointer; all of them zoomed in or with the Labels toggle; none in the intro.
     .filter((c) => !intro.on && (labelsOn || cam.zoom < 0.72 || c.lobe === hoverLobe));
-  const keep = new Set();
-  const show = W < 520 ? 2 : 3;
-  const agentsAt = [];
-  for (const a of agents.values()) if (a.pos && !(a.hideAt && performance.now() > a.hideAt)) { const p = project(a.pos); agentsAt.push([p[0] - 18, p[1] - 18, 36, 36]); }
-  for (const b of chipBoxes) agentsAt.push(b);
-  const sil = silhouette();
-  const inWell = (x, y, w, h) => x >= 8 && x + w <= W - 8 && y >= 8 && y + h <= H - 8;
-  const clear = (x, y, w, h) => inWell(x, y, w, h) && !hit(x - 3, y - 3, w + 6, h + 6, taken) && !hit(x, y, w, h, agentsAt);
+  // A phone: at most one label, the lobe of the most recent action where agents work, in the free pocket above the
+  // brain (the brain fills the width, so there is no room beside it).
+  const phone = W < 520;
+  if (phone) {
+    let recent = null, at = -1;
+    for (const [i, e] of embers) if (e.at > at && cands.some((c) => c.live && c.lobe === lobeOf(i))) { at = e.at; recent = lobeOf(i); }
+    cands = cands.filter((c) => c.live && c.lobe === (recent || cands.find((x) => x.live)?.lobe));
+  }
+  const out = outlineRows(), PAD = 18, GAP = 6, zoomedIn = cam.zoom < 0.55;
+  // 1. Content (every write first, then one read of the sizes).
   for (const c of cands) {
-    const [la, lb] = T.lobes[c.lobe];
-    const small = `${la} · ${lb}`;
-    const list = c.names.slice(0, show), more = c.names.length - list.length;
-    const html = `<small>${esc(small)}</small><span class="groups">${list.map(([nm, id]) => `<b style="color:${regionCss[id]}">${esc(nm)}</b>`).join('<i>·</i>')}${more > 0 ? `<i>+${more}</i>` : ''}</span>`;
-    const text = list.map(([nm]) => nm).join(' · ') + (more > 0 ? ` +${more}` : '');
-    const w = Math.max(small.length * 6.3, text.length * 7.4) + 14, h = 36;
-    const [ax, ay] = c.at;
-    let pick = null, lead = false;
-    if (c.at[2] > 0) {
-      // On the center, or just beside it (a short leader once it no longer covers the center)...
-      for (const [dx, dy] of [[0, 0], [w * 0.3, 0], [-w * 0.3, 0], [0, -h * 0.8], [0, h * 0.8], [0, -h * 1.6], [0, h * 1.6], [0, -h * 2.4], [0, h * 2.4]]) {
-        const x = ax - w / 2 + dx, y = ay - h / 2 + dy;
-        if (clear(x, y, w, h)) { pick = [x, y]; lead = Math.abs(dy) > h / 2; break; }
-      }
-      // ...else outside the outline on the lobe's own side (within 70 degrees), where the leader is shortest.
-      const base = Math.atan2(ay - sil.cy, ax - sil.cx);
-      for (let k = -6, best = Infinity; !pick && k <= 6; k++) {
-        const an = base + (k * Math.PI) / 16, dx = Math.cos(an), dy = Math.sin(an);
-        const d = sil.at(an) + 12 + (Math.abs(dx) * w) / 2 + (Math.abs(dy) * h) / 2;
-        const x = sil.cx + dx * d - w / 2, y = sil.cy + dy * d - h / 2;
-        if (!clear(x, y, w, h)) continue;
-        const len = Math.hypot(clamp(ax, x, x + w) - ax, clamp(ay, y, y + h) - ay);
-        if (len < best) { best = len; c.out = [x, y]; }
-      }
-      if (!pick && c.out) { pick = c.out; lead = true; }
-    }
-    let line = leaderEls.get(c.lobe);
-    if (!pick) { if (line && line.style.display !== 'none') line.style.display = 'none'; continue; }
-    const [x, y] = pick;
     let el = lobeEls.get(c.lobe);
     if (!el) { el = document.createElement('span'); el.className = 'lbl lobe'; lobeEls.set(c.lobe, el); labelBox.append(el); }
-    if (el._html !== html) { el._html = html; el.innerHTML = html; }
-    el.classList.toggle('on', c.live);
+    const [name, role] = T.lobes[c.lobe], col = lobeCss(c.lobe);
+    c.open = c.lobe === hoverLobe || (zoomedIn && Math.abs(c.at[0] - W / 2) < W * 0.25 && Math.abs(c.at[1] - H / 2) < H * 0.25);
+    const list = c.names.slice(0, W < 520 ? 2 : 3), more = c.names.length - list.length;
+    const html = `<span class="row"><span class="dot" style="background:${col}"></span><b style="color:${col}">${esc(name)}</b><i>· ${esc(role)}</i></span>` +
+      (c.open ? `<span class="groups">${list.map(([nm, id]) => `<span style="color:${regionCss[id]}">${esc(nm)}</span>`).join('<i>·</i>')}${more > 0 ? `<i>+${more}</i>` : ''}</span>` : '');
+    if (el._html !== html) { el._html = html; el.innerHTML = html; el._w = 0; }
     if (el.hidden) el.hidden = false;
-    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
-    el._box = [x, y, w, h];
-    taken.push([x - 3, y - 3, w + 6, h + 6]);
+    c.el = el;
+  }
+  for (const c of cands) if (!c.el._w) { c.el._w = c.el.offsetWidth; c.el._h = c.el.offsetHeight; }
+  // 2. Each side of the brain's middle: labels in their order by height, spaced apart, inside the height the panels
+  //    leave free, then just outside the outline at that height.
+  const keep = new Set();
+  if (phone && cands.length) { // right of the activity card, under the switches, above the camera bar
+    const c = cands[0], box = (sel) => { const el = document.querySelector(sel); if (!el || !el.offsetParent) return null; const r = el.getBoundingClientRect(); return [r.left - wr.left, r.top - wr.top, r.width, r.height]; };
+    const tr = box('.overlay.tr'), tc = box('#trace'), cam2 = box('.seg.camera');
+    const x0 = tc ? tc[0] + tc[2] + 10 : 8, y0 = tr ? tr[1] + tr[3] + 6 : 8, y1 = cam2 ? cam2[1] - 6 : H / 3;
+    if (W - 8 - x0 >= c.el._w && y1 - y0 >= c.el._h) { c.x = W - 8 - c.el._w; c.y = (y0 + y1 - c.el._h) / 2; c.side = 'right'; }
+    cands = [c];
+  }
+  for (const side of phone ? [] : ['left', 'right']) {
+    const list = cands.filter((c) => (c.at[0] < out.cx) === (side === 'left')).sort((a, b) => a.at[1] - b.at[1]);
+    let yMin = 8, yMax = H - 8;
+    const band = side === 'left' ? [0, out.x0] : [out.x1, W];
+    for (const r of taken) if (r[0] < band[1] && r[0] + r[2] > band[0]) { if (r[1] + r[3] / 2 < H / 2) yMin = Math.max(yMin, r[1] + r[3] + 4); else yMax = Math.min(yMax, r[1] - 4); }
+    for (const c of list) c.y = clamp(c.at[1] - c.el._h / 2, yMin, yMax - c.el._h);
+    for (let k = 1; k < list.length; k++) list[k].y = Math.max(list[k].y, list[k - 1].y + list[k - 1].el._h + GAP);
+    for (let k = list.length - 1; k >= 0; k--) list[k].y = Math.min(list[k].y, (k === list.length - 1 ? yMax : list[k + 1].y - GAP) - list[k].el._h);
+    for (const c of list) {
+      if (c.y < yMin - 1) continue; // no room left on this side
+      const s = out.span(c.y, c.y + c.el._h) || [out.x0, out.x1];
+      c.x = clamp(side === 'left' ? s[0] - PAD - c.el._w : s[1] + PAD, 8, W - 8 - c.el._w);
+      c.side = side;
+    }
+  }
+  // 3. Positions, emphasis and leaders.
+  const anyLive = cands.some((c) => c.live);
+  for (const c of cands) {
+    const el = c.el;
+    let line = leaderEls.get(c.lobe);
+    if (c.x == null) { el.hidden = true; if (line) line.style.display = 'none'; continue; }
+    el.style.transform = `translate(${Math.round(c.x)}px, ${Math.round(c.y)}px)`;
+    el.classList.toggle('on', c.live);
+    el.classList.toggle('dim', anyLive && !c.live);
+    el.classList.toggle('left', c.side === 'left');
+    el._box = [c.x, c.y, el._w, el._h];
     keep.add(c.lobe);
     if (!line) {
       line = document.createElementNS(NS, 'g');
-      line.innerHTML = '<line></line><circle r="2.5"></circle>';
+      line.innerHTML = '<line></line><circle r="2"></circle>';
       line.style.color = lobeCss(c.lobe);
       leaderEls.set(c.lobe, line);
       leaders.append(line);
     }
-    line.style.display = lead ? '' : 'none';
-    if (lead) { // from the lobe's center to the nearest point of the label
-      const ex = clamp(ax, x, x + w), ey = clamp(ay, y, y + h), [ln, dot] = line.children;
-      ln.setAttribute('x1', ax.toFixed(1)); ln.setAttribute('y1', ay.toFixed(1)); ln.setAttribute('x2', ex.toFixed(1)); ln.setAttribute('y2', ey.toFixed(1));
-      dot.setAttribute('cx', ax.toFixed(1)); dot.setAttribute('cy', ay.toFixed(1));
-    }
+    line.style.display = '';
+    line.classList.toggle('on', c.live);
+    line.classList.toggle('dim', anyLive && !c.live);
+    // From the lobe's center to the label's inner edge, at the height of its first line.
+    const [ax, ay] = c.at, ex = c.side === 'left' ? c.x + el._w + 4 : c.x - 4, ey = c.y + 8, [ln, dot] = line.children;
+    ln.setAttribute('x1', ax.toFixed(1)); ln.setAttribute('y1', ay.toFixed(1)); ln.setAttribute('x2', ex.toFixed(1)); ln.setAttribute('y2', ey.toFixed(1));
+    dot.setAttribute('cx', ax.toFixed(1)); dot.setAttribute('cy', ay.toFixed(1));
   }
   for (const [k, el] of lobeEls) if (!keep.has(k) && !el.hidden) el.hidden = true;
   for (const [k, g] of leaderEls) if (!keep.has(k) && g.style.display !== 'none') g.style.display = 'none';
