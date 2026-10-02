@@ -1,6 +1,6 @@
 {
   "name": "kevmind",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Watch Claude Code work in real time: parallel agents, tool calls, files and errors. Local-only, zero dependencies.",
   "author": {
     "name": "Kevin"

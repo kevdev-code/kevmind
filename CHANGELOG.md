@@ -2,9 +2,7 @@
 
 What changed in each version of KevMind. Dates are local. Versions before 0.5.0 are reconstructed from the commit history.
 
-## Unreleased
-
-Changes since 0.5.0, for 0.5.1.
+## 0.5.1 (2026-10-02)
 
 ### Added
 

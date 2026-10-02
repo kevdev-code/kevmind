@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-02. Version **0.5.0**, on npm: the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
+Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Brain, and the session briefing (off by default, measured). 0.5.0 brought the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -55,7 +55,7 @@ Known limits:
 - Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
 
-## Session briefing (v1, Unreleased)
+## Session briefing (v1, 0.5.1)
 
 A short, factual note for Claude at each session start (`src/briefing.js`, `hooks/brief.js`), off by default, measured against starts without it. Design and examples on real data: the owner's local design doc (`.claude/design/code-map-and-briefing.md`, git-ignored). Decisions (2026-10-02): the narrower rule for the code map is approved (reads import/export statements and names, keeps a per-file cache, read-only, never type-checks or edits; CLAUDE.md, README and the tool descriptions change when it is built); read-only `git ls-files` and `git status --porcelain` are approved (the briefing uses `status`); Serena stays optional for exact references; the briefing and the code map are each off by default with their own switch.
 
