@@ -362,15 +362,16 @@ function renderBriefing(b) {
     return `<li><details data-ts="${s.ts}"${briefOpen.has(s.ts) ? ' open' : ''}><summary>${head}</summary><small>${esc(s.arm === 'shown' || s.arm === 'map' ? T.briefReceived : T.briefWouldHave)}</small><pre class="brief-text">${esc(s.text)}</pre></details></li>`;
   }).join('')}</ul>` : `<p class="none">${esc(T.briefNoStarts)}</p>`;
   const c = b.compare, num = (v, k) => (v == null ? '—' : k === 'rereadShare' || k === 'followed' ? `${Math.round(v * 100)}%` : k.startsWith('tokens') ? fmtK(Math.round(v)) : String(v));
-  // v2 (with the code map) gets its own column and verdict while it is an arm, or once it has measured starts.
-  const v2 = c.map && (b.mapArm || c.map.n > 0);
-  const rows = Object.keys(T.briefRows).map((k) => `<tr><td>${esc(T.briefRows[k])}</td><td>${esc(num(c.shown[k], k))}</td><td>${esc(num(c.withheld[k], k))}</td>${v2 ? `<td>${esc(num(c.map[k], k))}</td>` : ''}</tr>`).join('');
+  // The shown arm is v2 (with the code map) while the map is on, else v1; an arm that has measured starts keeps its column.
+  const v1 = !b.mapArm || c.shown.n > 0, v2 = c.map && (b.mapArm || c.map.n > 0);
+  const cols = [...(v1 ? [['shown', T.briefCols[1]]] : []), ...(v2 ? [['map', T.briefColMap]] : []), ['withheld', T.briefCols[2]]];
+  const rows = Object.keys(T.briefRows).map((k) => `<tr><td>${esc(T.briefRows[k])}</td>${cols.map(([arm]) => `<td>${esc(num(c[arm][k], k))}</td>`).join('')}</tr>`).join('');
   const say = (v, s, tk) => (v === 'collecting' ? T.briefVerdict.collecting(s.n, c.withheld.n, c.minPerArm) : T.briefVerdict[v](tk.toEdit, tk.total));
-  const verdicts = [say(c.verdict, c.shown, c.tokens), ...(v2 ? [`${T.briefMapLabel} ${say(c.mapVerdict, c.map, c.mapTokens)}`] : [])];
+  const verdicts = [...(v1 ? [say(c.verdict, c.shown, c.tokens)] : []), ...(v2 ? [`${T.briefMapLabel} ${say(c.mapVerdict, c.map, c.mapTokens)}`] : [])];
   patchHTML(el, `${toggle}${preview}
     <h3 class="exp-h">${esc(T.briefStarts)}</h3>${starts}
     <h3 class="exp-h">${esc(T.briefCompare)}</h3>
-    <table class="tbl brief-cmp${v2 ? ' v2' : ''}"><thead><tr>${[...T.briefCols, ...(v2 ? [T.briefColMap] : [])].map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+    <table class="tbl brief-cmp${cols.length > 2 ? ' v2' : ''}"><thead><tr>${['', ...cols.map(([, h]) => h)].map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
     ${verdicts.map((v) => `<p class="verdict">${esc(v)}</p>`).join('')}<p class="verdict">${esc(T.briefTokensNote)}</p>`);
 }
 $('memBriefing').addEventListener('toggle', (e) => {

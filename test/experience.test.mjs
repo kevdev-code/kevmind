@@ -141,6 +141,7 @@ test('a shell syntax mistake in the command is not a known project failure, howe
   const others = [
     { cmd: "node -e \"console.log('a')\" | grep (", error: "Exit code 2\n/usr/bin/bash: -c: line 1: syntax error near unexpected token `('" },
     { cmd: 'nmp test', error: 'Exit code 127\n/usr/bin/bash: line 1: nmp: command not found' },
+    { cmd: "echo 'oops", error: "Exit code 1\nzsh:1: unmatched '" },
   ];
   const real = { cmd: 'npm test', error: 'Exit code 1\nFAIL test/cart.test.js' };
   const runs = [heredoc, { cmd: 'sed -i s/a/b/ patch.cjs' }, { cmd: 'cat patch.cjs' }, ...others, { cmd: 'npm test' }, real, { edit: 'src/cart.js' }, { cmd: 'npm test' }];
@@ -150,7 +151,7 @@ test('a shell syntax mistake in the command is not a known project failure, howe
   turn(agg, root, 'q', NOW - 2 * DAY + 3_600_000, { runs });
   const p = projOf(agg, root);
   assert.ok(answerKnownFailures(p, 'P', 'cat', NOW).startsWith(NO_DATA), 'the open heredoc is not served');
-  for (const cmd of ['node', 'nmp test']) assert.ok(answerKnownFailures(p, 'P', cmd, NOW).startsWith(NO_DATA), `${cmd}: a shell mistake is not served`);
+  for (const cmd of ['node', 'nmp test', 'echo']) assert.ok(answerKnownFailures(p, 'P', cmd, NOW).startsWith(NO_DATA), `${cmd}: a shell mistake is not served`);
   const all = answerKnownFailures(p, 'P', '', NOW);
   assert.match(all, /`npm test` failed with "exit 1: FAIL <path>"/, 'a real failure still is');
   assert.ok(!/unexpected EOF|syntax error|command not found/.test(all), all);

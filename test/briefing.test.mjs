@@ -83,11 +83,34 @@ test('half the starts are shown and half withheld, the same way every time', () 
   assert.equal(armOf('abc', 0), armOf('abc', 0));
 });
 
-test('with the code map on, a third of the starts get v2; with it off, the split is the same as before', () => {
-  const counts = { withheld: 0, shown: 0, map: 0 };
-  for (let i = 0; i < 6000; i++) counts[armOf(`session-${i}`, i % 3, ARMS.v2)]++;
-  for (const [arm, n] of Object.entries(counts)) assert.ok(n > 1850 && n < 2150, `${arm}: ${n} of 6000`);
-  for (let i = 0; i < 50; i++) assert.equal(armOf(`s-${i}`, 0, ARMS.v1), armOf(`s-${i}`, 0), 'v1 alone keeps its old assignment');
+test('with the code map on, the shown half gets v2; with it off, v1, split the same way', () => {
+  const counts = { withheld: 0, map: 0 };
+  for (let i = 0; i < 4000; i++) counts[armOf(`session-${i}`, i % 3, ARMS.v2)]++;
+  for (const [arm, n] of Object.entries(counts)) assert.ok(n > 1880 && n < 2120, `${arm}: ${n} of 4000`);
+  for (let i = 0; i < 50; i++) {
+    assert.equal(armOf(`s-${i}`, 0, ARMS.v1), armOf(`s-${i}`, 0), 'v1 alone keeps its old assignment');
+    assert.equal(armOf(`s-${i}`, 0, ARMS.v2) === 'withheld', armOf(`s-${i}`, 0) === 'withheld', 'the same starts are withheld either way');
+  }
+});
+
+test('too long: the lowest-ranked lines go first, whole, and the line naming the tools always stays', () => {
+  const facts = {
+    name: 'demo-shop', now: Date.now(), toolsOn: true, failures: [], together: [], stale: [],
+    last: { first: Date.now() - 3600_000, last: Date.now() - 60_000, edited: ['src/cart.js'], failing: [], running: [], waiting: false, reply: '' },
+    git: [{ label: '', hash: 'abc1234', ts: Date.now() - 3600_000, subject: 'Fix the cart total', dirty: [] }],
+    rereads: ['README.md'],
+    notes: Array.from({ length: 3 }, (_, i) => ({ name: `memory/${'n'.repeat(260)}${i}.md` })),
+    map: { area: { name: 'Cart', files: 12, core: ['src/cart.js', 'src/price.js'], dependsOn: [], usedBy: [], others: 0 }, key: [{ file: `src/${'k'.repeat(400)}.js`, by: 9 }], hubs: [], stale: [{ note: 'memory/a.md', names: ['legacyTotal'], date: '2026-09-29' }] },
+  };
+  const all = briefingText({ ...facts, notes: [], map: { ...facts.map, key: [] } }).text;
+  const { text, items } = briefingText(facts);
+  assert.ok(all.length <= BRIEF.maxChars && text.length <= BRIEF.maxChars);
+  assert.match(text, /\n- KevMind's file_context, file_history, known_failures and code_map tools answer questions like these on demand\.$/, 'the tools line stays, last');
+  // Ranks: left off, git, the code map's area, re-reads, notes, key files, stale names. The longest low-ranked lines go.
+  assert.match(text, /Last session with edits[\s\S]*\n- git: [\s\S]*\n- Code map [\s\S]*\n- Read in each/);
+  assert.ok(!/Most depended-on files|names `legacyTotal`/.test(text), 'key files (65) and stale names (80) went first');
+  assert.match(text, /\n- Notes that cite these files: /, 'the notes (60) stay: dropping the two lowest was enough');
+  assert.ok(!items.includes(`file:src/${'k'.repeat(400)}.js`), 'a dropped line names nothing for the measurement');
 });
 
 test('v2: the same briefing first, then the code map: the area of the last edits, key files, names the code dropped', async () => {
@@ -106,7 +129,7 @@ test('v2: the same briefing first, then the code map: the area of the last edits
     const v1 = briefingText(await gatherFacts({ agg, root, name: 'demo-shop', sid: 's4', source: 'startup', now, git, toolsOn: true, report }));
     const v2 = briefingText(await gatherFacts({ agg, root, name: 'demo-shop', sid: 's4', source: 'startup', now, git, toolsOn: true, report, map }));
     const v1Lines = v1.text.split('\n').slice(0, -1); // all but the tools line
-    assert.deepEqual(v2.text.split('\n').slice(0, v1Lines.length), v1Lines, 'v2 says everything v1 says, first');
+    assert.deepEqual(v2.text.split('\n').filter((l) => v1Lines.includes(l)), v1Lines, 'v2 says everything v1 says, in the same order');
     assert.match(v2.text, /- Code map \(from imports and exports, approximate\): the last edits are in the Cart area \(3 files; core `src\/price\.js`, `src\/cart\.js`\)\./);
     assert.match(v2.text, /- Most depended-on files: `src\/price\.js` \(imported by 1\); shared by most of the code: `util\.js` \(3\)\./, 'a file nothing imports is not a key file');
     assert.match(v2.text, /- `memory\/cart_notes\.md` names `legacyTotal`, which no code file has anymore \(git: last in the code on 2026-09-29\)\./);
@@ -193,7 +216,7 @@ test('the server: off by default; on, every start is recorded with its text, and
   const { dir, root } = project();
   const home = path.join(dir, 'kevmind');
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(path.join(home, 'config.json'), '{"experienceTools": true}'); // the code map is on, so v2 is an arm too
+  fs.writeFileSync(path.join(home, 'config.json'), '{"experienceTools": true}'); // the code map is on, so the shown half gets v2
   // Past work in the logs before the server starts, so its aggregate has something to say.
   const now = Date.now(), month = new Date(now).toISOString().slice(0, 7);
   const lines = [['s1', now - 2 * 3600_000, 'UserPromptSubmit', {}], ['s1', now - 2 * 3600_000 + MIN, 'PreToolUse', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/cart.js') }, tool_use_id: 'e1' }]]
@@ -217,7 +240,7 @@ test('the server: off by default; on, every start is recorded with its text, and
       assert.match(rec.text, /Last session with edits: .* Its last edits: `src\/cart\.js`\./, 'the text is recorded either way');
       assert.equal(a.text, rec.arm === 'withheld' ? '' : rec.text, `${rec.arm}: Claude gets the text unless it is withheld`);
     }
-    assert.ok(['shown', 'withheld', 'map'].every((arm) => recs.some((x) => x.arm === arm)), recs.map((x) => x.arm).join());
+    assert.ok(['withheld', 'map'].every((arm) => recs.some((x) => x.arm === arm)) && !recs.some((x) => x.arm === 'shown'), recs.map((x) => x.arm).join());
     const panel = JSON.parse((await req(`${base}/api/briefing?key=${encodeURIComponent(recs[0].key)}`)).body);
     assert.equal(panel.on, true);
     assert.equal(panel.starts.length, 8, 'the panel lists the last eight starts, each with its text');

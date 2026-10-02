@@ -7,8 +7,8 @@
 //
 // Every start is measured: half of them get the briefing and half don't (by a hash of the session and the start), and
 // both are compared on what happened next, tokens included (from the session's transcript), so the Experience panel
-// can say whether showing it saves anything. While the code map is on (with the experience tools), a third of the
-// starts get v2 instead: the same briefing plus lines from the code map, compared with the withheld starts the same way.
+// can say whether showing it saves anything. While the code map is on (with the experience tools), the shown half gets
+// v2: the same briefing plus lines from the code map. With it off, the shown half gets v1.
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { keyOf } from './memory.js';
@@ -39,9 +39,9 @@ function gitRead(cwd, args) {
   });
 }
 
-// Which arm a start falls in, in equal shares: a hash of the session and how many starts it had before this one.
-// 'withheld' and 'shown' (v1); with the code map on, also 'map' (v2: v1 plus the code map's lines).
-export const ARMS = { v1: ['withheld', 'shown'], v2: ['withheld', 'shown', 'map'] };
+// Which arm a start falls in, half and half: a hash of the session and how many starts it had before this one.
+// 'withheld' against 'shown' (v1) or, with the code map on, against 'map' (v2: v1's lines plus the code map's).
+export const ARMS = { v1: ['withheld', 'shown'], v2: ['withheld', 'map'] };
 export function armOf(sid, n = 0, arms = ARMS.v1) {
   return arms[crypto.createHash('sha1').update(`${sid}|${n}`).digest()[0] % arms.length];
 }
@@ -187,50 +187,59 @@ function mapFacts(map, facts, report) {
 const noteName = (p) => { const parts = String(p).split(/[\\/]/); return parts.slice(-2).join('/'); };
 
 // ---- the text ------------------------------------------------------------------------------------------------
-// Facts as plain statements, never instructions (Claude Code's guidance for injected context). Lines in order of
-// importance; past maxChars the last ones go, whole. Returns { text, items }: items are the files and commands it
-// names, for the measurement (what was then opened).
+// Facts as plain statements, never instructions (Claude Code's guidance for injected context). Each line has a rank
+// (RANK, lower first) and is shown in that order. Past maxChars the lowest-ranked lines go, whole, one at a time;
+// the line naming the tools always stays, last. Returns { text, items }: items are the files and commands the shown
+// lines name, for the measurement (what was then opened).
+const RANK = { leftOff: 10, git: 20, failure: 30, area: 35, rereads: 40, together: 50, notes: 60, keyFiles: 65, staleNote: 70, staleName: 80 };
 export function briefingText(f) {
-  const lines = [], items = new Set();
-  const name = (xs) => { for (const x of xs) items.add(`file:${x}`); return list(xs); };
+  const lines = []; // { rank, text, items }
+  const add = (rank, build) => { const items = []; const name = (xs) => { for (const x of xs) items.push(`file:${x}`); return list(xs); }; const text = build(name, items); lines.push({ rank, text, items }); };
   if (f.last) {
-    const l = f.last, parts = [`Last session with edits: ${when(l.first)} to ${when(l.last)}.`];
-    if (l.edited.length) parts.push(`Its last edits: ${name(l.edited)}.`);
-    if (l.failing.length) { parts.push(`Still failing when it stopped: ${l.failing.map((r) => `${code(r.fam)} ("${r.sig}")`).join(', ')}.`); for (const r of l.failing) items.add(`cmd:${r.fam}`); }
-    if (l.running.length) parts.push(`Subagents left running: ${l.running.join(', ')}.`);
-    if (l.waiting) parts.push('It ended waiting for the user\'s OK.');
-    if (l.reply) parts.push(`Its last reply: "${l.reply}"`);
-    lines.push(parts.join(' '));
+    add(RANK.leftOff, (name, items) => {
+      const l = f.last, parts = [`Last session with edits: ${when(l.first)} to ${when(l.last)}.`];
+      if (l.edited.length) parts.push(`Its last edits: ${name(l.edited)}.`);
+      if (l.failing.length) { parts.push(`Still failing when it stopped: ${l.failing.map((r) => `${code(r.fam)} ("${r.sig}")`).join(', ')}.`); for (const r of l.failing) items.push(`cmd:${r.fam}`); }
+      if (l.running.length) parts.push(`Subagents left running: ${l.running.join(', ')}.`);
+      if (l.waiting) parts.push('It ended waiting for the user\'s OK.');
+      if (l.reply) parts.push(`Its last reply: "${l.reply}"`);
+      return parts.join(' ');
+    });
   }
   for (const g of f.git) {
-    const where = g.label ? `git (${g.label})` : 'git';
-    const dirty = g.dirty.length ? `${plural(g.dirty.length, 'uncommitted file')}: ${name(g.dirty.slice(0, BRIEF.maxFiles))}${g.dirty.length > BRIEF.maxFiles ? ', …' : ''}.` : 'nothing uncommitted.';
-    lines.push(`${where}: last commit ${g.hash} on ${when(g.ts)}, "${g.subject}"; ${dirty}`);
+    add(RANK.git, (name) => {
+      const dirty = g.dirty.length ? `${plural(g.dirty.length, 'uncommitted file')}: ${name(g.dirty.slice(0, BRIEF.maxFiles))}${g.dirty.length > BRIEF.maxFiles ? ', …' : ''}.` : 'nothing uncommitted.';
+      return `${g.label ? `git (${g.label})` : 'git'}: last commit ${g.hash} on ${when(g.ts)}, "${g.subject}"; ${dirty}`;
+    });
   }
   for (const x of f.failures) {
-    items.add(`cmd:${x.fam}`);
-    lines.push(`Known failure: ${code(x.fam)} failed with "${x.sig}" in ${plural(x.episodes, 'work episode')} on ${plural(x.days, 'day')}; ${x.fix.n} times the next success came after ${x.fix.kind === 'file' ? `editing ${name([x.fix.name])}` : `running ${code(x.fix.name)}`}.`);
+    add(RANK.failure, (name, items) => {
+      items.push(`cmd:${x.fam}`);
+      return `Known failure: ${code(x.fam)} failed with "${x.sig}" in ${plural(x.episodes, 'work episode')} on ${plural(x.days, 'day')}; ${x.fix.n} times the next success came after ${x.fix.kind === 'file' ? `editing ${name([x.fix.name])}` : `running ${code(x.fix.name)}`}.`;
+    });
   }
-  if (f.rereads.length) lines.push(`Read in each of the last 3 sessions: ${name(f.rereads)}.`);
-  for (const t of f.together) lines.push(`${code(t.a)} usually changes with ${name([t.b])} (${t.how}).`);
-  if (f.notes.length) lines.push(`Notes that cite these files: ${f.notes.map((n) => code(n.name)).join(', ')}.`);
-  for (const s of f.stale) lines.push(`${code(s.note)} cites ${code(s.path)}, which ${s.moved ? 'seems to have moved' : 'is not in the working tree'}.`);
-  // v2 only, after v1's lines, so v2 says everything v1 says first.
+  if (f.rereads.length) add(RANK.rereads, (name) => `Read in each of the last 3 sessions: ${name(f.rereads)}.`);
+  for (const t of f.together) add(RANK.together, (name) => `${code(t.a)} usually changes with ${name([t.b])} (${t.how}).`);
+  if (f.notes.length) add(RANK.notes, () => `Notes that cite these files: ${f.notes.map((n) => code(n.name)).join(', ')}.`);
+  for (const s of f.stale) add(RANK.staleNote, () => `${code(s.note)} cites ${code(s.path)}, which ${s.moved ? 'seems to have moved' : 'is not in the working tree'}.`);
+  // v2 only: the code map's lines, ranked among v1's.
   if (f.map) {
     const { area: a, key, hubs, stale } = f.map;
     if (a) {
       const links = [a.dependsOn.length && `uses ${a.dependsOn.join(', ')}`, a.usedBy.length && `is used by ${a.usedBy.join(', ')}`].filter(Boolean);
-      lines.push(`Code map (from imports and exports, approximate): the last edits are in the ${a.name} area (${plural(a.files, 'file')}; core ${name(a.core)})${links.length ? `, which ${links.join(' and ')}` : ''}.${a.others ? ` They also touch ${plural(a.others, 'other area')}.` : ''}`);
+      add(RANK.area, (name) => `Code map (from imports and exports, approximate): the last edits are in the ${a.name} area (${plural(a.files, 'file')}; core ${name(a.core)})${links.length ? `, which ${links.join(' and ')}` : ''}.${a.others ? ` They also touch ${plural(a.others, 'other area')}.` : ''}`);
     }
-    if (key.length) lines.push(`Most depended-on files: ${key.map((k) => `${name([k.file])} (imported by ${k.by})`).join(', ')}${hubs.length ? `; shared by most of the code: ${hubs.map((h) => `${code(h.file.split('/').pop())} (${h.by})`).join(', ')}` : ''}.`);
-    for (const s of stale) lines.push(`${code(s.note)} names ${list(s.names)}, which no code file has anymore (git: last in the code on ${s.date}).`);
+    if (key.length) add(RANK.keyFiles, (name) => `Most depended-on files: ${key.map((k) => `${name([k.file])} (imported by ${k.by})`).join(', ')}${hubs.length ? `; shared by most of the code: ${hubs.map((h) => `${code(h.file.split('/').pop())} (${h.by})`).join(', ')}` : ''}.`);
+    for (const s of stale) add(RANK.staleName, () => `${code(s.note)} names ${list(s.names)}, which no code file has anymore (git: last in the code on ${s.date}).`);
   }
   if (!lines.length) return { text: '', items: [] };
-  if (f.toolsOn) lines.push(`KevMind's file_context, file_history${f.map ? ', known_failures and code_map' : ' and known_failures'} tools answer questions like these on demand.`);
+  const kept = lines.map((l, i) => ({ ...l, i })).sort((x, y) => x.rank - y.rank || x.i - y.i);
+  const tools = f.toolsOn ? `KevMind's file_context, file_history${f.map ? ', known_failures and code_map' : ' and known_failures'} tools answer questions like these on demand.` : null;
   const head = `KevMind's record of ${f.name}, from its past Claude Code sessions and git (${when(f.now)}):`;
-  let text = '';
-  for (const l of lines) { const next = `${text || head}\n- ${l}`; if (next.length > BRIEF.maxChars) break; text = next; }
-  return { text, items: [...items] };
+  const render = () => [head, ...kept.map((l) => `- ${l.text}`), ...(tools ? [`- ${tools}`] : [])].join('\n');
+  while (kept.length > 1 && render().length > BRIEF.maxChars) kept.pop();
+  if (render().length > BRIEF.maxChars) return { text: '', items: [] }; // ponytail: one line longer than the budget on its own; never seen, cut it if it ever is
+  return { text: render(), items: [...new Set(kept.flatMap((l) => l.items))] };
 }
 
 // ---- the measurement -------------------------------------------------------------------------------------------
