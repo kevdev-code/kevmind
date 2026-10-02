@@ -5,8 +5,9 @@
 // - fibers: links as curved, glowing ribbons (instanced quads, one per curve segment); the same program draws the
 //   neurons' dendrites and axons, the fiber tracts and the fixed structures (brainstem bundle, Purkinje trees);
 //   agent beams reuse it;
-// - nodes: somas (shape by type, halo, ignition flash, think ripples, depth fog);
-// - sprites on top: agent heads, rings, pulses.
+// - nodes: somas (a neon outline by type, a bright core, ignition flash and heat, think ripples, depth fog);
+// - sprites on top: agent heads, rings, pulses;
+// - bloom: what work adds over the cached brain glows where it is bright over an area; structure never blooms.
 // Two caches keep the frames cheap. The deep cache (ground, shell, dendrites, tracts) is redrawn only when the
 // camera or what is shown changes (layers.deepKey); the main cache (the deep one plus haze and links) also when the
 // activity lighting changes (layers.mainKey). Each animation frame copies the main cache and draws the glow, active
@@ -37,7 +38,7 @@ export const SPRITE = { glow: 0, ring: 1, head: 2, dust: 3 };
 export const NODE_FLOATS = 11; // x y z size shape project r g b seed part
 export const FIBER_FLOATS = 20; // p0(3) p1(3) t0 t1 c0(3) c1(3) type width core alpha project level+2·part
 export const SPRITE_FLOATS = 9; // x y z size r g b a mode
-export const FIL_FLOATS = 15; // p0(3) p1(3) control(3) normal(3) alpha part tint
+export const FIL_FLOATS = 16; // p0(3) p1(3) control(3) normal(3) alpha part tint lobe
 // The intro's timeline (s): each part's wave (start, length), the tracts, the one closing wave (start, length), the end.
 export const INTRO = { stem: [0.25, 0.4], cerebellum: [0.6, 0.4], cerebrum: [0.9, 1.0], tracts: [1.85, 0.45], wave: [2.3, 0.55], end: 2.95 };
 const STILL = [99, -9, -9, 0]; // the intro's clock once it's over: everything shown, no waves
@@ -105,11 +106,12 @@ void main() {
   o = vec4(ground(v_uv) + b * (on * (1.0 + 0.9 * wave) + fr * 2.2) + vec3(0.35) * fr * min(1.0, lit * 2.0), 1.0);
 }`;
 
+const BODY = 0.6; // the shape fills this much of its sprite; the rest is its glow
 export const NODE_VS = `#version 300 es
 in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part; in vec4 a_state;
-uniform mat4 u_vp; uniform float u_time, u_px, u_life; uniform vec2 u_depth; uniform float u_proj[32];
+uniform mat4 u_vp; uniform float u_time, u_px, u_life, u_dpr; uniform vec2 u_depth; uniform float u_proj[32];
 uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec3 u_kind[6];
-out vec3 v_color, v_flash; out float v_alpha, v_shape, v_white, v_far, v_ember, v_near;
+out vec3 v_color, v_flash; out float v_alpha, v_shape, v_lum, v_hot, v_ember, v_px;
 ${DEPTH}
 ${REVEAL}
 void main() {
@@ -133,83 +135,59 @@ void main() {
   float lift = front(T) * 1.2 + wave(a_pos) * 0.9; // the intro's growth front and closing wave
   // Life: a slow, soft breathing of each cell's light, out of step with its neighbors (5 to 9 s a cycle).
   float breath = 1.0 + u_life * 0.12 * sin(u_time * (0.7 + 0.55 * a_seed) + a_seed * 47.0);
-  vec3 col = a_color * a_state.x * pf * (1.0 + lift) * breath;
-  col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), far * 0.55); // far: desaturated...
-  v_color = col * (1.0 - far * 0.5) + rip;                           // ...and dimmer
+  float b = a_state.x * pf * (1.0 + lift) * breath * (1.0 - far * 0.45); // far: dimmer...
+  vec3 col = mix(a_color, vec3(dot(a_color, vec3(0.3, 0.59, 0.11))), far * 0.3); // ...and a little grayer; its hue still reads
+  v_color = col * b + rip;
+  v_lum = b;
   v_flash = u_kind[int(a_state.w)] * flash;
-  v_white = clamp(a_state.y * 0.5 + flash + lift * 0.5, 0.0, 1.0);
-  v_alpha = vis * on * (1.0 - far * 0.45);
+  // Heat: white-hot when just touched, cooling back to the region's color with the flash and the ember.
+  v_hot = clamp(a_state.y * 0.4 + flash + lift * 0.5, 0.0, 1.0);
+  v_alpha = vis * on * (1.0 - far * 0.3);
   v_shape = a_shape;
-  v_far = far;
   v_ember = clamp(a_state.y + flash, 0.0, 1.0);
-  // Nearer cells a little bigger, farther ones a little smaller, beyond perspective.
-  float px = vis * min(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w, 220.0);
+  // Nearer cells a little bigger, farther ones a little smaller, beyond perspective; never under 5 px, so the
+  // outline still reads as a point of light.
+  float px = vis * clamp(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w * ${F(0.46 / BODY)}, 5.0 * u_dpr, 220.0);
   gl_PointSize = px;
-  v_near = smoothstep(18.0, 70.0, px); // drawn large: up close, where a cell is seen as a body
+  v_px = px;
 }`;
-// A glowing cell, shaded as a small 3D body lit from the upper left: a soft gradient body, a bright nucleus, a rim
-// light (brighter where the surface turns away), and a halo that grows when the cell is active. Per type: a sphere
-// with its nucleus (code files), a faceted octahedron (instructions), a pyramid, the soma of a pyramidal cell (memory
-// notes), a small cube (Serena notes), a torus (tools). Farther cells have softer edges.
+// A neon cell: its type's shape as a glowing outline in its region's color (a tube: lighter along its middle, a tight
+// glow on both sides), hollow, with a bright core. Circle (code files), diamond (instructions), triangle (memory
+// notes), hexagon (Serena notes), two concentric rings (tools). The outline is drawn from the distance to the shape,
+// never thinner than about a pixel and a half, so it stays crisp at any zoom; from far away it closes into a point
+// of light. A cell that was just touched fills with light and turns white-hot, then cools back to its color.
 export const NODE_FS = `#version 300 es
 precision mediump float;
-in vec3 v_color, v_flash; in float v_alpha, v_shape, v_white, v_far, v_ember, v_near;
+in vec3 v_color, v_flash; in float v_alpha, v_shape, v_lum, v_hot, v_ember, v_px;
 out vec4 o;
-const vec3 LIGHT = vec3(-0.45, 0.55, 0.70);
 void main() {
   vec2 q = gl_PointCoord * 2.0 - 1.0;
   q.y = -q.y;
-  if (dot(q, q) > 1.0) discard;
-  vec2 p = q / 0.46; // the body fills 46% of the sprite; the rest is halo
-  float d, nucleus = 0.0, ridge = 0.0, rimK = 1.3, base = 0.45, haloK = 1.0, soft = 3.0, tint = 0.55, kd = 0.8;
-  vec3 n;
-  if (v_shape < 0.5) { // sphere: a body lit like one (lit side, terminator, shadow), a crisp edge, a bright nucleus
-    float r = length(p), aa = max(fwidth(r), 0.02);
-    d = r - 1.0;
-    n = vec3(p, sqrt(max(0.0, 1.0 - r * r)));
-    float cr = length(p - vec2(-0.12, 0.14));
-    nucleus = (1.0 - smoothstep(0.24 - aa, 0.24 + aa, cr)) * 0.5 + exp(-cr * cr * 40.0) * 0.35;
-    // A soft edge, or a white dot in a dim flat disc, reads as bokeh. Up close the cell gets the light to show its shape
-    // (crowded lobes keep file cells dim, which is fine while they are small); at overview the same energy as before.
-    float lift = 1.0 + 1.6 * v_near;
-    base = 0.3 * lift; kd = 1.3 * lift; rimK = 0.3; haloK = 0.35; soft = 0.5; tint = 0.3;
-    nucleus *= 1.0 + 0.8 * v_near;
-  } else if (v_shape < 1.5) { // octahedron: four facets toward the viewer, ridges between them
-    d = (abs(p.x) * 0.9 + abs(p.y) * 0.75) - 1.0;
-    n = normalize(vec3(sign(p.x) * 0.55, sign(p.y) * 0.5, 0.68));
-    ridge = exp(-pow(min(abs(p.x), abs(p.y)) / 0.06, 2.0));
-    nucleus = exp(-dot(p, p) * 10.0) * 0.6;
-  } else if (v_shape < 2.5) { // pyramid: a left and a right face, a ridge from the apex
-    vec2 t = vec2(abs(p.x), p.y + 0.6); // apex at the top (y 1), base at y -0.6, 1.8 wide
-    d = max(t.x * 0.872 + t.y * 0.49 - 0.785, -t.y);
-    n = normalize(vec3(p.x < 0.0 ? -0.55 : 0.5, 0.3, 0.75));
-    ridge = exp(-pow(p.x / 0.06, 2.0)) * step(-0.6, p.y);
-    vec2 c = p - vec2(0.0, -0.05);
-    nucleus = exp(-dot(c, c) * 12.0) * 0.8;
-  } else if (v_shape < 3.5) { // cube, a corner toward the viewer: top, left and right faces
-    vec2 a = abs(p);
-    d = max(a.x, a.x * 0.5 + a.y * 0.866) - 0.86; // a pointy-top hexagon
-    bool top = p.y > a.x * 0.577;
-    n = top ? normalize(vec3(0.0, 0.85, 0.5)) : normalize(vec3(p.x < 0.0 ? -0.75 : 0.75, -0.25, 0.6));
-    float e1 = abs(p.x) * step(p.y, 0.0), e2 = abs(p.y - abs(p.x) * 0.577) * step(0.0, p.y + 0.01);
-    ridge = exp(-pow(min(e1, e2) / 0.06, 2.0)) * 0.8;
-  } else { // torus: a glowing ring, a tube shaded across its width
-    float r = length(p), k = (r - 0.64) / 0.34;
-    d = abs(r - 0.64) - 0.34;
-    vec2 dir = r > 0.001 ? p / r : vec2(0.0);
-    n = vec3(dir * clamp(k, -1.0, 1.0), sqrt(max(0.0, 1.0 - k * k)));
-    nucleus = exp(-pow((r - 0.64) / 0.12, 2.0)) * 0.5; // a bright line along the top of the tube
-  }
-  float w = max(fwidth(d), 0.02) * (1.0 + v_far * soft);
-  float body = 1.0 - smoothstep(-w, w, d);
-  float diff = max(dot(n, normalize(LIGHT)), 0.0), rim = pow(1.0 - clamp(n.z, 0.0, 1.0), 2.0) * rimK / 1.3;
-  vec3 lit = v_color * (base + kd * diff) + v_color * rim * 1.3 + mix(v_color, vec3(1.0), tint) * (nucleus * 1.1 + ridge * 0.45);
-  lit = mix(lit, vec3(1.0), v_white * 0.55) + v_flash;
-  float halo = exp(-max(d, 0.0) * 3.4) * (0.16 * haloK + 0.4 * v_ember) * (1.0 - body) * (1.0 - dot(q, q)); // to 0 at the sprite's edge: no disc
-  vec3 col = lit * body + (v_color + v_flash) * halo;
-  float a = (body + halo) * v_alpha;
-  if (a < 0.004) discard;
-  o = vec4(col * v_alpha, 0.0);
+  float q2 = dot(q, q);
+  if (q2 > 1.0) discard;
+  float px1 = 1.0 / max(v_px * ${F(BODY / 2)}, 1.0); // a device pixel, in the shape's units (its radius is about 1)
+  vec2 p = q / ${F(BODY)}, pc = p;
+  float d, coreK = 1.0; // d: the distance to the outline, negative inside
+  if (v_shape < 0.5) d = length(p) - 0.8;
+  else if (v_shape < 1.5) d = (abs(p.x) * 1.05 + abs(p.y) * 0.875 - 1.0) * 0.732;
+  else if (v_shape < 2.5) { vec2 t = vec2(abs(p.x), p.y + 0.6); d = max(t.x * 0.872 + t.y * 0.49 - 0.785, -t.y); pc.y += 0.07; }
+  else if (v_shape < 3.5) { vec2 a = abs(p); d = max(a.x, a.x * 0.5 + a.y * 0.866) - 0.86; }
+  else { d = abs(length(p) - 0.58) - 0.27; coreK = 0.0; }
+  float hw = max(0.085, 0.7 * px1), aa = 0.75 * px1, ad = abs(d);
+  float line = 1.0 - smoothstep(hw - aa, hw + aa, ad);
+  float inside = 1.0 - smoothstep(-aa, aa, d);
+  float glow = exp(-ad / (0.16 + 0.24 * v_ember)) * (1.0 - q2) * (1.0 - line); // to 0 at the sprite's edge
+  float big = 1.0 - smoothstep(0.16, 0.42, px1); // from far away the cell is a point of its color; its white core shows as it grows
+  float r2 = dot(pc, pc), core = coreK * (0.2 + 0.8 * big) * (exp(-r2 * 24.0) + exp(-r2 * 110.0) * 0.8);
+  vec3 white = vec3(v_lum);
+  vec3 col = mix(v_color, white, 0.22 * big + 0.6 * v_hot) * line * 1.3
+    + v_color * glow * (0.32 + 0.5 * v_ember)
+    + mix(v_color, white, 0.7 * v_hot) * inside * (0.06 + 0.6 * v_hot)
+    + mix(v_color, white, 0.7) * core * (0.9 + v_hot)
+    + v_flash * (line + inside * 0.6 + glow * 0.5);
+  col *= v_alpha;
+  if (max(col.r, max(col.g, col.b)) < 0.004) discard;
+  o = vec4(col, 0.0);
 }`;
 
 // Vertex pulling: a segment's or strand's data sits in a float texture (u_data, 2048 texels wide), read by vertex id,
@@ -262,7 +240,7 @@ void main() {
   vec3 col = tail ? a_c0 : a_c1;
   if (a_hl > 2.5 && type < 8) { col = mix(col, u_hlColor, 0.45); alpha = 0.6; }
   float far = farOf(c.w);
-  col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), far * 0.55);
+  col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), far * 0.35);
   v_color = mix(col, vec3(1.0), clamp(lift * 0.35, 0.0, 0.6));
   v_alpha = alpha * (on + lift) * (1.0 - far * 0.6) * step(0.05, min(c0.w, c1.w));
   v_side = side;
@@ -334,9 +312,10 @@ bool cutAway(vec3 p, float part) { return u_cut != 0.0 && part < 0.5 && p.z * u_
 
 // Filaments: a quadratic curve per instance (p0, control, p1), a thin screen-space ribbon through three points of it
 // (6 vertices), or straight through its ends (4 vertices, u_step 1, while the camera moves). The cerebrum in a cool
-// gray and violet, mixed per strand; the cerebellum pale ice and the brainstem blue-white, each its own structure.
+// gray and violet, mixed per strand; the cerebellum and the brainstem pale, each its own structure; every strand takes
+// a little of its lobe's color (u_lobeMix), so the regions read on the shell too.
 export const FIL_VS = `#version 300 es
-uniform mat4 u_vp; uniform vec2 u_half; uniform float u_dpr, u_alpha, u_width, u_step; uniform int u_verts; uniform vec3 u_color, u_tint, u_cbl, u_stem;
+uniform mat4 u_vp; uniform vec2 u_half; uniform float u_dpr, u_alpha, u_width, u_step; uniform int u_verts; uniform vec3 u_color, u_tint, u_cbl, u_stem; uniform vec3 u_lobe[7]; uniform float u_lobeMix;
 out vec4 v_color; out float v_side, v_T;
 ${PULL}
 ${REVEAL}
@@ -356,6 +335,7 @@ void main() {
   c.xy += vec2(-dir.y, dir.x) * side * u_width * u_dpr * 0.5 / u_half * c.w;
   gl_Position = c;
   vec3 col = a_k.y > 1.5 ? u_stem : a_k.y > 0.5 ? u_cbl : mix(u_color, u_tint, a_k.z * 0.7);
+  col = mix(col, u_lobe[int(d3.w + 0.5)], u_lobeMix);
   v_color = vec4(col, u_alpha * a_k.x * facing(p, a_n));
   v_side = side;
   v_T = revealAt(p.y, a_k.y);
@@ -400,6 +380,39 @@ void main() {
   o = vec4(v_color.rgb * a, 0.0);
 }`;
 
+// Bloom: where work adds a lot of light to the frame, it glows. The GPU halves the finished frame down to a quarter
+// of its CSS size (so thin lines average away); what the cached brain already holds there (ground, shell, tracts,
+// links: u_base, halved the same way) is taken out, so structure never blooms, however dense; a threshold passes
+// only what is bright over an area (hot cells, beams, trails, agents); a blur across and one down spread it. A
+// second, wider octave at half that size; both are added back over the brain, the hottest part turning toward white.
+export const BLUR_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex, u_base; uniform vec2 u_dir; uniform vec2 u_th; // threshold and knee (knee 0: everything passes)
+out vec4 o;
+vec3 tap(vec2 uv) {
+  vec3 c = texture(u_tex, uv).rgb;
+  if (u_th.y > 0.0) {
+    c = max(c - texture(u_base, uv).rgb, 0.0);
+    c *= smoothstep(u_th.x, u_th.x + u_th.y, max(c.r, max(c.g, c.b)));
+  }
+  return c;
+}
+void main() {
+  o = vec4(tap(v_uv) * 0.227027 + (tap(v_uv + u_dir * 1.384615) + tap(v_uv - u_dir * 1.384615)) * 0.316216
+    + (tap(v_uv + u_dir * 3.230769) + tap(v_uv - u_dir * 3.230769)) * 0.07027, 1.0);
+}`;
+export const BLOOM_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_a, u_b; uniform vec2 u_k;
+out vec4 o;
+void main() {
+  vec3 c = texture(u_a, v_uv).rgb * u_k.x + texture(u_b, v_uv).rgb * u_k.y;
+  float m = max(c.r, max(c.g, c.b));
+  o = vec4(mix(c, vec3(m), smoothstep(0.35, 1.0, m) * 0.6), 0.0);
+}`;
+
 function program(gl, vs, fs) {
   const p = gl.createProgram();
   for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
@@ -423,6 +436,8 @@ export class Renderer {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, premultipliedAlpha: false, powerPreference: 'low-power', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 is not available');
     this.gl = gl;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info'); // a software renderer gets no bloom: it costs it by the pixel
+    this.software = /swiftshader|llvmpipe|software|basic render/i.test(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '');
     this.canvas = canvas;
     this.palette = palette;
     this.bg = program(gl, BG_VS, BG_FS);
@@ -432,6 +447,8 @@ export class Renderer {
     this.sprite = program(gl, SPRITE_VS, SPRITE_FS);
     this.dust = program(gl, DUST_VS, DUST_FS);
     this.filProg = program(gl, FIL_VS, FIL_FS);
+    this.blur = program(gl, BG_VS, BLUR_FS);
+    this.bloomProg = program(gl, BG_VS, BLOOM_FS);
     this.vao = { bg: gl.createVertexArray() };
     this.buf = {};
     this.layers = {}; // fiber-program layers: dendrites and tracts (cached), active (active neurons, every frame)
@@ -585,6 +602,8 @@ export class Renderer {
     gl.uniform3f(L.u_tint, ...P.dustTint);
     gl.uniform3f(L.u_cbl, ...P.filCbl);
     gl.uniform3f(L.u_stem, ...P.filStem);
+    gl.uniform3fv(L.u_lobe, P.filLobe);
+    gl.uniform1f(L.u_lobeMix, P.lobeMix);
     gl.uniform1i(L.u_verts, straight ? 6 : 12);
     this._bindStore(L, s);
     gl.drawArrays(gl.TRIANGLES, 0, s.count * (straight ? 6 : 12));
@@ -620,6 +639,85 @@ export class Renderer {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return true;
+  }
+  // The bloom's targets: small, linear-filtered.
+  _rt(name, w, h) {
+    const gl = this.gl;
+    let t = this.targets[name];
+    if (t && t.w === w && t.h === h) return t;
+    if (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); }
+    t = this.targets[name] = { w, h, tex: gl.createTexture(), fb: gl.createFramebuffer() };
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
+    return t;
+  }
+  _half(from, fw, fh, to) { // a linear blit to half the size averages each 2 x 2
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, from);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, to.fb);
+    gl.blitFramebuffer(0, 0, fw, fh, 0, 0, to.w, to.h, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+  }
+  _blur(t, tmp, th) { // across into tmp (with the threshold), then down, back into t
+    const gl = this.gl, L = this.blur.loc;
+    gl.useProgram(this.blur.p);
+    gl.viewport(0, 0, t.w, t.h);
+    gl.uniform1i(L.u_tex, 0);
+    gl.uniform1i(L.u_base, 1);
+    for (const [src, dst, dir, k] of [[t, tmp, [1 / t.w, 0], th], [tmp, t, [0, 1 / t.h], [0, 0]]]) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
+      gl.bindTexture(gl.TEXTURE_2D, src.tex);
+      gl.uniform2f(L.u_dir, dir[0], dir[1]);
+      gl.uniform2f(L.u_th, k[0], k[1]);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+  }
+  // The bloom over the finished frame. level 2: two octaves; 1: the tight one only (phones, slower machines).
+  // palette.bloom: [threshold, knee, strength of the tight octave, of the wide one].
+  _bloom(view, level, only) {
+    const gl = this.gl, W = this.canvas.width, H = this.canvas.height, B = this.palette.bloom;
+    const steps = this.dpr >= 1.5 ? 3 : 2; // down to a quarter of the CSS size
+    const chain = (name, from) => {
+      let fw = W, fh = H, t;
+      for (let k = 1; k <= steps; k++) { t = this._rt(name + k, Math.max(1, W >> k), Math.max(1, H >> k)); this._half(from, fw, fh, t); from = t.fb; fw = t.w; fh = t.h; }
+      return t;
+    };
+    if (this.baseStale || !this.targets['base' + steps] || this.targets['base' + steps].w !== Math.max(1, W >> steps)) { this.baseStale = false; chain('base', this.targets.main.fb); }
+    const t = chain('bloom', null), base = this.targets['base' + steps];
+    gl.disable(gl.BLEND);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, base.tex);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindVertexArray(this.vao.bg);
+    this._blur(t, this._rt('bloomT', t.w, t.h), B);
+    let wide = t;
+    if (level > 1) {
+      wide = this._rt('bloomW', Math.max(1, t.w >> 1), Math.max(1, t.h >> 1));
+      this._half(t.fb, t.w, t.h, wide);
+      this._blur(wide, this._rt('bloomWT', wide.w, wide.h), [0, 0]);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
+    if (only) gl.clear(gl.COLOR_BUFFER_BIT); // checks only: the bloom alone
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    const L = this.bloomProg.loc;
+    gl.useProgram(this.bloomProg.p);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, wide.tex);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.uniform1i(L.u_a, 0); gl.uniform1i(L.u_b, 1);
+    gl.uniform2f(L.u_k, B[2], level > 1 ? B[3] : 0);
+    // Only over the brain: on a software renderer this pass costs by the pixel.
+    const r = view.radiusPx * 1.3 * this.dpr, cx = view.mid[0] * this.dpr, cy = H - view.mid[1] * this.dpr;
+    const x0 = Math.max(0, Math.floor(cx - r)), y0 = Math.max(0, Math.floor(cy - r)), x1 = Math.min(W, Math.ceil(cx + r)), y1 = Math.min(H, Math.ceil(cy + r));
+    if (x1 > x0 && y1 > y0) {
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(x0, y0, x1 - x0, y1 - y0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.disable(gl.SCISSOR_TEST);
+    }
   }
   _blit(from, to) {
     const gl = this.gl, W = this.canvas.width, H = this.canvas.height;
@@ -690,7 +788,7 @@ export class Renderer {
   //   eye, intro: [clock, wave1, wave2, 0], yr (the parts' heights), center, cut (0, or the cut-away side),
   //   mid: the brain's center on screen (CSS px), radiusPx: its radius on screen }
   // layers: { deepKey, mainKey, lod (0 full, 1 moving), haze (haze sprites at the start of the sprite buffer),
-  //   glow: [{ range, strength, color }], introOn, skip }
+  //   glow: [{ range, strength, color }], introOn, skip, bloom (0 off, 1 light, 2 full) }
   draw(view, layers) {
     const gl = this.gl, lod = layers.lod || 0, haze = layers.haze || 0, skip = layers.skip || new Set(), intro = !!layers.introOn;
     const W = this.canvas.width, H = this.canvas.height;
@@ -710,6 +808,7 @@ export class Renderer {
     }
     if (deepStale || layers.mainKey !== this.mainKey) {
       this.mainKey = layers.mainKey;
+      this.baseStale = true; // the bloom's copy of the cache
       this.staticDraws = (this.staticDraws || 0) + 1;
       this._blit(this.targets.deep.fb, this.targets.main.fb);
       gl.enable(gl.BLEND);
@@ -751,13 +850,14 @@ export class Renderer {
     const t = this.layers.tracts;
     if (intro && t && !skip.has('tracts')) this._fibers(view, t); // lit last, with their own clock
     // Where agents work, the shell's points around their lobe brighten softly (layers.glow).
-    if (this.counts.dust && layers.glow) for (const g of layers.glow) if (g.strength > 0.01) this._dust(view, [g.range], this.palette.dustAlpha * 3 * g.strength, g.color);
+    if (this.counts.dust && layers.glow) for (const g of layers.glow) if (g.strength > 0.01) this._dust(view, [g.range], this.palette.dustAlpha * 1.5 * g.strength, g.color);
     const a = this.layers.active; // active neurons: full detail, every frame
     if (a) this._fibers(view, a);
     this._common(this.node, view);
     const L = this.node.loc;
     gl.uniform1f(L.u_time, view.time);
     gl.uniform1f(L.u_life, view.life || 0);
+    gl.uniform1f(L.u_dpr, this.dpr);
     gl.uniform3fv(L.u_kind, this.palette.kinds);
     const rip = new Float32Array(16).fill(-99), ripC = new Float32Array(12);
     (view.ripples || []).slice(-4).forEach((r, i) => { rip.set([...r.p, r.t], i * 4); ripC.set(r.c, i * 3); });
@@ -767,6 +867,7 @@ export class Renderer {
     if (!skip.has('nodes')) gl.drawArrays(gl.POINTS, 0, this.counts.nodes);
     if (this.beams) this._fibers(view, this.beams);
     if (this.counts.sprites > haze) { this._common(this.sprite, view); gl.bindVertexArray(this.vao.sprite); gl.drawArrays(gl.POINTS, haze, this.counts.sprites - haze); }
+    if (layers.bloom) this._bloom(view, layers.bloom, layers.bloomOnly);
     gl.bindVertexArray(null);
   }
 }

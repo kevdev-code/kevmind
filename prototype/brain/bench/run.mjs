@@ -119,6 +119,8 @@ for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 0], ['swift
   run.autoRotate = await sample(e, p, 8);
   log('auto-rotate', JSON.stringify(run.autoRotate));
   await p.eval('__brain.setAutoRotate(false)');
+  run.bloom = await p.eval('__brain.bloom'); // the level it ended at: 2 full, 1 light, 0 off (it steps down by itself)
+  log('bloom level', run.bloom);
   results.runs.push(run);
   try { other.ws.close(); } catch {}
   await e.close();

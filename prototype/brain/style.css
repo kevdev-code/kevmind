@@ -141,23 +141,20 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .leaders circle { fill: currentColor; }
 .labels { transition: opacity var(--dur-2) var(--ease-out); }
 .labels.away { opacity: 0; } /* while the camera moves */
-.labels .leaders line { stroke-opacity: 0.32; }
-.labels .leaders circle { fill-opacity: 0.7; }
-.labels .leaders g.on line { stroke-opacity: 0.55; }
-.labels .leaders g.dim line { stroke-opacity: 0.16; }
-.labels .leaders g.dim circle { fill-opacity: 0.35; }
 .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: var(--fs-xs); line-height: 1.2; color: var(--text-2); text-shadow: 0 0 6px var(--night), 0 0 2px var(--night); } /* no layer per label: they only move with the camera */
-/* Callouts: plain text over a soft dark glow, no box; the lobe in its color, its role and folders dimmer. */
-.lbl.lobe { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; letter-spacing: 0.02em; opacity: 0.82; text-shadow: 0 0 2px var(--night), 0 0 6px var(--night), 0 0 12px var(--night); transition: opacity var(--dur-2) var(--ease-out); }
-.lbl.lobe.left { align-items: flex-end; text-align: right; }
+/* On the brain, right on its region: plain text, no box; the lobe in its color, its role and folders dimmer. A soft
+   dark halo behind the letters only (stacked shadows of the night) keeps it readable over the light. */
+.lbl.lobe { display: flex; flex-direction: column; align-items: center; gap: 2px; letter-spacing: 0.02em; opacity: 0.86;
+  text-shadow: 0 0 2px var(--night), 0 0 2px var(--night), 0 0 2px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 8px var(--night), 0 0 8px var(--night), 0 0 14px var(--night), 0 0 14px var(--night);
+  transition: opacity var(--dur-2) var(--ease-out); }
 .lbl.lobe .row { display: inline-flex; align-items: baseline; gap: 5px; }
-.lbl.lobe .dot { width: 6px; height: 6px; border-radius: 50%; align-self: center; flex: none; }
+.lbl.lobe .dot { width: 6px; height: 6px; border-radius: 50%; align-self: center; flex: none; box-shadow: 0 0 5px 2px var(--night); }
 .lbl.lobe b { font-size: var(--fs-xs); font-weight: 500; }
-.lbl.lobe i { font-style: normal; color: var(--text-3); }
+.lbl.lobe i { font-style: normal; color: var(--text-2); } /* dimmer than the name, still readable over the light */
 .lbl.lobe .groups { display: flex; gap: 4px; align-items: baseline; }
 .lbl.lobe.on { opacity: 1; } /* agents work here */
 .lbl.lobe.on b { font-weight: 600; }
-.lbl.lobe.dim .dot { opacity: 0.45; } /* agents work elsewhere: the text keeps 0.82, the AA floor for its role (4.9:1) */
+.lbl.lobe.dim .dot { opacity: 0.45; } /* agents work elsewhere: the text stays as it is, readable */
 .chip { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--fs-xs); padding: 2px 8px 2px 6px; border-radius: var(--r-pill); background: var(--veil); border: 1px solid var(--border); color: var(--text); will-change: transform; transition: opacity var(--dur-2) var(--ease-out); }
 .chip .who { font-weight: 600; }
 .chip .dot { background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }

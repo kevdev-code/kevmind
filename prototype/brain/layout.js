@@ -485,7 +485,7 @@ export function callosumY(x) {
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
-export const FIL_FLOATS = 15; // p0(3) p1(3) control(3) normal(3) alpha part tint
+export const FIL_FLOATS = 16; // p0(3) p1(3) control(3) normal(3) alpha part tint lobe (its index in LOBE_NAMES)
 
 // Filaments from the shell's points (shellPoints' output): each point joins its nearest neighbors ahead and behind
 // along its gyrus (the level line of the gyri field; the brainstem's axis on the brainstem), and now and then one in
@@ -515,7 +515,7 @@ export function shellFilaments(sh, { seed = 11, folia = 20 } = {}) {
     const c = [0, 1, 2].map((k) => (p0[k] + p1[k]) / 2 + nv[k] * bow + side[k] * sw);
     const key = groupOf[i];
     if (!out.has(key)) out.set(key, []);
-    out.get(key).push([...p0, ...p1, ...c, ...nv, alpha, sh.part[i], r()]);
+    out.get(key).push([...p0, ...p1, ...c, ...nv, alpha, sh.part[i], r(), LOBE_NAMES.indexOf(key.split('|')[0])]);
   };
   for (let i = 0; i < n; i++) {
     const part = sh.part[i];
@@ -563,7 +563,7 @@ export function shellFilaments(sh, { seed = 11, folia = 20 } = {}) {
     const gx = (f(m[0] + e, m[2]) - f(m[0] - e, m[2])) / (2 * e), gz = (f(m[0], m[2] + e) - f(m[0], m[2] - e)) / (2 * e);
     const key = `cerebellum|${m[2] > 0 ? 1 : -1}`;
     if (!out.has(key)) out.set(key, []);
-    out.get(key).push([...p0, ...p1, ...m, ...unit(top ? [-gx, 1, -gz] : [gx, -1, gz]), inCerebrum(m) ? 0.5 : 1.5, 1, r()]);
+    out.get(key).push([...p0, ...p1, ...m, ...unit(top ? [-gx, 1, -gz] : [gx, -1, gz]), inCerebrum(m) ? 0.5 : 1.5, 1, r(), LOBE_NAMES.indexOf('cerebellum')]);
   };
   for (const top of [true, false]) {
     const ys = new Float32Array((NX + 1) * (NZ + 1)).fill(NaN), g = new Float32Array(ys.length).fill(NaN);
