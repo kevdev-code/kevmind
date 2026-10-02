@@ -2,6 +2,7 @@
 // and the layout keeps every node inside its lobe.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { makeGraph, makeReplay, lobeOfPath, regionOfPath } from '../prototype/brain/data.js';
 import { layout, lobeAt, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../prototype/brain/layout.js';
 import { FIL_FLOATS as GL_FIL_FLOATS } from '../prototype/brain/gl.js';
@@ -131,4 +132,46 @@ test('the fixed structures sit where they belong', () => {
   for (const p of pk.somas) assert.equal(lobeAt(p)?.[0], 'cerebellum');
   for (const [, b] of pk.segs) assert.ok(lobeAt(b) === null || lobeAt(b)[0] === 'cerebellum', 'a branch stays in the cerebellum');
   assert.ok(pk.segs.length > 7 * 10, 'branching trees');
+});
+
+// The region colors are told apart at a glance, also with the common color vision deficiencies, never take Claude's
+// coral, and read as label text on the night. The palette is lifted from the page's source (it needs a DOM to load).
+test('region colors: apart for every kind of color vision, in gamut, readable as labels, coral kept for Claude', () => {
+  const src = fs.readFileSync(new URL('../prototype/brain/app.js', import.meta.url), 'utf8');
+  const lift = (name) => new Function(`return ${src.match(new RegExp(`const ${name} = ([\\s\\S]*?);\\n`))[1]}`)();
+  const LOBE_COLOR = lift('LOBE_COLOR'), coral = lift('AGENT_HUES')[0];
+  assert.deepEqual(Object.keys(LOBE_COLOR), ['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem']);
+  const lin = ([l, c, h]) => {
+    const L = l / 100, a = c * Math.cos((h * Math.PI) / 180), b = c * Math.sin((h * Math.PI) / 180);
+    const x = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, y = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, z = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    return [4.0767416621 * x - 3.3077115913 * y + 0.2309699292 * z, -1.2684380046 * x + 2.6097574011 * y - 0.3413193965 * z, -0.0041960863 * x - 0.7034186147 * y + 1.707614701 * z];
+  };
+  const lab = ([r, g, b]) => {
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+  };
+  const clip = (v) => v.map((x) => Math.min(1, Math.max(0, x)));
+  // Machado, Oliveira & Fernandes (2009), severity 1.0, in linear RGB: normal, protanopia, deuteranopia, tritanopia.
+  const SEE = [
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]],
+    [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.01182, 0.04294, 0.968881]],
+    [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602], [0.004733, 0.691367, 0.3039]],
+  ];
+  const colors = [...Object.values(LOBE_COLOR), coral], names = [...Object.keys(LOBE_COLOR), 'coral'];
+  for (const [k, c] of Object.entries(LOBE_COLOR)) assert.ok(lin(c).every((v) => v > -0.002 && v < 1.002), `${k} is inside sRGB`);
+  SEE.forEach((m, q) => {
+    const seen = colors.map((c) => lab(clip(m.map((r) => { const v = clip(lin(c)); return r[0] * v[0] + r[1] * v[1] + r[2] * v[2]; }))));
+    for (let i = 0; i < seen.length; i++) for (let j = i + 1; j < seen.length; j++) {
+      const d = Math.hypot(...seen[i].map((v, a) => v - seen[j][a])) * 100;
+      assert.ok(d >= (q ? 7 : 14), `${names[i]} and ${names[j]} are ${d.toFixed(1)} apart (vision ${q})`);
+    }
+  });
+  // As label text (lifted to at least 76% lightness) on the night's lightest part, at the labels' 0.86 opacity: AA.
+  const enc = (v) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055), dec = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const lum = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2], night = clip(lin([19, 0.085, 280]));
+  for (const [k, [l, c, h]] of Object.entries(LOBE_COLOR)) {
+    const text = clip(lin([Math.max(76, l + 4), c, h])).map((v, a) => dec(enc(v) * 0.86 + enc(night[a]) * 0.14)); // blended as the browser does
+    assert.ok((lum(text) + 0.05) / (lum(night) + 0.05) >= 4.5, `${k} label contrast`);
+  }
 });
