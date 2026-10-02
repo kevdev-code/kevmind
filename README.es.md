@@ -120,11 +120,23 @@ KevMind solo reporta historia: nunca analiza código, no indexa símbolos y no e
 
 El panel **Experiencia**, en la pestaña Memoria, muestra lo que se entregaría hoy aunque las herramientas estén apagadas. Cuando Claude las usa, muestra las llamadas, los tokens entregados y qué tan seguido se abrió después un archivo sugerido, comparado con una referencia. Si tras 50 llamadas no supera la referencia, el panel recomienda apagarlas.
 
+## Ver en tu teléfono
+
+Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el teléfono** en la pestaña En vivo (o ejecuta `npx kevmind share`) y escanea el código QR.
+
+- **Apagado por defecto.** Hasta que lo enciendas, el panel solo escucha en `127.0.0.1`. Mientras está encendido, la cabecera muestra **Compartido en tu red** con un botón para detenerlo.
+- **Solo tu red doméstica.** Escucha en tu dirección de Wi-Fi o Ethernet, nunca en adaptadores de VPN, WSL, Docker o Hyper-V, y nada pasa por internet (sin túneles).
+- **Un enlace privado.** Cada vez que lo enciendes, KevMind crea un token aleatorio. El enlace lo lleva, tu teléfono lo guarda en una cookie y todo lo que llegue sin él recibe un 401. **Enlace nuevo** (o `npx kevmind share new`) hace que el enlace y el código QR anteriores dejen de funcionar al instante.
+- **Solo lectura.** El teléfono puede verlo todo, pero no cambiar ajustes ni el uso compartido.
+- **¿El teléfono no se conecta?** En Windows, permite Node.js solo en redes **privadas** (nunca públicas) y revisa que tu Wi-Fi esté como privada. El panel y `npx kevmind share` muestran el comando exacto del firewall.
+
+`npx kevmind share off` lo detiene; `npx kevmind share status` vuelve a mostrar el enlace.
+
 ## Privacidad
 
 - Todo se queda en `~/.kevmind/`. No hay telemetría.
 - Antes de guardar, se ocultan claves API, tokens de GitHub/AWS/Slack, JWT, llaves privadas y variables tipo `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
-- El servidor solo escucha en `127.0.0.1`.
+- El servidor solo escucha en `127.0.0.1`, salvo que enciendas [Ver en tu teléfono](#ver-en-tu-teléfono): entonces también escucha en tu red doméstica, en solo lectura y con un enlace privado.
 - Si el panel está apagado, el hook enmascara los eventos antes de guardarlos en `spool.jsonl`.
 - La pestaña Memoria solo lee. Muestra metadatos, descripciones y encabezados, nunca el cuerpo completo de las notas. De la configuración global de Serena solo lee la lista de proyectos, nunca el `auth_secret`. Git se usa solo con `git ls-tree`, de solo lectura.
 - De las transcripciones solo se guardan extractos de hasta 200 caracteres, enmascarados como todo lo demás. Las firmas del razonamiento nunca se leen y la transcripción nunca se copia.

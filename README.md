@@ -121,11 +121,23 @@ KevMind only reports history. It never parses code, indexes symbols or writes me
 
 The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
 
+## View on your phone
+
+Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** in the Live tab (or run `npx kevmind share`) and scan the QR code.
+
+- **Off by default.** Until you turn it on, the dashboard listens on `127.0.0.1` only. While it's on, the header shows **Shared on your network** with a button to stop.
+- **Home network only.** It listens on your Wi-Fi or Ethernet address, never on VPN, WSL, Docker or Hyper-V adapters, and nothing goes through the internet (no tunnels).
+- **A private link.** Each time you turn it on, KevMind makes a random token. The link carries it, your phone keeps it in a cookie, and anything without it gets a 401. **New link** (or `npx kevmind share new`) makes the old link and QR code stop working at once.
+- **Read-only.** The phone can watch everything but can't change settings or sharing.
+- **Phone can't connect?** On Windows, allow Node.js on **Private** networks only (never Public), and check that your Wi-Fi is set to Private. The panel and `npx kevmind share` show the exact firewall command.
+
+`npx kevmind share off` stops it; `npx kevmind share status` shows the link again.
+
 ## Privacy
 
 - Everything stays in `~/.kevmind/`. No telemetry.
 - Before storing, it masks API keys, GitHub/AWS/Slack tokens, JWTs, private keys and variables like `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_KEY`.
-- The server only listens on `127.0.0.1`.
+- The server only listens on `127.0.0.1`, unless you turn on [View on your phone](#view-on-your-phone): then it also listens on your home network, read-only and behind a private link.
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
 - The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`.
@@ -139,6 +151,7 @@ The **Experience** panel in the Memory tab shows what would be served today even
 | `KEVMIND_HOME` | `~/.kevmind`  | Where data is kept |
 | `KEVMIND_DEV`  | unset         | `1` reloads the open page when a file in `public/` changes (set by `npm run dev`) |
 | `KEVMIND_AUTOSTART` | on       | `0` stops the hook from starting the dashboard at session start |
+| `KEVMIND_SHARE_HOST` | detected | The address [View on your phone](#view-on-your-phone) listens on, if the detected Wi-Fi/Ethernet one is wrong |
 
 ## Recording a demo
 

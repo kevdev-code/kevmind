@@ -255,6 +255,13 @@ Flat. Depth comes from tonal layers (canvas, surface, raised) and 1px hairlines,
 - **Default:** surface background, ink text, a `border-strong` 1px edge, 12px label, padding 4px 10px. Used for "Copy fix prompt".
 - **Hover / Focus:** border and text turn violet over 120ms ease-out; focus is a 2px violet ring offset by 2px. A copied state turns the edge and text green for 1.6s.
 - **Link button:** violet text, no chrome ("show all", "see project").
+- **Primary:** the violet fill with white text, one per surface at most ("Share on your network").
+
+### View on phone
+- **Header button:** a default button with a phone icon, Live tab only, hidden while sharing is on.
+- **Shared indicator:** a neutral pill on the raised tint with a `border-strong` ring: broadcast icon, "Shared on your network" (opens the panel), and a quieter "Stop". Neutral on purpose: sharing is a state, not an alarm.
+- **Panel:** a native modal `<dialog>` (12px radius, surface, hairline, 45% black backdrop, 440px max). The QR code is always black on white with its 4-module quiet zone, 220px, in both themes, so every camera reads it. The link and the firewall command sit in monospace on the raised tint, each with a Copy button.
+- **Shared device:** a "Read-only" outline pill in the header; every control that changes something is gone, not disabled (`body.shared .owner-only`).
 
 ### Segmented controls
 - **Style:** a raised well (8px radius, 2px padding) holding text or icon buttons; the pressed one becomes a surface chip with a hairline ring. Used for the view (Live / Memory), the theme (system / dark / light, icons with labels for assistive tech) and the language.

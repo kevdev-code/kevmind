@@ -10,6 +10,7 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 - Zero runtime dependencies. Node 18+. Reach for `node:` built-ins first. Temporary tools for one-off jobs (ffmpeg, etc.) go in a scratch folder, never in `package.json`.
 - Never break Claude Code: `hooks/send.js` must always exit 0 and stay fast, whether or not the server is running.
 - Everything stays local: the server listens on 127.0.0.1 only, no telemetry, no CDN or web fonts. Never show cost estimates from token counts.
+- The one exception is "View on phone" (`src/share.js`, `public/share.js`, `kevmind share`): off by default, home network only (never VPN/WSL/Docker/Hyper-V adapters, no tunnels), a random token per link (401 without it, a new link revokes the old one and its open streams), read-only (GET/HEAD only; never the share controls or the link itself). `test/share.test.mjs` enforces it and binds to 127.0.0.2 through `KEVMIND_SHARE_HOST`, so tests never open a port on the real network.
 - Transcript data is sensitive: keep only short redacted excerpts (titles and prompts are cleaned, redacted and capped at 80 chars), never read thinking signatures or redacted thinking, never copy a transcript into KevMind's data.
 - `npm test` runs the regression tests (Node's built-in runner, `test/*.test.mjs`). When you fix a tracking bug, add a replay of the sequence that exposed it (redacted). Pure helpers in `public/app.js` are tested by lifting them from the source (`test/ui-helpers.test.mjs`).
 
