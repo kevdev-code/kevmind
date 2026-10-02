@@ -27,6 +27,13 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 - Paths are routed to the git repo that holds them when it is nested inside the session's folder (e.g. `frontend/` with its own `.git`); repos outside the session folder are never answered.
 - The dashboard server owns `~/.kevmind/experience.json` (written atomically); the MCP server only reads it. The on/off switch is `~/.kevmind/config.json` (`src/config.js`), written by `kevmind tools on|off` and the dashboard toggle; it wins over the plugin option. Changes take effect in the next Claude Code session.
 
+## Session briefing
+
+- At each session start (startup, /clear, a compaction) `hooks/brief.js`, a synchronous SessionStart hook, asks the dashboard for a short note about the project and hands it to Claude as `additionalContext`. Claude's first reply waits for it: it gives up after 1.5 s (the server's own budget is 1.2 s) and always exits 0. The other SessionStart hook (`send.js`) stays async; async hooks can't give Claude context.
+- `src/briefing.js` builds it from facts only: where the last session with edits left off (its last edits, the commands the project runs regularly that were still failing in its final turn, subagents of that turn never seen ending, its last reply), git per repo (last commit, `git status --porcelain`), known failures at the experience tools' thresholds, files read in each of the last three sessions, files that change together with the last edits, notes citing them. Plain statements, never instructions; at most 1,500 characters (lines go whole). It only reads; git only `log` and `status` (approved for the briefing), through one guarded helper. `test/briefing.test.mjs` enforces it.
+- Off by default: `kevmind briefing on|off|status` or the Memory tab's switch (config.json `briefing`).
+- Measured: every start is recorded in `~/.kevmind/briefings.jsonl` with the text, shown or withheld half and half (`armOf`: a hash of the session and the start). When the stretch that followed settles (the next start, 30 min of quiet, or 8 h), the server records what happened: time and steps to the first edit, re-reads, repeated known failures, the files it named that were opened, and tokens (input, output and cache reads, from the session's transcript) for the stretch and until the first edit. The Memory tab shows the exact text of each start and the comparison; the verdict is about tokens and waits for 20 measured starts on each side. Every limit is in `BRIEF`.
+
 ## Memory tab (Phase 2)
 
 Read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config (never its secrets). `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
@@ -67,7 +74,7 @@ The user keeps a real dashboard running on port 4777 with real data.
 
 ## Windows notes
 
-- Stage files by name (`git add <file>`), never `git add -A`: the repo has `core.filemode=true`, and `-A` silently drops the executable bit on `bin/kevmind.js`, `hooks/send.js` and `mcp/server.js`. After committing, `git ls-files -s` on those three should show `100755`. CRLF warnings on commit are expected.
+- Stage files by name (`git add <file>`), never `git add -A`: the repo has `core.filemode=true`, and `-A` silently drops the executable bit on `bin/kevmind.js`, `hooks/send.js`, `hooks/brief.js` and `mcp/server.js`. After committing, `git ls-files -s` on those four should show `100755`. CRLF warnings on commit are expected.
 - The Bash tool strips one level of backslashes, even inside quoted heredocs. Write scripts and tests that contain backslashes (Windows paths, regex escapes, `\n` in strings) with the file tools, or build them at runtime (`String.fromCharCode(92)`). Import local `.mjs` files with `file:///C:/...` URLs.
 - Headless Edge for screenshots and benchmarks: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`; Node 24's global `WebSocket` drives it over CDP with no dependencies.
 

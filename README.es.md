@@ -135,6 +135,14 @@ KevMind solo reporta historia: nunca analiza código, no indexa símbolos y no e
 
 El panel **Experiencia**, en la pestaña Memoria, muestra lo que se entregaría hoy aunque las herramientas estén apagadas. Cuando Claude las usa, muestra las llamadas, los tokens entregados y qué tan seguido se abrió después un archivo sugerido, comparado con una referencia. Si tras 50 llamadas no supera la referencia, el panel recomienda apagarlas.
 
+## Resumen de inicio de sesión (opcional)
+
+Cada sesión nueva de Claude Code empieza de cero. Con el resumen encendido, KevMind le da a Claude una nota breve al empezar una sesión (una sesión nueva, `/clear` o tras una compactación), hecha solo con lo que ya registró y con git: dónde se quedó la última sesión con ediciones (los archivos que editó al final, una prueba o compilación que seguía fallando, subagentes que quedaron trabajando, su última respuesta), el último commit y lo que no está confirmado, los fallos que se repiten y qué los arregló, los archivos que se leen en cada sesión y las notas de memoria que los citan.
+
+Son 1.500 caracteres como máximo (unos 350 tokens), escritos como hechos, nunca como instrucciones. No escribe nada en tu proyecto, en `CLAUDE.md` ni en la memoria de Claude. Está **apagado por defecto**: `npx kevmind briefing on` o el interruptor del panel **Resumen de inicio** en la pestaña Memoria.
+
+**¿Ayuda?** La mitad de los inicios lo reciben y la otra mitad no, y se comparan: tiempo y pasos hasta la primera edición, archivos leídos de nuevo, fallos conocidos repetidos y tokens (entrada, salida y lecturas de caché, de la transcripción) hasta la primera edición y en todo el tramo. El panel muestra el texto exacto que recibió cada inicio y, tras 20 inicios medidos de cada lado, dice si ahorra tokens.
+
 ## Ver en tu teléfono
 
 Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el teléfono** en la pestaña En vivo (o ejecuta `npx kevmind share`) y escanea el código QR.
@@ -157,6 +165,7 @@ Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el 
 - Si el panel está apagado, el hook enmascara los eventos antes de guardarlos en `spool.jsonl`.
 - La pestaña Memoria solo lee. Muestra metadatos, descripciones y encabezados, nunca el cuerpo completo de las notas. De la configuración global de Serena solo lee la lista de proyectos, nunca el `auth_secret`. Git se usa solo con `git ls-tree`, de solo lectura.
 - De las transcripciones solo se guardan extractos de hasta 200 caracteres, enmascarados como todo lo demás. Las firmas del razonamiento nunca se leen y la transcripción nunca se copia.
+- El resumen de inicio (apagado por defecto) usa los mismos registros más `git log` y `git status` de solo lectura. El texto de cada inicio se guarda en `~/.kevmind/briefings.jsonl` para que veas exactamente lo que recibió Claude; le llega como cualquier otro contexto.
 - Las herramientas de experiencia no recolectan nada nuevo: leen el registro de eventos ya enmascarado y `git log`, solo del proyecto en el que trabaja Claude, y nunca escriben. `npx kevmind clear --project <nombre>` borra el historial de un proyecto.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).

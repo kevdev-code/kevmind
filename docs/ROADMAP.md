@@ -55,7 +55,19 @@ Known limits:
 - Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
 
+## Session briefing (v1, Unreleased)
+
+A short, factual note for Claude at each session start (`src/briefing.js`, `hooks/brief.js`), off by default, measured against starts without it. Design and examples on real data: the owner's local design doc (`.claude/design/code-map-and-briefing.md`, git-ignored). Decisions (2026-10-02): the narrower rule for the code map is approved (reads import/export statements and names, keeps a per-file cache, read-only, never type-checks or edits; CLAUDE.md, README and the tool descriptions change when it is built); read-only `git ls-files` and `git status --porcelain` are approved (the briefing uses `status`); Serena stays optional for exact references; the briefing and the code map are each off by default with their own switch.
+
+Known limits:
+
+- The verdict needs 20 measured starts on each side; with a few working sessions a day, expect weeks.
+- A session's last reply and its running subagents are known only for sessions of the last 24 hours (the server's live state); older ones get the rest.
+- Tokens come from the transcript tailer, which follows sessions of the last 24 hours: a start whose stretch settles later is measured without tokens.
+
 ## Next
+
+- The code map (exported names and who uses them, key files, areas, one MCP query tool, docs-vs-code name checks), then briefing v2 (map lines) as a new arm of the same measurement.
 
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.

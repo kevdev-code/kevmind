@@ -136,6 +136,26 @@ KevMind only reports history. It never parses code, indexes symbols or writes me
 
 The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
 
+## Session briefing (optional)
+
+Every new Claude Code session starts cold. With the briefing on, KevMind gives Claude a short note when a session starts (a new session, `/clear`, or after a compaction), built only from what it already recorded and from git:
+
+- where the last session with edits left off: the files it edited last, a test or build still failing, subagents left running, its last reply;
+- git: the last commit and what is not committed, in the project and each repo nested in it;
+- failures that keep coming back and what fixed them (at the experience tools' thresholds);
+- the files read in each of the last three sessions, and the files that usually change with the last edits;
+- memory notes that cite those files, and notes whose cited files are gone.
+
+It is at most 1,500 characters (about 350 tokens), written as facts, never as instructions. Nothing is written to your project, `CLAUDE.md` or Claude's memory. It is **off by default**:
+
+```bash
+npx kevmind briefing on
+```
+
+or the switch in the Memory tab's **Session briefing** panel. It takes effect at the next session start.
+
+**Does it help?** Half of the session starts get the briefing and half don't, so the two can be compared on what happens next: time and steps to the first edit, files read again, known failures repeated, and tokens (input, output and cache reads, from the session transcript) until the first edit and for the whole stretch. The panel shows the exact text each start received (or, when withheld, what it would have received), what a session starting now would get, and the comparison. After 20 measured starts on each side it says whether the briefing saves tokens; if it costs tokens instead, it tells you to turn it off.
+
 ## View on your phone
 
 Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** in the Live tab (or run `npx kevmind share`) and scan the QR code.
@@ -158,6 +178,7 @@ Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** i
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
 - The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`.
+- The session briefing (off by default) uses the same records plus read-only `git log` and `git status`. Each start's text is kept in `~/.kevmind/briefings.jsonl` so you can see exactly what Claude received; it reaches Claude like any other context.
 - The experience tools collect nothing new: they read the already-masked event log and `git log`, only for the project Claude is working in, and never write. `npx kevmind clear --project <name>` removes one project's history.
 
 ## Configuration
@@ -219,6 +240,8 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 - [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
 - [x] Brain tab: memory, files, tools and live agents as a 3D brain.
 - [x] Brain tab: every live session at once.
+- [x] Session briefing at session start, measured against starts without it (tokens included).
+- [ ] A light code map (exported names, key files, areas) for the experience tools and the briefing.
 - [ ] Replay a past session step by step.
 - [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
 
