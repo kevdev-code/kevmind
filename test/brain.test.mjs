@@ -58,9 +58,9 @@ function fixture() {
   return { home, root, nested, projects, agg, tools };
 }
 
-test('the graph is what KevMind knows: files, notes, tools and their real links, each file once', () => {
+test('the graph is what KevMind knows: files, notes, tools and their real links, each file once', async () => {
   const { home, root, projects, agg, tools } = fixture();
-  const g = buildBrain({ projects, agg, tools, now: NOW, home });
+  const g = await buildBrain({ projects, agg, tools, now: NOW, home });
   const P = keyOf(root);
   const node = (p) => g.nodes.find((n) => n.path === p);
   const has = (a, b, type) => g.edges.some((e) => e.type === type && ((g.nodes[e.a] === a && g.nodes[e.b] === b) || (g.nodes[e.a] === b && g.nodes[e.b] === a)));
@@ -106,20 +106,20 @@ test('the graph is what KevMind knows: files, notes, tools and their real links,
   assert.ok(g.edges.every((e) => g.nodes[e.a] && g.nodes[e.b] && e.a !== e.b));
 });
 
-test('over the limit, the least active code files go; notes, instruction files and tools stay', () => {
+test('over the limit, the least active code files go; notes, instruction files and tools stay', async () => {
   const dir = tmp(), root = path.join(dir, 'Big'), agg = emptyAggregate(), n = LIMITS.filesPerProject + 40;
   const base = { session_id: 's', cwd: root };
   ingest(agg, { ...base, hook_event_name: 'UserPromptSubmit', prompt: 'read everything' }, NOW - DAY);
   for (let i = 0; i < n; i++) ingest(agg, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, `src/f${i}.js`) } }, NOW - DAY + i);
   for (let k = 0; k < 5; k++) ingest(agg, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/hot.js') } }, NOW - DAY + n + k);
-  const g = buildBrain({ projects: [{ key: keyOf(root), name: 'Big', root, report: null }], agg, now: NOW });
+  const g = await buildBrain({ projects: [{ key: keyOf(root), name: 'Big', root, report: null }], agg, now: NOW });
   assert.equal(g.nodes.length, LIMITS.filesPerProject);
   assert.ok(g.nodes.some((x) => x.path === 'src/hot.js'), 'the most active file is kept');
 });
 
-test('the page places every node in a lobe and finds it again from an event', () => {
+test('the page places every node in a lobe and finds it again from an event', async () => {
   const { home, root, projects, agg, tools } = fixture();
-  const graph = assemble(buildBrain({ projects, agg, tools, now: NOW, home }));
+  const graph = assemble(await buildBrain({ projects, agg, tools, now: NOW, home }));
   const lobe = (p) => graph.regions[(graph.nodes.find((n) => n.path === p) || graph.nodes.find((n) => n.name === p)).region];
   assert.deepEqual([lobe('CLAUDE.md').lobe, lobe('CLAUDE.md').label], ['prefrontal', 'Instructions']);
   assert.deepEqual([lobe('~/.claude/CLAUDE.md').label, lobe('~/.claude/CLAUDE.md').project], ['~/.claude', null]);

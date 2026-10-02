@@ -14,6 +14,7 @@ import { writeConfig, experienceTools, pluginOption } from './config.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
+import { importScanner } from './imports.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -93,12 +94,13 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   // The Brain view's graph: built from the memory reports, the experience aggregate and the tool counts, at most
   // every 20 s (the view asks again when Claude touches a file it doesn't know yet). Read-only, like the Memory tab.
   let brainHit = null;
+  const scanImports = importScanner(); // remembers what each file imports until the file changes
   const brain = () => {
     if (brainHit && Date.now() - brainHit.at < BRAIN_CACHE_MS) return brainHit.promise;
     const promise = (async () => {
       const projects = memory.projects().filter((p) => p.source === 'session').slice(0, BRAIN_LIMITS.projects);
       const reports = await Promise.all(projects.map((p) => memory.report(p.key).catch(() => null)));
-      return buildBrain({ projects: projects.map((p, i) => ({ ...p, report: reports[i] })), agg: await experience.aggregate(), tools: memory.tools() });
+      return buildBrain({ projects: projects.map((p, i) => ({ ...p, report: reports[i] })), agg: await experience.aggregate(), tools: memory.tools(), imports: scanImports });
     })();
     brainHit = { at: Date.now(), promise };
     promise.catch(() => { brainHit = null; });

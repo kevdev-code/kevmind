@@ -1,13 +1,15 @@
 // The Brain view's data: one graph of what KevMind already knows about the user's projects. Read-only and derived:
 // instruction files, memory notes, Serena notes and what they cite come from the memory report (src/memory.js); the
 // code files Claude touched, with what changes together and what is read first, from the experience aggregate
-// (src/experience.js, with its thresholds); the tools from the event logs. Nothing here runs a command or writes a
-// file, and nothing is invented: a node is a real file or tool, a link is a real relation.
+// (src/experience.js, with its thresholds); which of those files import which, from their import statements
+// (src/imports.js); the tools from the event logs. Nothing here runs a command or writes a file, and nothing is
+// invented: a node is a real file or tool, a link is a real relation.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { keyOf } from './memory.js';
 import { partners, readFirst, relPath } from './experience.js';
+import { importScanner } from './imports.js';
 import { toolLabel } from '../public/brain/graph.js';
 
 // A brain stays readable and smooth up to a few thousand nodes: the most active files are kept.
@@ -22,9 +24,10 @@ const inside = (root, file) => relPath(root, file);
 // Returns { generatedAt, projects: [{ id, name, root }], nodes, edges: [{ a, b, type }] }. A node:
 // { type: instruction | memory | serena | file | tool, name, path, project (id, or null when shared), abs (only for
 // a file outside its project's folder), tokens, reads, edits, lastAt, noteType, indexed, uses, errors }.
-export function buildBrain({ projects, agg, tools = new Map(), now = Date.now(), home = os.homedir(), exists = fs.existsSync }) {
+export async function buildBrain({ projects, agg, tools = new Map(), now = Date.now(), home = os.homedir(), exists = fs.existsSync, imports = importScanner() }) {
   const nodes = [], edges = [];
   const byFile = new Map(); // absolute path -> node index: a file is one node, whoever mentions it
+  const fileOf = new Map(); // and back: node index -> absolute path
   // A project inside another one (a repo nested in the workspace, where sessions were also started) is part of it:
   // its notes and instruction files join the outer project, whose files already include the nested repo's.
   const all = projects.map((p) => ({ ...p, root: path.resolve(p.root) }));
@@ -39,7 +42,7 @@ export function buildBrain({ projects, agg, tools = new Map(), now = Date.now(),
     const root = n.project ? roots.get(n.project) : null;
     const rel = file && root ? inside(root, file) : null;
     const id = nodes.push({ ...n, path: rel || n.path, ...(file && !rel ? { abs: slash(file) } : {}) }) - 1;
-    if (k) byFile.set(k, id);
+    if (k) { byFile.set(k, id); fileOf.set(id, file); }
     return id;
   };
   const edge = (a, b, type) => { if (a != null && b != null && a !== b) edges.push({ a, b, type }); };
@@ -125,6 +128,10 @@ export function buildBrain({ projects, agg, tools = new Map(), now = Date.now(),
       }
     }
   }
+
+  // Imports between the files that are nodes: what each one's import statements point at, when that is a node too.
+  const sources = [...fileOf].filter(([id]) => nodes[id].project && !nodes[id].abs).map(([id, file]) => ({ file, root: roots.get(nodes[id].project) }));
+  for (const [from, to] of await imports(sources)) edge(byFile.get(keyOf(from)), byFile.get(keyOf(to)), 'import');
 
   // Tools: every tool of an MCP server is one node, the server's.
   const byLabel = new Map();
