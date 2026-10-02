@@ -49,7 +49,8 @@ What the requirements became:
 Known limits:
 
 - It follows one session at a time (the one selected in Live), not every live session at once.
-- A file Claude touches for the first time appears after the next graph refresh (about 6 to 30 s): the view is rebuilt in place, which shows as a short blink.
+- A file Claude touches for the first time appears after the next graph refresh (about 6 to 30 s; a file it creates, 2.5 to 8 s, and its cell is born then): the view is rebuilt in place, which shows as a short blink.
+- The dots of an edit (lines added and removed) and the files a search matched come from what Claude Code reports when the call ends; a tool that reports neither shows its figure without them.
 - At most 1,200 code files per project and 4,000 nodes in all (the most active are kept); tools are shared by all projects.
 - Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
