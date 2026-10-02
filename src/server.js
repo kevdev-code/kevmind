@@ -12,6 +12,7 @@ import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, 
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
 import { writeConfig, experienceTools, pluginOption } from './config.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
+import { makeShare } from './share.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -22,8 +23,9 @@ export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read b
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 const DEDUPE_MS = 3000;
 
 // With two hook sources (the plugin plus hooks from `kevmind install`) every event arrives twice.
@@ -61,6 +63,11 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     const data = `data: ${JSON.stringify(msg)}\n\n`;
     for (const res of clients) res.write(data);
   }
+  // Sharing state carries the link: only this PC's pages get it, never a shared device.
+  function broadcastLocal(msg) {
+    const data = `data: ${JSON.stringify(msg)}\n\n`;
+    for (const res of clients) if (!res.shared) res.write(data);
+  }
 
   // Transcript tailers for the sessions active in the last 24 h; a new one stream-parses its file on attach.
   const tailers = new Map();
@@ -82,7 +89,14 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   const memory = memoryApi(state);
   const experience = experienceKeeper();
 
-  const server = http.createServer((req, res) => {
+  // "View on phone": a second, read-only listener on the home network while it is on (src/share.js).
+  const share = makeShare({ port, handle, onChange: () => broadcastLocal({ type: 'share', share: share.status() }) });
+  // A JSON POST from this PC's own page (or the CLI, which sends no Origin): another web page can't make one.
+  const ownJson = (req) => LOCAL.has(req.socket.remoteAddress) && /^application\/json\b/.test(req.headers['content-type'] || '') && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`);
+  const readBody = (req, max, done) => { let body = ''; req.on('data', (c) => { body += c; if (body.length > max) req.destroy(); }); req.on('end', () => done(body)); };
+
+  // shared: the request came through the sharing listener (already token-checked and read-only there).
+  function handle(req, res, shared = false) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
     if (req.method === 'POST' && url.pathname === '/events') {
@@ -113,12 +127,32 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       res.write(`data: ${JSON.stringify({ type: 'hello', bootId, sessions: state.list() })}\n\n`);
       clients.add(res);
+      res.shared = shared;
+      if (shared) share.watching(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 20000);
       req.on('close', () => { clearInterval(ping); clients.delete(res); });
       return;
     }
 
-    if (url.pathname === '/api/health') return json(res, { ok: true, dev, detached, bootId, pid: process.pid });
+    if (url.pathname === '/api/health') return json(res, shared ? { ok: true, shared: true, bootId } : { ok: true, dev, detached, bootId, pid: process.pid, share: share.status() });
+
+    // Sharing on and off, and a new link: from this PC only (a shared device never reaches here: read-only).
+    if (url.pathname === '/api/share' && req.method === 'GET') return shared ? res.writeHead(403).end() : json(res, share.status());
+    if (url.pathname === '/api/share' && req.method === 'POST') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 1000, async (body) => {
+        let on;
+        try { on = JSON.parse(body).on; } catch { /* handled below */ }
+        if (typeof on !== 'boolean') return json(res, { error: 'expected {"on": true|false}' }, 400);
+        json(res, on ? await share.start() : share.stop());
+      });
+      return;
+    }
+    if (url.pathname === '/api/share/regenerate' && req.method === 'POST') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 1000, () => json(res, share.regenerate()));
+      return;
+    }
 
     if (url.pathname === '/api/memory') return json(res, { projects: memory.projects() });
     if (url.pathname === '/api/memory/project') {
@@ -167,7 +201,10 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       if (err) return res.writeHead(404).end('Not found');
       res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' }).end(buf);
     });
-  });
+  }
+  // Only loopback names: a web page on another domain that resolves to 127.0.0.1 (DNS rebinding) can't read the
+  // dashboard or the sharing link.
+  const server = http.createServer((req, res) => (LOOPBACK_HOST.test(req.headers.host || '') ? handle(req, res, false) : res.writeHead(403).end()));
 
   // Dev only: reload the open page when a dashboard file changes (debounced, editors fire several events per save).
   let reloadTimer;
@@ -177,6 +214,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   }) : null;
 
   function shutdown() {
+    share.stop();
     watcher?.close();
     clearInterval(tailTimer);
     experience.stop();

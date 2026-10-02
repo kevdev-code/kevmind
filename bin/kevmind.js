@@ -31,6 +31,8 @@ KevMind · watch Claude Code work in real time
   kevmind uninstall            Remove KevMind's hooks
   kevmind demo                 Start the dashboard and simulate a sample session
   kevmind tools on|off|status  Turn the experience tools for Claude on or off, or show their state and its source
+  kevmind share [on|off|status|new]  View the dashboard on your phone over your home Wi-Fi: a read-only link and QR
+                               code (new: a new link; the old one stops working). Off by default.
 
   Flags: --dev (reload the page when public/ changes)  --background (detach; output in server.log)
   Dev:   npm run dev [-- --background]   Also restarts the server when src/ or bin/ change
@@ -117,12 +119,55 @@ switch (cmd) {
     console.log(`\n  Changes take effect in the next Claude Code session.\n`);
     break;
   }
+  case 'share': {
+    // "View on phone" (src/share.js): the running dashboard opens a read-only listener on the home network.
+    const sub = args[0] || 'on';
+    if (!['on', 'off', 'status', 'new'].includes(sub)) fail('Usage: kevmind share [on | off | status | new]');
+    if (!(await isUp())) fail('KevMind is not running. Start it first: kevmind start --background');
+    const call = (p, body) => fetch(`${base}${p}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}).then((r) => r.json());
+    const st = sub === 'status' ? await call('/api/share') : sub === 'new' ? await call('/api/share/regenerate', {}) : await call('/api/share', { on: sub === 'on' });
+    await printShare(st);
+    break;
+  }
   case '-h': case '--help': case 'help':
     console.log(HELP);
     break;
   default:
     console.log(HELP);
     process.exit(1);
+}
+
+async function printShare(st) {
+  if (st.error) {
+    const why = { 'no-network': 'No home network found (Wi-Fi or Ethernet with a private address).', EADDRINUSE: `Port ${port} is already in use on the network address.`, EADDRNOTAVAIL: 'That network address is not available.' }[st.error] || st.error;
+    return console.log(`\n  ✗ Could not share: ${why}\n`);
+  }
+  if (!st.on) return console.log('\n  Sharing is off. The dashboard listens on 127.0.0.1 only.\n');
+  console.log(`\n  Shared on your network (read-only)\n\n  ${st.url}\n\n${await terminalQr(st.url)}\n`);
+  console.log(`  ${st.viewers} device${st.viewers === 1 ? '' : 's'} watching. Stop with: kevmind share off   New link: kevmind share new`);
+  if (process.platform === 'win32') {
+    console.log(`\n  Phone can't connect? When Windows asks, allow Node.js on Private networks only (never Public).
+  If you dismissed that, run this in an administrator PowerShell:
+    New-NetFirewallRule -DisplayName "KevMind (phone, private networks)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${port} -Profile Private
+  And make sure this Wi-Fi is set to Private (Settings > Network & internet > Wi-Fi > your network).`);
+  }
+  console.log('');
+}
+
+// The link as a QR code in the terminal: light modules in the text color, two rows per line (for dark terminals).
+async function terminalQr(text) {
+  const { default: qrcode } = await import('../public/vendor/qrcode.mjs');
+  const q = qrcode(0, 'M');
+  q.addData(text);
+  q.make();
+  const n = q.getModuleCount(), light = (r, c) => !(r >= 0 && c >= 0 && r < n && c < n && q.isDark(r, c));
+  const lines = [];
+  for (let r = -2; r < n + 2; r += 2) {
+    let line = '  ';
+    for (let c = -2; c < n + 2; c++) { const t = light(r, c), b = light(r + 1, c); line += t && b ? '█' : t ? '▀' : b ? '▄' : ' '; }
+    lines.push(line);
+  }
+  return lines.join('\n');
 }
 
 // What a server reported about its own launch (from /shutdown), as start() options.
