@@ -159,6 +159,8 @@ or the switch in the Memory tab's **Session briefing** panel. It takes effect at
 
 **Does it help?** Half of the session starts get the briefing and half don't, so the two can be compared on what happens next: time and steps to the first edit, files read again, known failures repeated, and tokens (input, output and cache reads, from the session transcript) until the first edit and for the whole stretch. The panel shows the exact text each start received (or, when withheld, what it would have received), what a session starting now would get, and the comparison. After 20 measured starts on each side it says whether the briefing saves tokens; if it costs tokens instead, it tells you to turn it off.
 
+**v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the starts split in three: a third get the briefing above, a third get v2 (the same note, then lines from the code map: the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has), and a third get nothing. v2 gets its own column and its own verdict against the same starts without a briefing.
+
 ## View on your phone
 
 Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** in the Live tab (or run `npx kevmind share`) and scan the QR code.

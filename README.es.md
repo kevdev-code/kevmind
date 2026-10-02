@@ -146,6 +146,8 @@ Son 1.500 caracteres como máximo (unos 350 tokens), escritos como hechos, nunca
 
 **¿Ayuda?** La mitad de los inicios lo reciben y la otra mitad no, y se comparan: tiempo y pasos hasta la primera edición, archivos leídos de nuevo, fallos conocidos repetidos y tokens (entrada, salida y lecturas de caché, de la transcripción) hasta la primera edición y en todo el tramo. El panel muestra el texto exacto que recibió cada inicio y, tras 20 inicios medidos de cada lado, dice si ahorra tokens.
 
+**v2, con el mapa de código.** Mientras las [herramientas de experiencia](#herramientas-de-experiencia-para-claude-opcional) están activas, los inicios se reparten en tres: un tercio recibe el resumen de arriba, un tercio la v2 (la misma nota y después líneas del mapa de código: el área donde caen las últimas ediciones con sus archivos centrales y sus áreas vecinas, los archivos de los que más depende el código y las notas que nombran código que ya no existe) y un tercio nada. La v2 tiene su propia columna y su propio veredicto frente a los mismos inicios sin resumen.
+
 ## Ver en tu teléfono
 
 Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el teléfono** en la pestaña En vivo (o ejecuta `npx kevmind share`) y escanea el código QR.

@@ -77,9 +77,19 @@ Known limits:
 - A stale name in a note about a fixed bug is history on purpose, so it is a suggestion, not a warning. The first Memory report waits at most 1.5 s for `git log -S`; names it hasn't checked yet show up on a later report.
 - `bun run` and `yarn run` also run binaries and files: those are skipped. A monorepo with `workspaces` skips the script check.
 
+## Session briefing v2 (unreleased)
+
+While the code map is on, the starts split in three (`ARMS.v2`): withheld, v1, and v2, which is v1's text followed by the code map's lines: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. v1 stays exactly as it was, so its measurement goes on; v2 gets its own verdict against the same withheld starts. On the owner's projects the v2 preview is 1,407 and 1,475 characters and builds in 58 to 241 ms with the map warm.
+
+Known limits:
+
+- With three arms each verdict needs 20 measured starts per arm, so both take about a third longer than v1 alone.
+- At a start the map gets 400 ms; a cold build (a project's first start after the dashboard starts) goes on in the background and that v2 start has no map lines.
+- Past 1,500 characters lines go from the end, so on a busy day the key files line, the stale names and the tools line are the first to go.
+
 ## Next
 
-- Briefing v2: lines from the code map (the areas and key files the last session touched, stale names) as a new arm of the same measurement.
+- Open: after enough starts, keep whichever arm saves tokens (or neither) and drop the others.
 
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.
