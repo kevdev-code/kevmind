@@ -369,12 +369,31 @@ export function mountBrain(host, env) {
 
   // ---- tracts: the main lanes as thick, glowing bundles, and the fixed structures --------------------------------
   // The busiest lanes between lobes become bundles of a few strands that fan out at both ends, along the paths the
-  // agents' pulses take (across hemispheres, over the corpus callosum's arch). With them, fixed and decorative: the
-  // corpus callosum itself (strands along its arch), the brainstem as a bright bundle fanning up into both
-  // hemispheres, and Purkinje cells in the cerebellum. Pulses run along the strands while work goes on.
+  // agents' pulses take (across hemispheres, over the corpus callosum's arch). They are the links that are shown,
+  // added up: hide a kind of link, a project or a kind of node and the bundles are counted again without them. With
+  // them, fixed and decorative: the corpus callosum itself (strands along its arch), the brainstem as a bright bundle
+  // fanning up into both hemispheres, and Purkinje cells in the cerebellum. Pulses run along the strands while work
+  // goes on.
   let tractStrands = []; // [{ pts, rgb, lobes }]: where pulses run
   let purkinje = { segs: [], somas: [] };
-  function tractData() {
+  const edgeShown = (e) => visible[e.a] && visible[e.b] && filter.edges.has(e.type);
+  // The lanes between lobes, from the links shown: the 10 busiest that carry at least 3 links and 3% of them.
+  function lanesOf() {
+    const lanes = new Map();
+    let cross = 0, total = 0;
+    for (const e of edges) {
+      if (!edgeShown(e)) continue;
+      const ga = nodes[e.a].region, gb = nodes[e.b].region, ka = `${regions[ga].lobe}|${L.side[ga]}`, kb = `${regions[gb].lobe}|${L.side[gb]}`;
+      if (ka === kb) continue;
+      total++;
+      if (L.side[ga] * L.side[gb] < 0) cross++;
+      const key = ka < kb ? `${ka}>${kb}` : `${kb}>${ka}`;
+      lanes.set(key, (lanes.get(key) || 0) + 1);
+    }
+    const top = [...lanes].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).filter(([, c], k) => k < 10 && c >= Math.max(3, total * 0.03));
+    return { top, crossShare: cross / Math.max(1, total) };
+  }
+  function tractData({ top, crossShare }) {
     const out = [], hl = [], strands = [], r = rng(23);
     // A strand: segments along the points, fading in and out at its ends (taper) so bundles dissolve into the lobes.
     const strand = (pts, rgb, type, width, core, k, part, lobes, taper = 0.18) => {
@@ -390,20 +409,13 @@ export function mountBrain(host, env) {
     };
     const white = whiten;
     const frame = (d) => { const e1 = v3.unit(v3.cross(d, Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])); return [e1, v3.cross(d, e1)]; };
-    // 1. The busiest lanes, from the links themselves.
-    const lanes = new Map();
-    let cross = 0, total = 0;
-    for (const e of edges) {
-      const ga = nodes[e.a].region, gb = nodes[e.b].region, ka = `${regions[ga].lobe}|${L.side[ga]}`, kb = `${regions[gb].lobe}|${L.side[gb]}`;
-      if (ka === kb) continue;
-      total++;
-      if (L.side[ga] * L.side[gb] < 0) cross++;
-      const key = ka < kb ? `${ka}>${kb}` : `${kb}>${ka}`;
-      lanes.set(key, (lanes.get(key) || 0) + 1);
-    }
-    const top = [...lanes].sort((a, b) => b[1] - a[1]).filter(([, c], k) => k < 10 && c >= Math.max(3, total * 0.03));
+    // 1. The busiest lanes, from the links themselves. Each lane's strands come from its own name, so a bundle keeps
+    // its shape when the filters change which other lanes are drawn.
     const max = top.length ? top[0][1] : 1;
     for (const [key, count] of top) {
+      let seed = 23;
+      for (let q = 0; q < key.length; q++) seed = (Math.imul(seed, 31) + key.charCodeAt(q)) | 0;
+      const r = rng(seed);
       const [[la, sa], [lb, sb]] = key.split('>').map((x) => { const [l, sd] = x.split('|'); return [l, Number(sd)]; });
       const A = lobeShape(la, sa).c, B = lobeShape(lb, sb).c, path = laneCurve(la, sa, lb, sb, A, B), k = Math.sqrt(count / max);
       const ca = C(...LOBE_COLOR[la]), cb = C(...LOBE_COLOR[lb]), rgb = white(ca.map((c, i) => (c + cb[i]) / 2), 0.08);
@@ -419,7 +431,7 @@ export function mountBrain(host, env) {
       }
     }
     // 2. The corpus callosum: strands along its arch, side by side across the midline, brighter the more links cross.
-    const cc = C(88, 0.04, 250), kc = 0.45 + 0.55 * Math.min(1, (cross / Math.max(1, total)) * 3);
+    const cc = C(88, 0.04, 250), kc = 0.45 + 0.55 * Math.min(1, crossShare * 3);
     for (let j = 0; j < 8; j++) {
       const z = (j - 3.5) * 0.03, dy = (r() - 0.5) * 0.035, pts = [];
       for (let q = 0; q <= 32; q++) { const x = CALLOSUM.x0 + ((CALLOSUM.x1 - CALLOSUM.x0) * q) / 32; pts.push([x, callosumY(x) + dy - Math.abs(z) * 0.4, z]); }
@@ -509,14 +521,29 @@ export function mountBrain(host, env) {
   const lod = [{ cross: LIGHT ? 8 : 14, same: 2 }, { cross: 1, same: 1 }].map((x) => ({ ...x, owner: new Int32Array(0), hl: new Float32Array(0) }));
   let fine = null; // the smooth fibers, for signals running along them
   let tractHl = new Float32Array(0), tractShown = new Float32Array(0);
+  let tractSig = null;
+  function syncTracts(force) {
+    const lanes = lanesOf(), sig = `${lanes.top.map(([k, c]) => `${k}:${c}`).join(',')}|${Math.round(lanes.crossShare * 50)}`;
+    if (sig === tractSig && !force) return;
+    tractSig = sig;
+    const td = tractData(lanes);
+    tractHl = td.hl;
+    tractShown = new Float32Array(tractHl);
+    pulses.length = 0; // they ran along the old strands
+    if (R) R.setLayer('tracts', td.data, tractShown);
+  }
+  function seeNodes() {
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
+      visible[i] = filter.types.has(n.type) && (n.project == null ? filter.projects.size > 0 : filter.projects.has(n.project)) ? 1 : 0;
+    }
+  }
   function uploadGeometry() {
     R.setNodes(nodeData(), state);
     const nd = neuronData();
     R.setLayer('dendrites', nd.data, neuron.hl);
-    const td = tractData();
-    tractHl = td.hl;
-    tractShown = new Float32Array(tractHl);
-    R.setLayer('tracts', td.data, tractShown);
+    seeNodes();
+    syncTracts(true);
     lod.forEach((l, k) => {
       const f = fiberData(l.cross, l.same);
       l.owner = f.owner;
@@ -596,13 +623,11 @@ export function mountBrain(host, env) {
     R.setLayer('active', new Float32Array(segs), new Float32Array(hl));
   }
   function refresh() {
-    for (let i = 0; i < N; i++) {
-      const n = nodes[i];
-      visible[i] = filter.types.has(n.type) && (n.project == null ? filter.projects.size > 0 : filter.projects.has(n.project)) ? 1 : 0;
-    }
+    seeNodes();
     for (let i = 0; i < N; i++) state[i * 4] = nodeBright(i);
     if (R) R.updateState(state);
     const shown = edgeLights();
+    syncTracts();
     deepLights();
     activeNeurons();
     let n = 0;
