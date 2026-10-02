@@ -139,7 +139,7 @@ test('the fixed structures sit where they belong', () => {
 test('region colors: apart for every kind of color vision, in gamut, readable as labels, coral kept for Claude', () => {
   const src = fs.readFileSync(new URL('../prototype/brain/app.js', import.meta.url), 'utf8');
   const lift = (name) => new Function(`return ${src.match(new RegExp(`const ${name} = ([\\s\\S]*?);\\n`))[1]}`)();
-  const LOBE_COLOR = lift('LOBE_COLOR'), coral = lift('AGENT_HUES')[0];
+  const LOBE_COLOR = lift('LOBE_COLOR'), coral = JSON.parse(src.match(/const AGENT_MAIN = (\[[^\]]*\])/)[1]);
   assert.deepEqual(Object.keys(LOBE_COLOR), ['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem']);
   const lin = ([l, c, h]) => {
     const L = l / 100, a = c * Math.cos((h * Math.PI) / 180), b = c * Math.sin((h * Math.PI) / 180);

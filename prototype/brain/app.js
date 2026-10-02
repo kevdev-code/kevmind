@@ -23,6 +23,7 @@ const FOV = (24 * Math.PI) / 180;
 const T0 = performance.now();
 const $ = (id) => document.getElementById(id);
 const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
+const setClass = (el, c, on) => { if (el.classList.contains(c) !== on) el.classList.toggle(c, on); };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -102,7 +103,9 @@ const P = {
   // junctions; nodes, tracts and pulses stay brighter.
   dust: C(80, 0.025, 250), dustTint: C(74, 0.07, 292), filCbl: C(93, 0.03, 170), filStem: C(93, 0.025, 85), filAlpha: 0.34 * SHELL, filWidth: LIGHT ? 1.7 : 1.4,
   dustAlpha: 0.3 * SHELL, dustSize: LIGHT ? 0.0145 : 0.0105, dustEdge: 0.5,
-  bloom: LIGHT ? [0.35, 0.3, 0.8, 0] : [0.3, 0.3, 1.1, 0.9], // threshold, knee, the tight octave's strength, the wide one's
+  // threshold, knee, the tight octave's strength, the wide one's, and the most the bloom adds to a pixel: a hot area
+  // stays a bright spot of its region's color, never a white-out.
+  bloom: LIGHT ? [0.35, 0.3, 0.7, 0, 0.4] : [0.3, 0.3, 0.9, 0.3, 0.45],
   breath: C(80, 0.09, 42), // Claude thinking: a soft glow of its coral through the whole brain
   lobeMix: 0.3, // how much of its lobe's color a strand of the shell takes
 };
@@ -119,10 +122,11 @@ const DENDRITE_ALPHA = P.edgeAlpha[EDGE.dendrite];
 const LOBE_COLOR = { prefrontal: [84, 0.16, 90], frontal: [72, 0.14, 254], parietal: [61, 0.2, 298], occipital: [81, 0.11, 204],
   temporal: [67, 0.24, 350], cerebellum: [88, 0.18, 146], stem: [93, 0.03, 85] };
 P.filLobe = Object.keys(LOBES).flatMap((l) => C(...LOBE_COLOR[l])); // in the layout's lobe order
-// Agents: colored beams with a white core and a numbered label, so they never pass for a region (user's choice).
-// Claude itself is coral, its own color: no region uses it (its marker, its trail and its breath). Subagents are pale
-// cyan, orchid and ice blue, lighter and less saturated than any region.
-const AGENT_HUES = [[74, 0.14, 38], [84, 0.11, 195], [79, 0.13, 322], [88, 0.07, 250]];
+// Agents are told from regions by kind, not by hue: regions are colors; subagents are silver-white (marker, trail,
+// tag dot), told apart by their number; Claude itself is coral, a color no region uses (its marker, its trail and
+// its breath). So an agent can never pass for a region.
+const AGENT_MAIN = [74, 0.14, 38], AGENT_SUB = [93, 0.008, 260];
+const AGENT_SUB_CSS = 'oklch(82% 0.012 260)'; // the ring around a subagent's white dot, in the tag and the panel
 
 // ---- data ----------------------------------------------------------------------------------------------------
 const graph = makeGraph({ target: TARGET });
@@ -172,12 +176,31 @@ const crowdOf = (i) => gain[lobeOf(i)];
 const REF_DENSITY = 3000 / Object.values(LOBES).reduce((t, s) => t + s.vol, 0);
 const neon = Object.fromEntries(Object.entries(LOBES).map(([l, s]) => [l, clamp((REF_DENSITY / ((lobeLoad[l] || 1) / s.vol)) ** 0.6, 0.42, 1.12)]));
 // The same for links: where thousands cross, each draws fainter (the six link types; the midline and beams keep theirs).
-const linkScale = clamp(Math.sqrt(900 / Math.max(1, edges.length)), 0.5, 1);
+const linkScale = clamp((900 / Math.max(1, edges.length)) ** 0.65, 0.3, 1);
 P.edgeAlpha = P.edgeAlpha.map((v, k) => (k < 6 ? v * linkScale : v));
 // Size grows a little with activity (under 2x from the quietest to the busiest), so no cell dominates.
 const sizeOf = (i) => 0.72 * (nodes[i].type === 'instruction' ? 0.08 : 0.05 + 0.0035 * Math.sqrt(Math.min(activityOf(i), 120))) * clamp(crowdOf(i) ** 0.4, 0.58, 1.2);
 const brightOf = (i) => (nodes[i].type === 'instruction' ? 1 : 0.72 + 0.28 * Math.min(1, Math.sqrt(activityOf(i) / 70))) * neon[lobeOf(i)];
 
+// Outlines by room. A lobe's patch of screen holds only so many outlines before they merge into a painted patch and
+// the tissue behind is lost: about one per 150 px² at overview for a full-size cell (less for the smaller cells of a
+// crowded lobe). Each lobe's cells are ranked by importance (instructions, then activity); minor[i] is a cell's rank
+// over its lobe's room, so cells under 1 are outlines at overview and the rest collapse to small points of their
+// color. The shader gives more room as the camera comes closer and less to the far side, and a cell that is hot,
+// focused or found is always an outline. At 600 nodes every lobe has room for all its cells.
+const AREA_PER_OUTLINE = 150, OVERVIEW_PX = 350; // px², and px per unit of the brain at overview on a desktop
+const minor = new Float32Array(N);
+{
+  const by = {};
+  for (let i = 0; i < N; i++) (by[lobeOf(i)] = by[lobeOf(i)] || []).push(i);
+  const weight = (i) => (nodes[i].type === 'instruction' ? 1e6 : 0) + activityOf(i);
+  for (const [l, list] of Object.entries(by)) {
+    const s = LOBES[l], k = clamp(gain[l] ** 0.4, 0.58, 1.2);
+    const room = (1.21 * (s.vol / (s.midline ? 1 : 2)) ** (2 / 3) * OVERVIEW_PX ** 2) / (AREA_PER_OUTLINE * k * k);
+    list.sort((a, b) => weight(b) - weight(a));
+    list.forEach((i, r) => { minor[i] = r / room; });
+  }
+}
 const size = new Float32Array(N), bright = new Float32Array(N);
 for (let i = 0; i < N; i++) { size[i] = sizeOf(i); bright[i] = brightOf(i); }
 const state = new Float32Array(N * 4); // brightness, ember, ignition time, kind
@@ -189,7 +212,7 @@ function nodeData() {
   const d = new Float32Array(N * NODE_FLOATS);
   for (let i = 0; i < N; i++) {
     const n = nodes[i], seed = (Math.sin(i * 12.9898 + 4.1) * 43758.5453) % 1;
-    d.set([...at(i), size[i], SHAPE[n.type], n.project == null ? -1 : projIndex.get(n.project), ...regionColor[n.region], Math.abs(seed), partOf(i)], i * NODE_FLOATS);
+    d.set([...at(i), size[i], SHAPE[n.type], n.project == null ? -1 : projIndex.get(n.project), ...regionColor[n.region], Math.abs(seed), partOf(i), minor[i]], i * NODE_FLOATS);
   }
   return d;
 }
@@ -439,7 +462,7 @@ const projCur = new Float32Array(32).fill(0.8), projTarget = new Float32Array(32
 const embers = new Map();
 const rings = [];
 const flashes = []; // a region glowing where an agent just landed
-const heats = []; // [{ i, t0 }]: cells an agent just left, cooling
+const heats = [], HEAT_R = 0.2; // [{ i, t0 }]: cells an agent just left, cooling; within HEAT_R hot spots merge
 const signals = []; // small pulses running along fibers around recent work
 let lastSignal = 0;
 let ripples = [];
@@ -504,7 +527,8 @@ function nodeBright(i) {
   if (focusSet) b *= focusSet.has(i) ? 1.4 : 0.14;
   else if (matchSet) b *= matchSet.has(i) ? 1.4 : 0.16;
   if (cutAway(i)) return 0; // the cut-away half: gone, so nothing shows outside the half that stays
-  return Math.max(b, 0.002);
+  // + 10: the focus, its neighbors and search hits are always drawn as outlines (the shader takes the 10 back).
+  return Math.max(b, 0.002) + ((focusSet && focusSet.has(i)) || (matchSet && matchSet.has(i)) ? 10 : 0);
 }
 // Link brightness: hidden, dimmed (focus or search elsewhere), normal, lit where work just happened (embers), focus.
 function edgeLights() {
@@ -531,7 +555,7 @@ function edgeLights() {
 function deepLights() {
   for (let s = 0; s < neuron.owner.length; s++) {
     const i = neuron.owner[s];
-    let v = visible[i] ? (0.35 + 0.6 * bright[i]) * crowdOf(i) : 0; // crowded lobes: dimmer, like their nodes
+    let v = visible[i] ? (0.35 + 0.6 * bright[i]) * crowdOf(i) * (minor[i] > 1 ? 0.5 : 1) : 0; // crowded lobes: dimmer, like their nodes; fainter for the cells drawn as points
     if (v && focusSet) v = focusSet.has(i) ? (i === focus ? 2.6 : 1.7) : 0.12;
     else if (v && matchSet) v = matchSet.has(i) ? 1.7 : 0.12;
     if (cutAway(i)) v = 0;
@@ -649,10 +673,13 @@ function camStep(now, dt) {
       moving = true;
     } else vel.yaw = vel.pitch = 0;
   }
+  // Auto-rotate keeps turning through everything (agents working, events, Follow moving the camera: then it orbits
+  // what Follow looks at, a little slower). Only the user's hand pauses it (a drag, a zoom, a click); 3 s after the
+  // last touch it comes back, easing in over about a second.
   if (autoRotate && anim && !drag) {
-    const wake = Math.max(lastInput + 3000, lastEvent + 4000) - now;
-    if (wake <= 0) { cam.yaw += 0.00012 * dt; goal.yaw = cam.yaw; moving = true; }
-    else if (!rotateTimer) rotateTimer = setTimeout(() => { rotateTimer = 0; request(); }, wake + 20);
+    const since = now - lastInput - 3000;
+    if (since > 0) { cam.yaw += 0.00012 * dt * smooth(0, 1200, since) * (follow && goal.zoom < 1 ? 0.6 : 1); goal.yaw = cam.yaw; moving = true; }
+    else if (!rotateTimer) rotateTimer = setTimeout(() => { rotateTimer = 0; request(); }, 20 - since);
   }
   const k = anim ? 1 - Math.exp(-dt / 140) : 1;
   const ease = (obj, key, eps) => {
@@ -686,8 +713,8 @@ function agentOf(id) {
   let a = agents.get(id);
   if (!a) {
     const def = replay.agents.find((x) => x.id === id);
-    const hue = AGENT_HUES[agents.size % AGENT_HUES.length];
-    a = { id, def, css: `oklch(${hue[0]}% ${hue[1]} ${hue[2]})`, rgb: C(...hue), status: 'idle', node: null, pos: null, comet: null, after: null, kind: '', text: '', chip: null, li: null, hideAt: 0 };
+    const main = id === 'main', hue = main ? AGENT_MAIN : AGENT_SUB;
+    a = { id, def, css: main ? `oklch(${hue[0]}% ${hue[1]} ${hue[2]})` : AGENT_SUB_CSS, rgb: C(...hue), status: 'idle', node: null, pos: null, comet: null, after: null, kind: '', text: '', chip: null, li: null, hideAt: 0 };
     agents.set(id, a);
   }
   return a;
@@ -771,7 +798,7 @@ function arrive(a, animate) {
   embers.set(i, { kind: c.kind, at: Date.now() });
   state[i * 4] = nodeBright(i); state[i * 4 + 1] = 1; state[i * 4 + 2] = animate ? tSec(now) : -100; state[i * 4 + 3] = KIND[c.kind];
   if (R) R.updateState(state, i, i + 1);
-  if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); flashes.push({ g: nodes[i].region, t0: now }); busy(now + 1700); }
+  if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); const g = nodes[i].region, was = flashes.findIndex((f) => f.g === g); if (was >= 0) flashes.splice(was, 1); flashes.push({ g, t0: now }); busy(now + 1700); } // one flash per region: they don't pile up
   cooling();
   activeNeurons();
   if (focus === i) renderFocus();
@@ -864,7 +891,7 @@ function frame(now) {
   const moving = camStep(now, dt) || !!(drag && drag.moved);
   if (camDirty) updateCamera();
   if (cutChanged) { cutChanged = false; refresh(); }
-  if (wasMoving && !moving) staticKey++; // the camera stopped: redraw the static layers with smooth fibers
+  if (wasMoving && !moving) { staticKey++; labelsDirty = true; } // the camera stopped: redraw the static layers with smooth fibers, settle the labels
   wasMoving = moving;
   const time = tSec(now);
   ripples = ripples.filter((r) => time - r.t < 2.4);
@@ -874,13 +901,16 @@ function frame(now) {
   // Neurons: faint dendrites at overview, full ones zoomed in (active neurons are always full, through their hl).
   P.edgeAlpha[EDGE.dendrite] = DENDRITE_ALPHA * (0.3 + 0.7 * smooth(1, 0.5, cam.zoom));
   const mid = project(BRAIN_CENTER); // the brain's center and radius on screen, for the intro's closing waves
-  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye, intro: introView(clock), yr: partY, center: BRAIN_CENTER, cut: cutSide, life: anim ? 1 : 0,
+  R.draw({ vp: VP, px: PX, room: (PX / basis.dist / OVERVIEW_PX) ** 2, time, ripples, proj: projCur, depth, eye: basis.eye, intro: introView(clock), yr: partY, center: BRAIN_CENTER, cut: cutSide, life: anim ? 1 : 0,
     mid, radiusPx: (BRAIN_RADIUS * PX) / mid[2], waveR: BRAIN_RADIUS },
   { haze, deepKey, mainKey: staticKey, skip: SKIP, lod: moving && !intro.on ? 1 : 0, glow: glowLayer(now, dt), introOn: intro.on, bloom: bloomLevel, bloomOnly: BLOOM === 'only' });
   if (intro.on && intro.t0 == null && ++intro.warm >= 2) intro.t0 = performance.now();
-  // Labels fade out while the camera moves and are laid out again once it stops (no jumping while it turns).
-  if (moving !== labelsAway) { labelsAway = moving; labelBox.classList.toggle('away', moving); if (!moving) labelsDirty = true; }
-  if (labelsDirty && !labelsAway) layoutLabels();
+  // Labels fade out only for the user's hand: a drag and its throw. When the camera moves by itself (Auto-rotate,
+  // Follow, a zoom) they stay and track their regions, laid out every frame.
+  const hand = !!(drag && drag.moved) || Math.abs(vel.yaw) > 2e-5 || Math.abs(vel.pitch) > 2e-5;
+  if (hand !== labelsAway) { labelsAway = hand; labelBox.classList.toggle('away', hand); if (!hand) labelsDirty = true; }
+  setClass(labelBox, 'tracking', moving && !hand);
+  if (!labelsAway && (labelsDirty || moving)) layoutLabels(moving);
   placeChips(now);
   if (anim && (now < busyUntil || moving || thinking() || intro.on)) request();
 }
@@ -920,16 +950,27 @@ function buildSprites(now, clock = 99) {
     else list.push(...a.pos, 0.1, ...a.rgb, 0.75 * fade, SPRITE.ring, ...a.pos, 0.045, ...a.rgb, 0.9 * fade, SPRITE.head);
   }
   // Heat: where an agent works the light is hot, near white at its center; a cell it just left cools back to its
-  // region's color in a few seconds. This is what the bloom picks up.
+  // region's color in a few seconds. This is what the bloom picks up. Sources close together don't add up: the
+  // strongest keeps its glow and one within HEAT_R of it only shows by how far it is, so several agents on
+  // neighboring cells stay one bright spot, not a blob.
+  const hot = [];
   for (const a of agents.values()) {
     if (a.node == null || a.comet || a.status === 'done' || (a.hideAt && now > a.hideAt)) continue;
-    const rc = regionColor[nodes[a.node].region];
-    list.push(...a.pos, 0.16, ...whiten(rc, 0.45), 0.5, SPRITE.glow, ...a.pos, 0.07, ...whiten(rc, 0.85), 0.8, SPRITE.glow);
+    hot.push([a.pos, 1, nodes[a.node].region, 0]);
   }
   for (let k = heats.length - 1; k >= 0; k--) {
     const h = heats[k], u = (now - h.t0) / TRAIL_MS;
     if (u >= 1 || !anim) { heats.splice(k, 1); continue; }
-    list.push(...at(h.i), 0.14, ...whiten(regionColor[nodes[h.i].region], 0.5 * (1 - u)), 0.5 * (1 - u) ** 2, SPRITE.glow);
+    hot.push([at(h.i), 0.8 * (1 - u) ** 2, nodes[h.i].region, u]);
+  }
+  hot.sort((x, y) => y[1] - x[1]);
+  for (let k = 0; k < hot.length; k++) {
+    const [p, s, g, u] = hot[k];
+    let v = s;
+    for (let j = 0; j < k; j++) { const o = hot[j][0], d = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]) / HEAT_R; if (d < 1) v = Math.min(v, s * d * d); }
+    if (v < 0.03) continue;
+    const rc = regionColor[g];
+    list.push(...p, 0.11, ...whiten(rc, 0.4 * (1 - u)), 0.42 * v, SPRITE.glow, ...p, 0.05, ...whiten(rc, 0.8 * (1 - u)), 0.7 * v, SPRITE.glow);
   }
   for (const r of rings) {
     const u = (now - r.t0) / r.dur, e = 1 - (1 - u) ** 3;
@@ -1010,7 +1051,7 @@ function buildBeams(now) {
       out.push(...c.pt(ta), ...c.pt(tb), 0, 0, ...rgb, ...rgb, EDGE.beam, width, 1, Math.max(0.004, alphaAt((ta + tb) / 2)), -1, 0);
     }
   };
-  const trail = (t) => 0.7 * (0.55 + 0.45 * t); // a little brighter toward where it went
+  const trail = (t) => 0.5 * (0.55 + 0.45 * t); // a little brighter toward where it went
   for (let k = trails.length - 1; k >= 0; k--) {
     const tr = trails[k], age = (now - tr.t0) / TRAIL_MS;
     if (age >= 1 || !anim) { trails.splice(k, 1); continue; }
@@ -1045,9 +1086,11 @@ function regionName(g) {
 // only for the lobe under the pointer, or the lobes in the middle of the view when zoomed in. Each is centered on the
 // projected center of its lobe's nodes in the hemisphere that faces the camera. Labels never overlap: by priority
 // (where agents work, then size) each takes the free spot nearest its center, and never leaves its region (it moves
-// at most 0.6 of the lobe's radius on screen; with no free spot there, it is not shown). They fade out while the
-// camera moves and are laid out again once it stops. Where agents work the label brightens and the others dim; an
-// agent's tag wins, and a label under one fades. On a phone, only the label of the lobe being worked on.
+// at most 0.6 of the lobe's radius on screen; with no free spot there, it is not shown). Over a crowded patch of
+// cells the halo behind the letters is stronger. They fade out only while the user drags the brain (and while its
+// throw lasts); when the camera moves by itself (Auto-rotate, Follow, a zoom) they stay and track their regions:
+// each keeps its spot while it is free and glides to its place. Where agents work the label brightens and the others
+// dim; an agent's tag wins, and a label under one fades. On a phone, only the label of the lobe being worked on.
 const lobeEls = new Map();
 let chipBoxes = [];
 const chipLines = { svg: null, key: '' };
@@ -1055,14 +1098,23 @@ const NS = 'http://www.w3.org/2000/svg';
 chipLines.svg = document.createElementNS(NS, 'svg');
 chipLines.svg.setAttribute('class', 'leaders chip-leaders');
 chipBox.prepend(chipLines.svg);
-let labelsAway = false; // faded out while the camera moves
+let labelsAway = false; // faded out while the user drags
 const boxesHit = (b, o, m = 0) => b[0] < o[0] + o[2] + m && o[0] < b[0] + b[2] + m && b[1] < o[1] + o[3] + m && o[1] < b[1] + b[3] + m;
-function layoutLabels() {
-  labelsDirty = false;
-  // The panels over the well (read before this function writes anything): labels stay clear of them.
+// The panels over the well: labels stay clear of them. Read at most twice a second (they only change with the
+// agents list, the focus card and the well's size), so a moving camera doesn't read layout every frame.
+const panels = { at: -1e9, boxes: [] };
+function panelBoxes(now) {
+  if (now - panels.at < 500) return panels.boxes;
   const wr = $('well').getBoundingClientRect();
-  const taken = ['now', 'trace', 'focusCard'].map($).concat([...document.querySelectorAll('.seg.camera, .overlay.tl, .overlay.tr')]).filter((el) => el && !el.hidden && el.offsetParent)
+  panels.at = now;
+  panels.boxes = ['now', 'trace', 'focusCard'].map($).concat([...document.querySelectorAll('.seg.camera, .overlay.tl, .overlay.tr')]).filter((el) => el && !el.hidden && el.offsetParent)
     .map((el) => { const r = el.getBoundingClientRect(); return [r.left - wr.left, r.top - wr.top, r.width, r.height]; });
+  return panels.boxes;
+}
+// tracking: the camera is moving by itself, so labels keep their spots and glide instead of jumping.
+function layoutLabels(tracking = false) {
+  labelsDirty = false;
+  const taken = panelBoxes(performance.now()); // read before this function writes anything
   const live = new Set();
   for (const a of agents.values()) if (a.node != null && a.status !== 'done') live.add(nodes[a.node].region);
   const wc = project(BRAIN_CENTER)[2];
@@ -1103,47 +1155,61 @@ function layoutLabels() {
   const zoomedIn = cam.zoom < 0.55;
   for (const c of cands) {
     let el = lobeEls.get(c.lobe);
-    if (!el) { el = document.createElement('span'); el.className = 'lbl lobe'; lobeEls.set(c.lobe, el); labelBox.append(el); }
+    if (!el) { el = document.createElement('span'); el.className = 'lbl lobe off'; lobeEls.set(c.lobe, el); labelBox.append(el); }
     const [name, role] = T.lobes[c.lobe], col = lobeCss(c.lobe);
     c.open = c.lobe === hoverLobe || (zoomedIn && Math.abs(c.at[0] - W / 2) < W * 0.25 && Math.abs(c.at[1] - H / 2) < H * 0.25);
     const list = c.names.slice(0, W < 520 ? 2 : 3), more = c.names.length - list.length;
     const html = `<span class="row"><span class="dot" style="background:${col}"></span><b style="color:${col}">${esc(name)}</b><i>· ${esc(role)}</i></span>` +
       (c.open ? `<span class="groups">${list.map(([nm, id]) => `<span style="color:${regionCss[id]}">${esc(nm)}</span>`).join('<i>·</i>')}${more > 0 ? `<i>+${more}</i>` : ''}</span>` : '');
     if (el._html !== html) { el._html = html; el.innerHTML = html; el._w = 0; }
-    if (el.hidden) el.hidden = false;
     c.el = el;
   }
   for (const c of cands) if (!c.el._w) { c.el._w = c.el.offsetWidth; c.el._h = c.el.offsetHeight; }
   // 2. Places: the most important first, each on its center or the nearest free spot around it, inside its region.
+  //    While tracking, the spot it had comes first, so a label doesn't hop between two spots as the brain turns.
   const placed = [], keep = new Set();
   cands.sort((a, b) => b.live - a.live || b.n - a.n);
   for (const c of cands) {
-    const w = c.el._w, h = c.el._h, sy = (h + 6) / 2, spots = [];
+    const el = c.el, w = el._w, h = el._h, sy = (h + 6) / 2, spots = [];
     for (let j = -4; j <= 4; j++) for (let i = -2; i <= 2; i++) {
       const dx = (i * w) / 4, dy = j * sy;
       if (Math.hypot(dx, dy) <= c.reach || (!i && !j)) spots.push([dx, dy]);
     }
     spots.sort((a, b) => Math.hypot(...a) - Math.hypot(...b));
-    for (const [dx, dy] of spots) {
-      const b = [clamp(c.at[0] - w / 2 + dx, 8, W - 8 - w), clamp(c.at[1] - h / 2 + dy, 8, H - 8 - h), w, h];
+    if (tracking && el._shown && el._spot && Math.hypot(...el._spot) <= c.reach) spots.unshift(el._spot);
+    for (const s of spots) {
+      const b = [clamp(c.at[0] - w / 2 + s[0], 8, W - 8 - w), clamp(c.at[1] - h / 2 + s[1], 8, H - 8 - h), w, h];
       if (placed.some((o) => boxesHit(b, o, 4)) || taken.some((o) => boxesHit(b, o, 2))) continue;
       c.box = b;
+      el._spot = s;
       placed.push(b);
       break;
     }
   }
-  // 3. Positions and emphasis.
+  // 3. Positions (gliding while tracking), emphasis, and a stronger halo over a crowded patch of cells.
+  screenPositions();
   const anyLive = cands.some((c) => c.live);
   for (const c of cands) {
     const el = c.el;
-    if (!c.box) { el.hidden = true; continue; }
-    el.style.transform = `translate(${Math.round(c.box[0])}px, ${Math.round(c.box[1])}px)`;
-    el.classList.toggle('on', c.live);
-    el.classList.toggle('dim', anyLive && !c.live);
-    el._box = c.box;
+    if (!c.box) continue;
+    const [x, y, w, h] = c.box, glide = tracking && el._shown && el._box;
+    const px = glide ? el._box[0] + (x - el._box[0]) * 0.3 : x, py = glide ? el._box[1] + (y - el._box[1]) * 0.3 : y;
+    el.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`;
+    let n = 0;
+    for (let i = 0; i < N; i++) {
+      if (!visible[i] || scr[i * 3 + 2] <= 0) continue;
+      const sx = scr[i * 3], sy = scr[i * 3 + 1];
+      if (sx > x - 8 && sx < x + w + 8 && sy > y - 8 && sy < y + h + 8) n++;
+    }
+    setClass(el, 'dense', n * 220 > (w + 16) * (h + 16)); // more than a cell per 220 px² under it
+    setClass(el, 'on', c.live);
+    setClass(el, 'dim', anyLive && !c.live);
+    setClass(el, 'off', false);
+    el._box = [px, py, w, h];
+    el._shown = true;
     keep.add(c.lobe);
   }
-  for (const [k, el] of lobeEls) if (!keep.has(k) && !el.hidden) el.hidden = true;
+  for (const [k, el] of lobeEls) if (!keep.has(k) && el._shown) { el._shown = false; setClass(el, 'off', true); }
 }
 function placeChips(now) {
   const placed = [];
@@ -1182,7 +1248,7 @@ function placeChips(now) {
   // around its group (up-right, up-left, down-right, down-left) that covers no label and no other stack; lobe labels
   // keep their place and give way only when no spot is free.
   const hit = (b, o) => b[0] < o[0] + o[2] && o[0] < b[0] + b[2] && b[1] < o[1] + o[3] && o[1] < b[1] + b[3];
-  const labels = [...lobeEls.values()].filter((el) => !el.hidden && el._box).map((el) => el._box);
+  const labels = [...lobeEls.values()].filter((el) => el._shown && el._box).map((el) => el._box);
   const groups = [];
   for (const it of placed) {
     const g = groups.find((q) => q.some(([, x, y]) => Math.hypot(x - it[1], y - it[2]) < 70));
@@ -1219,7 +1285,7 @@ function placeChips(now) {
   // A label only gives way where a chip had nowhere else to go.
   const busyBoxes = boxes;
   for (const el of lobeEls.values()) {
-    const b = el._box, under = !el.hidden && !!b && busyBoxes.some((o) => b[0] < o[0] + o[2] && o[0] < b[0] + b[2] && b[1] < o[1] + o[3] && o[1] < b[1] + b[3]);
+    const b = el._box, under = !!el._shown && !!b && busyBoxes.some((o) => b[0] < o[0] + o[2] && o[0] < b[0] + b[2] && b[1] < o[1] + o[3] && o[1] < b[1] + b[3]);
     if (el._under !== under) { el._under = under; el.classList.toggle('under', under); }
   }
 }
@@ -1744,7 +1810,9 @@ window.__brain = { light: LIGHT, nodes: N, edges: edges.length, frames: () => fr
     const box = b.map((q) => q.map(Math.round));
     return { cerebrum: size([0]), all: size([0, 1, 2]), px: [box[3][2] - box[3][0], box[3][3] - box[3][1]], box: box[3], boxCer: box[0], boxCbl: box[1] };
   },
-  labels: () => [...lobeEls].filter(([, el]) => !el.hidden).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), under: !!el._under })),
+  labels: () => [...lobeEls].filter(([, el]) => el._shown).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), under: !!el._under, dense: el.classList.contains('dense') })),
+  // How many cells are drawn as outlines in this view (the shader's rule, without the hot and focused ones).
+  outlines: () => { let n = 0; const room = (PX / basis.dist / OVERVIEW_PX) ** 2; screenPositions(); for (let i = 0; i < N; i++) if (visible[i] && minor[i] * (1 + clamp((scr[i * 3 + 2] - depth[0]) / (depth[1] - depth[0]), 0, 1)) < room) n++; return n; },
   get bloom() { return bloomLevel; }, software: R ? R.software : null };
 const _draw = R ? R.draw.bind(R) : null;
 // The intro, measured: frames drawn, their rate between the first and the last, the longest wait between two, and how

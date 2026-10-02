@@ -35,7 +35,7 @@ export const SHAPE = { file: 0, instruction: 1, memory: 2, serena: 3, tool: 4 };
 // Fiber types: the six link types, the midline (unused), agent beams, dendrites/axons, tracts, fixed structures.
 export const EDGE = { link: 0, index: 1, import: 2, cites: 3, cochange: 4, readfirst: 5, midline: 6, beam: 7, dendrite: 8, tract: 9, structure: 10 };
 export const SPRITE = { glow: 0, ring: 1, head: 2, dust: 3 };
-export const NODE_FLOATS = 11; // x y z size shape project r g b seed part
+export const NODE_FLOATS = 12; // x y z size shape project r g b seed part minor
 export const FIBER_FLOATS = 20; // p0(3) p1(3) t0 t1 c0(3) c1(3) type width core alpha project level+2·part
 export const SPRITE_FLOATS = 9; // x y z size r g b a mode
 export const FIL_FLOATS = 16; // p0(3) p1(3) control(3) normal(3) alpha part tint lobe
@@ -108,8 +108,8 @@ void main() {
 
 const BODY = 0.6; // the shape fills this much of its sprite; the rest is its glow
 export const NODE_VS = `#version 300 es
-in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part; in vec4 a_state;
-uniform mat4 u_vp; uniform float u_time, u_px, u_life, u_dpr; uniform vec2 u_depth; uniform float u_proj[32];
+in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part, a_minor; in vec4 a_state;
+uniform mat4 u_vp; uniform float u_time, u_px, u_life, u_dpr, u_room; uniform vec2 u_depth; uniform float u_proj[32];
 uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec3 u_kind[6];
 out vec3 v_color, v_flash; out float v_alpha, v_shape, v_lum, v_hot, v_ember, v_px;
 ${DEPTH}
@@ -130,12 +130,17 @@ void main() {
       rip += u_ripColor[i] * exp(-w * w) * (1.0 - rt / 2.4) * 1.3;
     }
   }
-  float vis = step(0.001, a_state.x);
+  float forced = step(5.0, a_state.x), lum = a_state.x - 10.0 * forced; // + 10: always an outline (focus, search)
+  float vis = step(0.001, lum);
+  // An outline, or a point: a lobe's patch of screen has room for so many outlines (u_room: 1 at overview, more as the
+  // camera comes closer); its minor cells, the far ones first, collapse to small points of their color, so the tissue
+  // shows through. A cell that is hot, focused or found is always an outline.
+  float full = max(max(forced, step(0.001, a_state.y + flash)), 1.0 - smoothstep(0.85, 1.15, a_minor * (1.0 + far) / u_room));
   float pf = a_proj < 0.0 ? 1.0 : u_proj[int(a_proj)];
   float lift = front(T) * 1.2 + wave(a_pos) * 0.9; // the intro's growth front and closing wave
   // Life: a slow, soft breathing of each cell's light, out of step with its neighbors (5 to 9 s a cycle).
   float breath = 1.0 + u_life * 0.12 * sin(u_time * (0.7 + 0.55 * a_seed) + a_seed * 47.0);
-  float b = a_state.x * pf * (1.0 + lift) * breath * (1.0 - far * 0.45); // far: dimmer...
+  float b = lum * pf * (1.0 + lift) * breath * (1.0 - far * 0.45) * (0.55 + 0.45 * full); // far: dimmer...
   vec3 col = mix(a_color, vec3(dot(a_color, vec3(0.3, 0.59, 0.11))), far * 0.3); // ...and a little grayer; its hue still reads
   v_color = col * b + rip;
   v_lum = b;
@@ -147,7 +152,7 @@ void main() {
   v_ember = clamp(a_state.y + flash, 0.0, 1.0);
   // Nearer cells a little bigger, farther ones a little smaller, beyond perspective; never under 5 px, so the
   // outline still reads as a point of light.
-  float px = vis * clamp(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w * ${F(0.46 / BODY)}, 5.0 * u_dpr, 220.0);
+  float px = vis * clamp(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w * ${F(0.46 / BODY)} * (0.4 + 0.6 * full), (3.0 + 2.0 * full) * u_dpr, 220.0);
   gl_PointSize = px;
   v_px = px;
 }`;
@@ -384,7 +389,8 @@ void main() {
 // of its CSS size (so thin lines average away); what the cached brain already holds there (ground, shell, tracts,
 // links: u_base, halved the same way) is taken out, so structure never blooms, however dense; a threshold passes
 // only what is bright over an area (hot cells, beams, trails, agents); a blur across and one down spread it. A
-// second, wider octave at half that size; both are added back over the brain, the hottest part turning toward white.
+// second, wider and fainter octave at half that size; both are added back over the brain, capped per pixel, so a hot
+// area stays a bright spot in its region's color and never whites out.
 export const BLUR_FS = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -405,12 +411,12 @@ void main() {
 export const BLOOM_FS = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
-uniform sampler2D u_a, u_b; uniform vec2 u_k;
+uniform sampler2D u_a, u_b; uniform vec3 u_k; // the octaves' strengths, and the most they add to a pixel
 out vec4 o;
 void main() {
   vec3 c = texture(u_a, v_uv).rgb * u_k.x + texture(u_b, v_uv).rgb * u_k.y;
   float m = max(c.r, max(c.g, c.b));
-  o = vec4(mix(c, vec3(m), smoothstep(0.35, 1.0, m) * 0.6), 0.0);
+  o = vec4(c * min(1.0, u_k.z / max(m, 0.001)), 0.0); // capped, in its own color: a glowing spot, never a white-out
 }`;
 
 function program(gl, vs, fs) {
@@ -485,7 +491,7 @@ export class Renderer {
     this.vao.node = gl.createVertexArray();
     gl.bindVertexArray(this.vao.node);
     this.buf.node = this._buffer(data, gl.STATIC_DRAW);
-    this._layout(this.node, this.buf.node, [['a_pos', 3], ['a_size', 1], ['a_shape', 1], ['a_proj', 1], ['a_color', 3], ['a_seed', 1], ['a_part', 1]]);
+    this._layout(this.node, this.buf.node, [['a_pos', 3], ['a_size', 1], ['a_shape', 1], ['a_proj', 1], ['a_color', 3], ['a_seed', 1], ['a_part', 1], ['a_minor', 1]]);
     this.buf.state = this._buffer(state, gl.DYNAMIC_DRAW);
     this._layout(this.node, this.buf.state, [['a_state', 4]]);
     gl.bindVertexArray(null);
@@ -676,7 +682,7 @@ export class Renderer {
     }
   }
   // The bloom over the finished frame. level 2: two octaves; 1: the tight one only (phones, slower machines).
-  // palette.bloom: [threshold, knee, strength of the tight octave, of the wide one].
+  // palette.bloom: [threshold, knee, strength of the tight octave, of the wide one, the cap per pixel].
   _bloom(view, level, only) {
     const gl = this.gl, W = this.canvas.width, H = this.canvas.height, B = this.palette.bloom;
     const steps = this.dpr >= 1.5 ? 3 : 2; // down to a quarter of the CSS size
@@ -708,7 +714,7 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, wide.tex);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.tex);
     gl.uniform1i(L.u_a, 0); gl.uniform1i(L.u_b, 1);
-    gl.uniform2f(L.u_k, B[2], level > 1 ? B[3] : 0);
+    gl.uniform3f(L.u_k, B[2], level > 1 ? B[3] : 0, B[4]);
     // Only over the brain: on a software renderer this pass costs by the pixel.
     const r = view.radiusPx * 1.3 * this.dpr, cx = view.mid[0] * this.dpr, cy = H - view.mid[1] * this.dpr;
     const x0 = Math.max(0, Math.floor(cx - r)), y0 = Math.max(0, Math.floor(cy - r)), x1 = Math.min(W, Math.ceil(cx + r)), y1 = Math.min(H, Math.ceil(cy + r));
@@ -858,6 +864,7 @@ export class Renderer {
     gl.uniform1f(L.u_time, view.time);
     gl.uniform1f(L.u_life, view.life || 0);
     gl.uniform1f(L.u_dpr, this.dpr);
+    gl.uniform1f(L.u_room, view.room || 1);
     gl.uniform3fv(L.u_kind, this.palette.kinds);
     const rip = new Float32Array(16).fill(-99), ripC = new Float32Array(12);
     (view.ripples || []).slice(-4).forEach((r, i) => { rip.set([...r.p, r.t], i * 4); ripC.set(r.c, i * 3); });
