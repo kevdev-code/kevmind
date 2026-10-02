@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-01. Version **0.4.2** in the repo; **0.4.1** is on npm (0.4.2 adds the hidden "never got going" sessions and the new demo, and still needs `npm publish`).
+Status as of 2026-10-02. Version **0.5.0**: the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -33,7 +33,7 @@ Status as of 2026-10-01. Version **0.4.2** in the repo; **0.4.1** is on npm (0.4
 - **Tooling not in the repo:** the UI benchmark (headless Edge over CDP, synthetic events) and the GIF recorder lived in a session scratch folder; recreate them if needed.
 - **Planned:** read `.serena/memories` in the Memory tab (never reimplement indexing). Re-run the Impeccable critique on the new design.
 
-## Phase 4: Brain tab (in the dashboard since 2026-10-02)
+## Phase 4: Brain tab (0.5.0)
 
 A third tab next to Live and Memory: what KevMind knows about your projects as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells in lobes (one hue per kind of knowledge); their real links are fibers; the session selected in Live plays on it (Claude in coral, subagents in silver). How it looks and why is in [DESIGN.md, section 7](../DESIGN.md); how it was built, measured and integrated is in [BRAIN.md](BRAIN.md).
 
@@ -54,7 +54,6 @@ Known limits:
 - At most 1,200 code files per project and 4,000 nodes in all (the most active are kept); tools are shared by all projects.
 - Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
-- The version is not bumped: the next release (0.5.0) is yours to cut and publish.
 
 ## Next
 
