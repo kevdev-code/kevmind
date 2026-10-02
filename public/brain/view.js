@@ -26,14 +26,14 @@ const FX_ICONS = {
   done: '<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="8" opacity=".4"/>',
 };
 // An agent's name on its tag: "Claude", or a subagent's number ("#2", with its type when there is room). With several
-// sessions on screen its project follows as a badge ("Claude · OdonMind", "#2 · OdonMind": the type gives way). Small
-// (a narrow screen, until tapped): the project's initials only ("OM", "#2 OM"); the dot's color says who.
+// sessions on screen its project follows as a badge ("Claude · demo-shop", "#2 · demo-shop": the type gives way). Small
+// (a narrow screen, until tapped): the project's initials only ("DS", "#2 DS"); the dot's color says who.
 function tagOf(main, label, type, project, small) {
   if (small) { const ini = project ? initialsOf(project) : ''; return [main ? ini || label : ini ? `${label} ${ini}` : label, '']; }
   const who = main || project || !type ? label : `${label} ${type}`;
   return [who, project ? `· ${project}` : ''];
 }
-// A project's initials, for small tags: "demo-agency" → "DA", "OdonMind" → "OM", "kevmind" → "K".
+// A project's initials, for small tags: "demo-agency" → "DA", "ShopApi" → "SA", "kevmind" → "K".
 function initialsOf(name) {
   return (String(name).match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+/g) || [String(name)]).map((w) => w[0].toUpperCase()).join('').slice(0, 3);
 }
