@@ -110,7 +110,7 @@ const BODY = 0.6; // the shape fills this much of its sprite; the rest is its gl
 export const NODE_VS = `#version 300 es
 in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part, a_minor; in vec4 a_state;
 uniform mat4 u_vp; uniform float u_time, u_px, u_life, u_dpr, u_room; uniform vec2 u_depth; uniform float u_proj[32];
-uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec3 u_kind[6];
+uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec2 u_ripK[4]; uniform vec3 u_kind[6];
 out vec3 v_color, v_flash; out float v_alpha, v_shape, v_lum, v_hot, v_ember, v_px;
 ${DEPTH}
 ${REVEAL}
@@ -125,9 +125,9 @@ void main() {
   vec3 rip = vec3(0.0);
   for (int i = 0; i < 4; i++) {
     float rt = u_time - u_rip[i].w;
-    if (rt > 0.0 && rt < 2.4) {
-      float w = (distance(a_pos, u_rip[i].xyz) - rt * 0.18) / 0.05;
-      rip += u_ripColor[i] * exp(-w * w) * (1.0 - rt / 2.4) * 1.3;
+    if (rt > 0.0 && rt < u_ripK[i].y) { // u_ripK: how fast its front runs, and for how long
+      float w = (distance(a_pos, u_rip[i].xyz) - rt * u_ripK[i].x) / 0.05;
+      rip += u_ripColor[i] * exp(-w * w) * (1.0 - rt / u_ripK[i].y) * 1.3;
     }
   }
   float forced = step(5.0, a_state.x), lum = a_state.x - 10.0 * forced; // + 10: always an outline (focus, search)
@@ -866,9 +866,10 @@ export class Renderer {
     gl.uniform1f(L.u_dpr, this.dpr);
     gl.uniform1f(L.u_room, view.room || 1);
     gl.uniform3fv(L.u_kind, this.palette.kinds);
-    const rip = new Float32Array(16).fill(-99), ripC = new Float32Array(12);
-    (view.ripples || []).slice(-4).forEach((r, i) => { rip.set([...r.p, r.t], i * 4); ripC.set(r.c, i * 3); });
+    const rip = new Float32Array(16).fill(-99), ripC = new Float32Array(12), ripK = new Float32Array(8);
+    (view.ripples || []).slice(-4).forEach((r, i) => { rip.set([...r.p, r.t], i * 4); ripC.set(r.c, i * 3); ripK.set(r.k || [0.18, 2.4], i * 2); }); // a thought's ripple is slow; a search's wave is faster
     gl.uniform4fv(L.u_rip, rip);
+    gl.uniform2fv(L.u_ripK, ripK);
     gl.uniform3fv(L.u_ripColor, ripC);
     gl.bindVertexArray(this.vao.node);
     if (!skip.has('nodes')) gl.drawArrays(gl.POINTS, 0, this.counts.nodes);

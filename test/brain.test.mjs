@@ -165,7 +165,7 @@ test('the Brain view has every word in both languages', () => {
   const { en, es } = w.I18N;
   assert.deepEqual(Object.keys(es.brain).sort(), Object.keys(en.brain).sort());
   assert.ok(en.viewBrain && es.viewBrain);
-  for (const k of ['lobes', 'regionNames', 'did']) assert.deepEqual(Object.keys(es.brain[k]).sort(), Object.keys(en.brain[k]).sort());
+  for (const k of ['lobes', 'regionNames', 'did', 'fx']) assert.deepEqual(Object.keys(es.brain[k]).sort(), Object.keys(en.brain[k]).sort());
   // Every word the view asks for (T.name) exists.
   const view = fs.readFileSync(new URL('../public/brain/view.js', import.meta.url), 'utf8');
   const asked = new Set([...view.matchAll(/\bT\.([a-zA-Z_]\w*)/g)].map((m) => m[1]).concat([...view.matchAll(/data-bi18n(?:-placeholder|-label)?="(\w+)"/g)].map((m) => m[1])));
@@ -209,7 +209,7 @@ function liftView(name, scope) {
 test('an agent\'s tag says one verb and the file or command, in both languages', () => {
   const w = {};
   new Function('window', fs.readFileSync(new URL('../public/i18n.js', import.meta.url), 'utf8'))(w);
-  const say = (lang, kind, text) => { const { verb, text: t } = liftView('saying', { T: w.I18N[lang].brain })({ kind, text }); return `${verb} ${t}`.trim(); };
+  const say = (lang, kind, text) => { const { verb, text: t } = liftView('saying', { T: w.I18N[lang].brain, baseOf: (k) => k, isWaiting: (a) => !!a.waiting })({ kind, text }); return `${verb} ${t}`.trim(); };
   assert.equal(say('en', 'read', 'view.js'), 'reads view.js');
   assert.equal(say('es', 'edit', 'view.js'), 'edita view.js');
   assert.equal(say('en', 'read', 'README.md'), 'reads README.md', 'a name that only starts like the verb keeps it');
@@ -220,6 +220,8 @@ test('an agent\'s tag says one verb and the file or command, in both languages',
   assert.equal(say('es', 'command', 'Ejecutar las pruebas'), 'Ejecutar las pruebas');
   assert.equal(say('es', 'read', 'lee un archivo'), 'lee un archivo');
   assert.equal(say('en', 'think', 'anything'), 'thinking', 'only actions on a file or a tool carry a text');
+  assert.deepEqual([say('en', 'search', '"total"'), say('es', 'web', 'docs.example.com'), say('es', 'create', 'cart.js')], ['searches "total"', 'consulta docs.example.com', 'crea cart.js']);
+  assert.equal(liftView('saying', { T: w.I18N.es.brain, baseOf: (k) => k, isWaiting: () => true })({ kind: 'command', text: 'npm test' }).verb, 'necesita tu OK');
 });
 
 test('the benchmark\'s replay names files and tools only: no verbs, no notes', async () => {

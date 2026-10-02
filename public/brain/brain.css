@@ -102,6 +102,7 @@ body.view-brain .memory-view { display: none; }
 .brain-view .chip .dot { background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }
 .brain-view .chip .k.read { color: var(--read); } .brain-view .chip .k.edit { color: var(--edit); } .brain-view .chip .k.error { color: var(--error); } .brain-view .chip .k.command { color: var(--command); }
 .brain-view .chip .k.think { color: var(--text-2); }
+.brain-view .chip .k.wait { color: var(--waiting); }
 .brain-view .chip code { color: var(--text-2); font-size: var(--fs-xs); max-width: 240px; overflow: hidden; text-overflow: ellipsis; } /* 12 px floor: not 0.92em of 12 px; a long command is cut */
 .brain-view .chip.gone { opacity: 0; }
 .brain-view .chip .k:empty, .brain-view .chip code:empty { display: none; }
@@ -114,6 +115,26 @@ body.view-brain .memory-view { display: none; }
 .brain-view .filtered button:hover { background: var(--raised); }
 .brain-view .title { margin: 0; font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.005em; }
 .brain-view .overlay.tr { top: var(--sp-3); right: var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); }
+/* The legend of the actions' figures: a small "?" next to the Animations switch. Its panel hangs under the top-right
+   controls and shows on hover, on focus, or pinned with a click or a tap. */
+.brain-view .animrow { display: flex; align-items: center; gap: var(--sp-2); }
+.brain-view .fxbtn { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--veil); color: var(--text-2); cursor: pointer; }
+.brain-view .fxbtn:hover, .brain-view .fxhelp.open .fxbtn { color: var(--text); border-color: var(--border-strong); }
+.brain-view .fxbtn svg { width: 16px; height: 16px; }
+.brain-view .fxhelp::after { content: ''; position: absolute; top: 100%; left: 0; right: 0; height: 8px; display: none; } /* the gap to the panel still counts as hovering */
+.brain-view .fxhelp:hover::after { display: block; }
+.brain-view .fxlegend { display: none; position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; width: min(340px, calc(100vw - 2 * var(--sp-3))); max-height: min(70vh, 520px); overflow-y: auto; background: var(--veil); border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: var(--sp-3); font-size: var(--fs-xs); color: var(--text-2); text-align: left; }
+.brain-view .fxhelp:hover .fxlegend, .brain-view .fxhelp:focus-within .fxlegend, .brain-view .fxhelp.open .fxlegend { display: block; }
+.brain-view .fxlegend h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.brain-view .fxlegend ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.brain-view .fxlegend li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start; line-height: 1.35; }
+.brain-view .fxlegend b { color: var(--text); font-weight: 600; margin-right: 2px; }
+.brain-view .fxlegend p { margin: var(--sp-2) 0 0; color: var(--text-3); }
+.brain-view .fxi svg { display: block; width: 16px; height: 16px; margin-top: 1px; }
+.brain-view .fxi.fx-read, .brain-view .fxi.fx-search { color: var(--read); } .brain-view .fxi.fx-edit, .brain-view .fxi.fx-create { color: var(--edit); }
+.brain-view .fxi.fx-command, .brain-view .fxi.fx-done { color: var(--text-2); } .brain-view .fxi.fx-web { color: oklch(74% 0.14 38); } .brain-view .fxi.fx-agent { color: oklch(82% 0.012 260); }
+.brain-view .fxi.fx-wait { color: var(--waiting); } .brain-view .fxi.fx-error { color: var(--error); }
+.brain-view .overlay.tr { z-index: 3; } /* its legend opens over the other panels */
 .brain-view .overlay.br { right: var(--sp-4); bottom: var(--sp-4); }
 .brain-view .overlay.bl { left: var(--sp-4); bottom: var(--sp-4); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
 .brain-view .hint { margin: 2px 0 0; font-size: var(--fs-xs); color: var(--text-3); pointer-events: none; }

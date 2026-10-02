@@ -5,13 +5,26 @@
 // it synthetic ones. Rendering rules: nothing renders while the tab is hidden or another view is shown; frames are
 // capped at 30 fps and the loop stops as soon as nothing moves (camera, beams, flashes, Follow, Auto-rotate);
 // "Animations off" (or reduced motion) draws single static frames.
-import { NODE_TYPES, EDGE_TYPES, rng, pathFinder } from './graph.js';
+import { NODE_TYPES, EDGE_TYPES, rng, pathFinder, pathKey } from './graph.js';
 import { layout, lobeAt, insideBrain, enclosed, pathInside, shellPoints, shellFilaments, purkinjeTrees, lobeShape, LOBES, BRAIN_CENTER, BRAIN_RADIUS, STEM_AXIS, CALLOSUM, callosumY } from './layout.js';
 import { Renderer, oklch, KIND, SHAPE, EDGE, SPRITE, NODE_FLOATS, FIBER_FLOATS, SPRITE_FLOATS, INTRO, perspective, multiply, orbitView } from './gl.js';
 
 // The view's own markup: the rail (search, filters, legends) and the well (canvas, labels, tags, panels). Words come
 // from the host's strings by data-bi18n (not data-i18n, which the dashboard fills from its own table).
 const ICON = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">${d}</svg>`;
+// The legend's small pictures of each action's figure.
+const FX_ICONS = {
+  read: '<circle cx="12" cy="12" r="8.5" opacity=".4"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>',
+  edit: '<circle cx="11" cy="13" r="5"/><path d="M17 7l2.5-2.5M18.5 12H21M11 5.5V3"/>',
+  create: '<circle cx="12" cy="12" r="2.6"/><path d="M12 9.4V4M14.3 13.3L19 16M9.7 13.3L5 16"/>',
+  search: '<path d="M3 9c2-3 4-3 6 0s4 3 6 0 4-3 6 0M3 16c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/>',
+  command: '<path d="M12 21V8M8.5 11.500L12 8l3.5 3.5"/><circle cx="12" cy="4.5" r="1.5" fill="currentColor"/>',
+  web: '<path d="M6 18L17 7M17 7h-5.500M17 7v5.5"/><path d="M20 13a8 8 0 0 1-8 8" opacity=".45"/>',
+  agent: '<circle cx="9" cy="14.5" r="4.5"/><circle cx="17.5" cy="7" r="2.3"/><path d="M12.5 11.500l3-2.6"/>',
+  wait: '<circle cx="12" cy="12" r="8"/><path d="M12 7.500V12l3 2"/>',
+  error: '<path d="M13 3L6 13.500h5l-1 7.5 7-10.500h-5z"/>',
+  done: '<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="8" opacity=".4"/>',
+};
 const TEMPLATE = `
 <aside class="rail" id="rail">
   <details class="filters" id="filters" open>
@@ -34,7 +47,11 @@ const TEMPLATE = `
     <p class="hint" id="hint" data-bi18n="hint"></p>
   </div>
   <div class="overlay tr">
-    <button type="button" class="switch" role="switch" id="animSwitch" aria-checked="true"><span class="knob"></span><span data-bi18n="anim"></span></button>
+    <div class="animrow"><div class="fxhelp" id="fxHelp">
+      <button type="button" class="fxbtn" id="fxBtn" aria-expanded="false" aria-controls="fxLegend" data-bi18n-label="fxTitle">${ICON('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.6 2.2c-.8.5-1.2 1-1.2 1.9M12 17h.01"/>')}</button>
+      <div class="fxlegend" id="fxLegend" role="note"></div>
+    </div>
+    <button type="button" class="switch" role="switch" id="animSwitch" aria-checked="true"><span class="knob"></span><span data-bi18n="anim"></span></button></div>
     <div class="seg looks" role="group" data-bi18n-label="look">
       <button type="button" id="labelsBtn" aria-pressed="false" data-bi18n="labels"></button>
       <button type="button" id="cutBtn" aria-pressed="false" data-bi18n="cut"></button>
@@ -123,7 +140,12 @@ export function mountBrain(host, env) {
     breath: C(80, 0.09, 42), // Claude thinking: a soft glow of its coral through the whole brain
     lobeMix: 0.3, // how much of its lobe's color a strand of the shell takes
   };
-  const kindRgb = (k) => P.kinds.slice(KIND[k] * 3, KIND[k] * 3 + 3);
+  // What each kind of action lights a cell as: a search reads; the web and other tools are commands; a new file is an edit.
+  const BASE = { search: 'read', web: 'command', tool: 'command', create: 'edit' };
+  const baseOf = (k) => BASE[k] || k;
+  const kindRgb = (k) => P.kinds.slice(KIND[baseOf(k)] * 3, KIND[baseOf(k)] * 3 + 3);
+  // A change's two colors (lines added, lines removed) and the amber of waiting for the user.
+  const FX = { add: C(78, 0.15, 155), del: C(72, 0.17, 25), wait: C(83, 0.14, 80) };
   const whiten = (c, k) => c.map((v) => v + (1 - v) * k);
   const DENDRITE_ALPHA = P.edgeAlpha[EDGE.dendrite];
   // Categorical color per lobe kind: the brain view's one exemption from one-hue-per-meaning (DESIGN.md, Brain view).
@@ -498,7 +520,10 @@ export function mountBrain(host, env) {
   const rings = [];
   const flashes = []; // a region glowing where an agent just landed
   const heats = [], HEAT_R = 0.2; // [{ i, t0 }]: cells an agent just left, cooling; within HEAT_R hot spots merge
-  const sparks = [], SPARK_MS = 650; // [{ i, t0, rgb }]: cells a pulse just passed through on its way
+  const sparks = [], SPARK_MS = 650; // [{ i, t0, rgb, life, big }]: cells a pulse just passed through, or a search matched
+  const effects = []; // the figures of the actions under way (see "actions")
+  const born = new Map(), BIRTH_MS = 1400; // cells being born: i -> { t0: when its figure started, links: its links show }
+  const unborn = (i) => { const b = born.get(i); return !!b && !b.links; };
   const signals = []; // small pulses running along fibers around recent work
   let lastSignal = 0;
   let ripples = [];
@@ -572,8 +597,8 @@ export function mountBrain(host, env) {
   }
 
   // ---- visibility, emphasis, lit paths -----------------------------------------------------------------------------
-  function nodeBright(i) {
-    if (!visible[i]) return 0;
+  function nodeBright(i, evenBorn) {
+    if (!visible[i] || (born.has(i) && !evenBorn)) return 0; // a cell being born is drawn by its figure
     let b = bright[i];
     if (focusSet) b *= focusSet.has(i) ? 1.4 : 0.14;
     else if (matchSet) b *= matchSet.has(i) ? 1.4 : 0.16;
@@ -590,7 +615,7 @@ export function mountBrain(host, env) {
       if (v && focusSet) v = e.a === focus || e.b === focus ? 3 : 0.12;
       else if (v && matchSet) v = matchSet.has(e.a) && matchSet.has(e.b) ? 1.2 : 0.12;
       else if (v) v = 1 + 1.4 * Math.max(state[e.a * 4 + 1], state[e.b * 4 + 1]);
-      if (v && (cutAway(e.a) || cutAway(e.b))) v = 0;
+      if (v && (cutAway(e.a) || cutAway(e.b) || unborn(e.a) || unborn(e.b))) v = 0; // a cell being born has no links yet
       edgeHl[k] = v;
     });
     lod.forEach((l, k) => {
@@ -609,7 +634,7 @@ export function mountBrain(host, env) {
       let v = visible[i] ? (0.35 + 0.6 * bright[i]) * crowdOf(i) * (minor[i] > 1 ? 0.5 : 1) : 0; // crowded lobes: dimmer, like their nodes; fainter for the cells drawn as points
       if (v && focusSet) v = focusSet.has(i) ? (i === focus ? 2.6 : 1.7) : 0.12;
       else if (v && matchSet) v = matchSet.has(i) ? 1.7 : 0.12;
-      if (cutAway(i)) v = 0;
+      if (cutAway(i) || born.has(i)) v = 0; // a cell being born grows its own branches (activeNeurons)
       neuron.hl[s] = v;
     }
     for (let k = 0; k < tractHl.length; k++) tractShown[k] = tractHl[k] * (focusSet || matchSet ? 0.35 : 1);
@@ -625,6 +650,15 @@ export function mountBrain(host, env) {
     for (const [i] of live) for (const s of neuron.segsOf[i] || []) {
       segs.push(...neuron.data.subarray(s * FIBER_FLOATS, (s + 1) * FIBER_FLOATS));
       hl.push(1.6 + state[i * 4 + 1]);
+    }
+    // A cell being born: its branches grow, the main ones first.
+    const nowMs = performance.now();
+    for (const [i, b] of born) {
+      const u = clamp((nowMs - b.t0) / BIRTH_MS, 0, 1), all = neuron.segsOf[i] || [];
+      all.forEach((s, k) => {
+        const w = clamp((u * 1.25 - 0.15 - (k / all.length) * 0.6) / 0.25, 0, 1);
+        if (w > 0) { segs.push(...neuron.data.subarray(s * FIBER_FLOATS, (s + 1) * FIBER_FLOATS)); hl.push(2.4 * w); }
+      });
     }
     R.setLayer('active', new Float32Array(segs), new Float32Array(hl));
   }
@@ -775,10 +809,18 @@ export function mountBrain(host, env) {
   // What an agent is doing, in words: a verb and what it acts on (a file's name, a command). The verb is said once: a
   // text that already starts with it (a command described as "Run the tests", "Ejecutar pruebas") stands alone.
   function saying(a) {
-    const verb = { read: T.v_read, edit: T.v_edit, command: T.v_command, error: T.v_error, think: T.thinking, done: T.done, start: T.started }[a.kind] || '';
-    const text = ['read', 'edit', 'command', 'error'].includes(a.kind) ? String(a.text || '').trim() : '';
+    if (isWaiting(a)) return { verb: T.v_wait, text: '', cls: 'wait' };
+    const verb = { read: T.v_read, edit: T.v_edit, create: T.v_create, search: T.v_search, command: T.v_command, tool: T.v_command, web: T.v_web, error: T.v_error, think: T.thinking, done: T.done, start: T.started }[a.kind] || '';
+    const text = ['read', 'edit', 'create', 'search', 'command', 'tool', 'web', 'error'].includes(a.kind) ? String(a.text || '').trim() : '';
     const first = (text.match(/^\p{L}+/u) || [''])[0].toLowerCase(), v = verb.toLowerCase();
-    return { verb: first && (first === v || first + 's' === v || first === v + 'r') ? '' : verb, text };
+    return { verb: first && (first === v || first + 's' === v || first === v + 'r') ? '' : verb, text, cls: baseOf(a.kind) };
+  }
+  function setWaiting(a, on) {
+    if (!!a.waiting === on) return;
+    a.waiting = on ? performance.now() : 0; // since when
+    renderNow();
+    labelsDirty = true;
+    request();
   }
   const DONE_MS = 15_000;
   const dismiss = (a) => { a.chip?.remove(); a.li?.remove(); agents.delete(a.id); };
@@ -787,6 +829,11 @@ export function mountBrain(host, env) {
   const cometHead = (c, now) => c.route.pt(headT(c, now));
   const animating = () => anim && R && !document.hidden && view === 'brain' && !silent;
   const thinking = () => { for (const a of agents.values()) if (a.kind === 'think' && a.status !== 'done') return true; return false; };
+  // Waiting for the user's OK: until the answer, or for WAIT_MS at most (a session that quiet has gone stale, and a
+  // marker must not blink for hours in front of nobody).
+  const WAIT_MS = 5 * 60_000;
+  const isWaiting = (a, now = performance.now()) => !!a.waiting && a.status !== 'done' && now - a.waiting < WAIT_MS;
+  const waiting = () => { for (const a of agents.values()) if (a.pos && isWaiting(a)) return true; return false; };
 
   // ---- routes: an agent's way from one cell to the next ----------------------------------------------------------
   // A thought travels through the network, never through the air. From cell to cell it follows real links: the path
@@ -886,9 +933,229 @@ export function mountBrain(host, env) {
     return route;
   }
 
-  // ev: { agent, kind: start | stop | read | edit | command | error | think, node, text, tokens, def: the agent's
+  // ---- actions: what each kind of work looks like ---------------------------------------------------------------
+  // One short figure per kind of action, so what an agent does can be told at a glance, without reading its tag:
+  //   read      a soft ripple closes in on the cell
+  //   edit      a spark redraws the cell's outline; green dots go in for the lines added and red ones leave for the
+  //             lines removed, only when the event says how many (a dot per PER_DOT lines, MAX_DOTS at most)
+  //   create    the cell is born: it fades in, its branches grow, its links reach out
+  //   search    a wave sweeps the folder searched; the files that matched light up as it reaches them
+  //   command   a pulse runs up the brainstem when it starts and down when it ends
+  //   web       a beam leaves the brain and comes back: the only signal that goes outside
+  //   subagent  a silver spark splits off Claude's marker and becomes the subagent
+  //   wait      Claude's marker blinks amber until the user answers (drawn with the markers, in buildSprites)
+  //   error     a short red flicker, like a short circuit
+  //   stop      one calm wave
+  // Each is a few sprites (the web's beam and a newborn's links are ribbons) for under 1.5 s, then gone. With
+  // animations off none is drawn: what is left is the cell's static light in its kind's color.
+  const TAU = 2 * Math.PI, PER_DOT = 3, MAX_DOTS = 10;
+  // sprites(list, u, now, fx) and beams(ribbon, u) draw the figure at u (0..1); end() runs when it is over.
+  function effect(dur, sprites, beams = null, delay = 0, end = null) {
+    if (!animating()) { if (end) end(); return; }
+    const t0 = performance.now() + delay;
+    effects.push({ t0, dur, sprites, beams, end });
+    busy(t0 + dur + 60);
+    request();
+  }
+  // On a narrow well (a phone) the brain is small, so the figures are drawn bigger there, up to 1.7 times: their
+  // distances here, their sprites where they are drawn (buildSprites).
+  const fxScale = () => clamp(820 / W, 1, 1.7);
+  // A point at distance r from p, at an angle on the plane that faces the camera.
+  const facing = (p, r, ang) => { const k = r * fxScale(); return [0, 1, 2].map((q) => p[q] + (basis.x[q] * Math.cos(ang) + basis.y[q] * Math.sin(ang)) * k); };
+
+  function fxRead(i) {
+    const p = at(i), rgb = kindRgb('read');
+    effect(650, (list, u) => {
+      for (let k = 0; k < 2; k++) { // two rings, one after the other, closing in
+        const w = (u - k * 0.24) / 0.76;
+        if (w > 0 && w < 1) list.push(...p, 0.05 + 0.24 * (1 - w) ** 1.5, ...rgb, 0.85 * Math.sin(Math.PI * w) ** 0.7, SPRITE.ring);
+      }
+    });
+  }
+  function fxEdit(i) {
+    const p = at(i), rgb = kindRgb('edit'), hot = whiten(rgb, 0.55), a0 = Math.random() * TAU, r = 0.055; // just outside the agent's own ring
+    effect(800, (list, u) => {
+      const turn = (w) => a0 + ease(w) * TAU * 1.25, fade = 1 - u ** 3;
+      for (let k = 0; k < 7; k++) list.push(...facing(p, r, turn(u) - k * 0.16), 0.04 - k * 0.004, ...(k ? rgb : hot), fade * (1 - k / 7), SPRITE.head); // the point that redraws the outline, and its tail
+      for (let k = 0; k < 5; k++) { // sparks thrown off as it passes
+        const from = 0.1 + k * 0.15, w = (u - from) / 0.3;
+        if (w > 0 && w < 1) list.push(...facing(p, r + 0.07 * w, turn(from) + 0.5 * w), 0.02, ...hot, 0.9 * (1 - w), SPRITE.head);
+      }
+    });
+  }
+  // Lines added come in (green, from the upper left); lines removed leave (red, to the lower right).
+  const dots = (n) => (n > 0 ? Math.min(MAX_DOTS, Math.ceil(n / PER_DOT)) : 0);
+  function fxDiff(i, add, del, delay = 0) {
+    const p = at(i), na = dots(add), nd = dots(del);
+    if (!na && !nd) return;
+    effect(620 + 70 * Math.max(na, nd), (list, u, now, fx) => {
+      const t = u * fx.dur;
+      for (let k = 0; k < na; k++) {
+        const w = (t - k * 70) / 600; // one after another
+        if (w > 0 && w < 1) list.push(...facing(p, 0.02 + 0.12 * (1 - ease(w)), 2.36 + ((k % 5) - 2) * 0.2), 0.032, ...FX.add, Math.sin(Math.PI * w) ** 0.5, SPRITE.head);
+      }
+      for (let k = 0; k < nd; k++) {
+        const w = (t - k * 70) / 600;
+        if (w > 0 && w < 1) list.push(...facing(p, 0.02 + 0.12 * ease(w), -0.78 + ((k % 5) - 2) * 0.2), 0.032, ...FX.del, 1 - w * w, SPRITE.head);
+      }
+    }, null, delay);
+  }
+  function fxError(i) {
+    const p = at(i), rgb = kindRgb('error'), hot = whiten(rgb, 0.6);
+    effect(560, (list, u, now) => {
+      const on = [1, 0.1, 1, 0.25, 0.9, 0.5, 0.25, 0.1][Math.min(7, Math.floor(u * 8))]; // it stutters, then dies out
+      list.push(...p, 0.16, ...rgb, 0.75 * on, SPRITE.glow, ...p, 0.075, ...rgb, 0.9 * on, SPRITE.ring);
+      const tick = Math.floor(now / 70); // its sparks jump to another place every 70 ms
+      for (let k = 0; k < 3; k++) {
+        const s = Math.sin(tick * 12.9898 + k * 78.233) * 43758.5453, f = s - Math.floor(s);
+        list.push(...facing(p, 0.022 + 0.035 * f, f * TAU * 3), 0.015, ...hot, on, SPRITE.head);
+      }
+    });
+  }
+  // A command: pulses along the brainstem's own strands, up when it starts, down when it ends.
+  function fxStem(up) {
+    if (!animating()) return;
+    const now = performance.now(), rgb = whiten(kindRgb('command'), 0.55);
+    tractStrands.filter((s) => s.lobes.size === 1 && s.lobes.has('stem')).slice(0, 3)
+      .forEach((s, j) => pulses.push({ s, t0: now + j * 120, dur: 780, back: !up, span: [0.02, 0.6], size: 0.1, rgb }));
+    busy(now + 1200);
+  }
+  // The web: a beam in the agent's color leaves the brain, touches the outside and comes back.
+  function fxWeb(i, rgb) {
+    // Outward as the camera sees it, so it is seen leaving the brain's outline: away from the brain's center on the
+    // plane that faces the camera (down, from a cell in the middle), to just beyond the brain's edge.
+    const p = at(i), d = [0, 1, 2].map((q) => p[q] - BRAIN_CENTER[q]), S = 10;
+    let dx = d[0] * basis.x[0] + d[1] * basis.x[1] + d[2] * basis.x[2], dy = d[0] * basis.y[0] + d[1] * basis.y[1] + d[2] * basis.y[2];
+    const off = Math.hypot(dx, dy);
+    if (off < 0.08) { dx = 0; dy = -1; } else { dx /= off; dy /= off; }
+    const out = [0, 1, 2].map((q) => basis.x[q] * dx + basis.y[q] * dy), far = Math.max(0.5, BRAIN_RADIUS * 1.05 - off);
+    const pts = Array.from({ length: S + 1 }, (_, q) => v3.add(p, out, (far * q) / S)), way = { pts, cum: Float32Array.from(pts, (_, q) => q / S) };
+    const reach = (u) => (u < 0.45 ? ease(u / 0.45) : u < 0.55 ? 1 : 1 - ease((u - 0.55) / 0.45)); // out, a beat outside, back
+    effect(1250, (list, u) => {
+      list.push(...v3.add(p, out, far * reach(u)), 0.07, ...rgb, 1, SPRITE.head);
+      if (u > 0.4 && u < 0.62) { const w = (u - 0.4) / 0.22; list.push(...pts[S], 0.05 + 0.16 * w, ...rgb, 0.8 * (1 - w), SPRITE.ring); } // it touched the outside
+    }, (ribbon, u) => {
+      const h = reach(u);
+      if (h > 0.02) ribbon(way, 0, h, () => 0.28, rgb, 8);
+      if (u < 0.45) { const tail = Math.max(0, h - 0.5); if (h > tail) ribbon(way, tail, h, (t) => 0.9 * ((t - tail) / (h - tail)) ** 2, rgb, 14); }
+      else if (u > 0.55 && h < 0.98) { const top = Math.min(1, h + 0.5); ribbon(way, h, top, (t) => 0.9 * (1 - (t - h) / (top - h)) ** 2, rgb, 14); }
+    });
+  }
+  // A subagent: a spark in its color leaves Claude's marker in an arc and comes back as the subagent's own ring.
+  function fxSpawn(a, p) {
+    if (!animating()) return;
+    const a0 = Math.random() * TAU;
+    a.hatch = performance.now() + 620; // its marker shows when the spark lands
+    effect(640, (list, u) => {
+      const r = 0.12 * Math.sin(Math.PI * u), w = a0 + u * 2.4;
+      list.push(...facing(p, r, w), 0.065 - 0.02 * u, ...a.rgb, 1, SPRITE.head, ...facing(p, r * 0.75, w - 0.3), 0.032, ...a.rgb, 0.5, SPRITE.head);
+    }, null, 0, () => { const now = performance.now(); a.hatch = 0; if (animating()) { rings.push({ p, t0: now, dur: 650, rgb: a.rgb, s: 0.65 }); busy(now + 700); } });
+  }
+  // The cells a search looks through: the files under the folder it names, or its whole project.
+  const rootKey = new Map(graph.projects.map((p) => [p.id, pathKey(p.root || '')]));
+  function scopeOf(dir) {
+    const key = dir ? pathKey(dir).replace(/\/+$/, '') : null, under = [], all = [];
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
+      if (n.type === 'tool' || n.project == null) continue;
+      if (n.project === session.project) all.push(i);
+      if (key) { const f = pathKey(`${rootKey.get(n.project)}/${n.path}`); if (f === key || f.startsWith(key + '/')) under.push(i); }
+    }
+    return under.length ? under : all;
+  }
+  let lastWave = null; // the newest search's wave: its matches light up as it reaches them
+  function fxSearch(cells) {
+    if (!animating() || !cells.length) return;
+    const c = [0, 0, 0];
+    for (const i of cells) { const p = at(i); for (let q = 0; q < 3; q++) c[q] += p[q] / cells.length; }
+    let rad = 0.14;
+    for (const i of cells) rad = Math.max(rad, dist3(c, at(i)));
+    rad = Math.min(rad + 0.03, 0.8);
+    const now = performance.now(), speed = rad / 1.0, rgb = kindRgb('read');
+    ripples.push({ p: c, t: tSec(now), c: rgb.map((v) => v * 0.85), k: [speed, 1.15] }); // the cells light up as its front passes
+    lastWave = { c, speed, t0: now };
+    effects.push({ t0: now, dur: 1100, exact: true, sprites: (list, u) => { list.push(...c, 2.5 * rad * u, ...rgb, 0.45 * (1 - u) ** 1.3, SPRITE.ring); } }); // the wave's front, at its true size
+    busy(now + 1200);
+  }
+  function fxHits(ids) {
+    if (!animating() || !ids.length) return;
+    const now = performance.now(), wave = lastWave && now - lastWave.t0 < 1500 ? lastWave : null, rgb = kindRgb('read');
+    ids.slice(0, 24).forEach((i, k) => sparks.push({ i, rgb, life: 750, big: true, t0: Math.max(now + k * 30, wave ? wave.t0 + (dist3(wave.c, at(i)) / wave.speed) * 1000 : 0) }));
+    busy(now + 2400);
+  }
+  // A cell about to be born is hidden (itself, its branches, its links) until its figure draws it.
+  function hideUnborn(i) {
+    if (born.has(i)) return;
+    born.set(i, { t0: Infinity, links: false });
+    state[i * 4] = 0;
+    if (R) R.updateState(state, i, i + 1);
+    edgeLights();
+    deepLights();
+  }
+  function unhide(i) {
+    if (!born.delete(i)) return;
+    state[i * 4] = nodeBright(i);
+    if (R) R.updateState(state, i, i + 1);
+    edgeLights();
+    deepLights();
+    activeNeurons();
+  }
+  function birth(i) {
+    if (!animating()) { unhide(i); return; }
+    hideUnborn(i);
+    const b = born.get(i), p = at(i), lit = whiten(regionColor[nodes[i].region], 0.45);
+    if (b.t0 !== Infinity) return; // already under way
+    b.t0 = performance.now();
+    const links = adj[i].slice(0, 14).map((k) => { // its links' own fibers, from the new cell outward
+      const pts = fiberPoints(k, edges[k].a === i), cum = new Float32Array(pts.length);
+      for (let j = 1; j < pts.length; j++) cum[j] = cum[j - 1] + dist3(pts[j - 1], pts[j]);
+      for (let j = 1; j < pts.length; j++) cum[j] /= cum[pts.length - 1] || 1;
+      return { pts, cum };
+    });
+    effect(BIRTH_MS, (list, u) => {
+      // A seed of light swells and a ring opens; the cell fades in inside it while its branches grow.
+      list.push(...p, 0.06 + 0.2 * Math.sin(Math.PI * Math.min(1, u / 0.55)), ...lit, 0.75 * (1 - u) ** 1.3, SPRITE.glow);
+      if (u < 0.6) list.push(...p, 0.03 + 0.17 * (u / 0.6), ...lit, 0.7 * (1 - u / 0.6), SPRITE.ring);
+      state[i * 4] = nodeBright(i, true) * smooth(0.08, 0.6, u);
+      R.updateState(state, i, i + 1);
+      activeNeurons();
+      if (u > 0.88 && !b.links) { b.links = true; edgeLights(); } // the links themselves take over from their ribbons
+    }, (ribbon, u) => {
+      const w = ease(clamp((u - 0.3) / 0.55, 0, 1)), fade = u < 0.85 ? 1 : (1 - u) / 0.15;
+      if (w > 0.01) for (const l of links) ribbon(l, 0, w, () => 0.7 * fade, lit, 7);
+    }, 0, () => unhide(i));
+  }
+  // The figure of an action, where the agent lands.
+  function figure(c, a, i, now) {
+    const k = c.kind;
+    if (k === 'read') fxRead(i);
+    else if (k === 'edit') { fxEdit(i); if (c.add != null) fxDiff(i, c.add, c.del, 280); }
+    else if (k === 'create') birth(i);
+    else if (k === 'web') fxWeb(i, a.rgb);
+    else if (k === 'error') fxError(i);
+    else { // a command, another tool, a search (its wave is already on its way): a ring opens where it lands
+      rings.push({ p: at(i), t0: now, dur: 750, rgb: kindRgb(k) });
+      if (k === 'command') fxStem(true);
+    }
+  }
+  // What a call did, known a moment after it started: the lines an edit added and removed, the files a search
+  // matched, a command that ended. { agent, node, add, del } | { hits: [nodes] } | { done: true }.
+  function outcome(ev) {
+    if (silent || !animating()) return;
+    const a = agents.get(ev.agent);
+    if (ev.hits) fxHits(ev.hits);
+    if (ev.done) fxStem(false);
+    if (ev.add != null && ev.node != null && a) {
+      if (a.comet && a.comet.node === ev.node) { a.comet.add = ev.add; a.comet.del = ev.del; } // still on its way: shown when it lands
+      else if (a.node === ev.node) fxDiff(ev.node, ev.add, ev.del);
+    }
+  }
+
+  // ev: { agent, kind: start | stop | read | edit | create | search | command | web | tool | error | think | wait |
+  // outcome, node, text, tokens, dir (a search's folder), add, del (an edit's lines, when known), def: the agent's
   // { label, type, task }, ts: when it happened (only for what is applied from the past, see seed) }.
   function onEvent(ev) {
+    if (ev.kind === 'outcome') { outcome(ev); return; }
     const now = performance.now(), age = ev.ts ? Math.max(0, Date.now() - ev.ts) : 0;
     if (!silent) lastEvent = now;
     trace.add(ev, now - age);
@@ -896,6 +1163,8 @@ export function mountBrain(host, env) {
     const a = agentOf(ev.agent);
     if (ev.def) a.def = ev.def;
     const main = agentOf('main');
+    if (ev.kind === 'wait') { setWaiting(a, true); return; }
+    a.waiting = 0; // whatever it does next, the wait is over
     if (ev.kind === 'start') {
       a.status = ev.agent === 'main' ? 'working' : 'running';
       a.hideAt = 0;
@@ -909,12 +1178,20 @@ export function mountBrain(host, env) {
         }
       } else {
         a.node = main.node; a.pos = main.pos; // it starts at the cell Claude is at (or just left)
-        if (animating() && a.pos) { rings.push({ p: a.pos, t0: now, dur: 800, rgb: a.rgb, s: 0.7 }); busy(now + 800); }
+        if (animating() && a.pos) fxSpawn(a, a.pos);
       }
       a.kind = 'start'; a.text = T.started;
     } else if (ev.kind === 'stop') {
       if (a.comet) arrive(a, false);
-      if (a.node != null && animating()) { heats.push({ i: a.node, t0: now }); busy(now + TRAIL_MS); }
+      if (a.node != null && animating()) {
+        heats.push({ i: a.node, t0: now });
+        if (a.status !== 'done') { // done: one calm wave, in its color
+          const p = a.pos, rgb = a.rgb;
+          ripples.push({ p, t: tSec(now), c: rgb, k: [0.3, 1.4] });
+          effect(1400, (list, u) => { list.push(...p, 0.08 + 0.9 * u, ...rgb, 0.3 * (1 - u) ** 1.5, SPRITE.ring); });
+        }
+        busy(now + TRAIL_MS);
+      }
       a.status = 'done'; a.kind = 'done'; a.text = T.done;
       a.hideAt = silent ? 1 : now + 2600;
       if (!silent) setTimeout(() => { labelsDirty = true; followGoal(); request(); }, 2700);
@@ -934,15 +1211,18 @@ export function mountBrain(host, env) {
       if (ev.agent === 'main' && session.status !== 'working') { session.status = 'working'; setProjectActive(session.project); }
       if (a.comet) arrive(a, false); // a new action before the last beam landed: land it now
       const target = ev.node ?? a.node; // an action with no node of its own (a failure) shows where the agent is
+      if (ev.kind === 'search') fxSearch(scopeOf(ev.dir)); // the wave starts at once, wherever the agent is
+      const known = ev.add != null ? { add: ev.add, del: ev.del } : null; // what an edit changed, when the event already says
       if (target == null) { /* nowhere to show it yet: the tag and the panel still say what it does */ }
       else if (!animating() || a.node == null || !fine) { a.comet = { node: target, kind: ev.kind, ts: ev.ts, past: silent }; arrive(a, false); }
-      else if (target === a.node) { a.comet = { node: target, kind: ev.kind }; arrive(a, true); } // the same cell again: it lights up, nothing travels
+      else if (target === a.node) { a.comet = { node: target, kind: ev.kind, ...known }; arrive(a, true); } // the same cell again: its figure plays, nothing travels
       else {
         heats.push({ i: a.node, t0: now }); // where it was cools down
         const route = routeTo(a.node, target);
         // Over links: a beat per hop. With no path, a glide along the lane, as long as the way is.
         const dur = route.hops ? Math.min(1700, 420 + 260 * route.hops) : 620 + 580 * Math.min(1, route.length / 1.2);
-        a.comet = { route, t0: now, dur, node: target, kind: ev.kind, next: 0 };
+        a.comet = { route, t0: now, dur, node: target, kind: ev.kind, next: 0, ...known };
+        if (ev.kind === 'create') hideUnborn(target); // it is born when the agent gets there
         // A way taken again is drawn once: older trails give up the links this pulse runs over, so light doesn't pile up.
         const mine = new Set(route.legs.map((l) => l.key));
         for (const tr of trails) tr.c.legs.forEach((l, j) => { if (mine.has(l.key)) tr.off.add(j); });
@@ -966,15 +1246,16 @@ export function mountBrain(host, env) {
     }
     if (!c.past) { // what is applied from the past is already in the graph's counts
       if (c.kind === 'read') stats[i].reads++;
-      if (c.kind === 'edit') stats[i].edits++;
+      if (c.kind === 'edit' || c.kind === 'create') stats[i].edits++;
     }
     stats[i].lastAt = Math.max(stats[i].lastAt, c.ts || Date.now());
     size[i] = sizeOf(i); bright[i] = brightOf(i);
     if (R) R.setSize(i, size[i]);
-    embers.set(i, { kind: c.kind, at: c.ts || Date.now() });
-    state[i * 4] = nodeBright(i); state[i * 4 + 1] = 1; state[i * 4 + 2] = animate ? tSec(now) : -100; state[i * 4 + 3] = KIND[c.kind];
+    embers.set(i, { kind: baseOf(c.kind), at: c.ts || Date.now() });
+    if (c.kind === 'create' && !animate) unhide(i);
+    state[i * 4] = nodeBright(i); state[i * 4 + 1] = 1; state[i * 4 + 2] = animate ? tSec(now) : -100; state[i * 4 + 3] = KIND[baseOf(c.kind)];
     if (R) R.updateState(state, i, i + 1);
-    if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); const g = nodes[i].region, was = flashes.findIndex((f) => f.g === g); if (was >= 0) flashes.splice(was, 1); flashes.push({ g, t0: now }); busy(now + 1700); } // one flash per region: they don't pile up
+    if (animate) { figure(c, a, i, now); const g = nodes[i].region, was = flashes.findIndex((f) => f.g === g); if (was >= 0) flashes.splice(was, 1); flashes.push({ g, t0: now }); busy(now + 1700); } // one flash per region: they don't pile up
     cooling();
     activeNeurons();
     if (focus === i) renderFocus();
@@ -1081,7 +1362,7 @@ export function mountBrain(host, env) {
     if (wasMoving && !moving) { staticKey++; labelsDirty = true; } // the camera stopped: redraw the static layers with smooth fibers, settle the labels
     wasMoving = moving;
     const time = tSec(now);
-    ripples = ripples.filter((r) => time - r.t < 2.4);
+    ripples = ripples.filter((r) => time - r.t < (r.k ? r.k[1] : 2.4));
     for (let k = rings.length - 1; k >= 0; k--) if (now - rings[k].t0 > rings[k].dur) rings.splice(k, 1);
     const haze = buildSprites(now, clock);
     R.setBeams(buildBeams(now));
@@ -1099,7 +1380,7 @@ export function mountBrain(host, env) {
     setClass(labelBox, 'tracking', moving && !hand);
     if (!labelsAway && (labelsDirty || moving)) layoutLabels(moving);
     placeChips(now);
-    if (anim && (now < busyUntil || moving || thinking() || intro.on)) request();
+    if (anim && (now < busyUntil || moving || thinking() || waiting() || intro.on)) request();
   }
 
   // Haze per region and the lit lobes (cached layer), then agent heads, markers and rings.
@@ -1130,11 +1411,29 @@ export function mountBrain(host, env) {
       list.push(...s.c, Math.max(...s.r) * 2.8, ...C(l, c, hh), 0.075 * h, SPRITE.glow);
     }
     const haze = list.length / SPRITE_FLOATS;
+    const big = fxScale();
+    const stack = new Map(); // agents on the same cell: each one's ring a little wider, so all of them show
     for (const a of agents.values()) {
-      if (!a.pos || (a.hideAt && now > a.hideAt)) continue;
+      if (!a.pos || (a.hideAt && now > a.hideAt) || (a.hatch && now < a.hatch)) continue;
       const fade = a.status === 'done' ? 0.5 : 1;
-      if (a.comet && a.comet.route) list.push(...cometHead(a.comet, now), 0.075, ...a.rgb, 1, SPRITE.head);
-      else list.push(...a.pos, 0.1, ...a.rgb, 0.75 * fade, SPRITE.ring, ...a.pos, 0.045, ...a.rgb, 0.9 * fade, SPRITE.head);
+      if (a.comet && a.comet.route) { list.push(...cometHead(a.comet, now), 0.075, ...a.rgb, 1, SPRITE.head); continue; }
+      const n = stack.get(a.node) || 0;
+      stack.set(a.node, n + 1);
+      list.push(...a.pos, 0.1 + 0.035 * n, ...a.rgb, 0.75 * fade, SPRITE.ring, ...a.pos, 0.045, ...a.rgb, 0.9 * fade, SPRITE.head);
+      // Waiting for the user's OK: the marker blinks slowly in amber (a steady amber ring with animations off).
+      if (isWaiting(a, now)) {
+        const k = anim ? 0.5 - 0.5 * Math.cos((TAU * now) / 1600) : 1;
+        list.push(...a.pos, (0.18 + 0.035 * n) * big, ...FX.wait, 0.15 + 0.75 * k, SPRITE.ring, ...a.pos, 0.28 * big, ...FX.wait, 0.2 * k, SPRITE.glow);
+      }
+    }
+    // The figures of the actions under way.
+    for (let k = effects.length - 1; k >= 0; k--) {
+      const fx = effects[k], u = (now - fx.t0) / fx.dur;
+      if (u >= 1 || !anim) { effects.splice(k, 1); if (fx.end) fx.end(); continue; }
+      if (u < 0 || !fx.sprites) continue;
+      const from = list.length;
+      fx.sprites(list, u, now, fx);
+      if (big > 1 && !fx.exact) for (let q = from + 3; q < list.length; q += SPRITE_FLOATS) list[q] *= big; // bigger on a phone
     }
     // Heat: where an agent works the light is hot, near white at its center; a cell it just left cools back to its
     // region's color in a few seconds. This is what the bloom picks up. Sources close together don't add up: the
@@ -1160,10 +1459,11 @@ export function mountBrain(host, env) {
       list.push(...p, 0.11, ...whiten(rc, 0.4 * (1 - u)), 0.42 * v, SPRITE.glow, ...p, 0.05, ...whiten(rc, 0.8 * (1 - u)), 0.7 * v, SPRITE.glow);
     }
     for (let k = sparks.length - 1; k >= 0; k--) {
-      const sp = sparks[k], u = (now - sp.t0) / SPARK_MS;
+      const sp = sparks[k], u = (now - sp.t0) / (sp.life || SPARK_MS);
       if (u >= 1 || !anim) { sparks.splice(k, 1); continue; }
-      const p = at(sp.i);
-      list.push(...p, 0.07, ...whiten(regionColor[nodes[sp.i].region], 0.6), 0.6 * (1 - u) ** 2, SPRITE.glow, ...p, 0.03 + 0.05 * u, ...sp.rgb, 0.8 * (1 - u), SPRITE.ring);
+      if (u < 0) continue; // a match the search's wave has not reached yet
+      const p = at(sp.i), s = sp.big ? 1.6 * fxScale() : 1;
+      list.push(...p, 0.07 * s, ...whiten(regionColor[nodes[sp.i].region], 0.6), 0.6 * (1 - u) ** 2, SPRITE.glow, ...p, (0.03 + 0.05 * u) * s, ...sp.rgb, 0.8 * (1 - u), SPRITE.ring);
     }
     for (const r of rings) {
       const u = (now - r.t0) / r.dur, e = 1 - (1 - u) ** 3;
@@ -1216,8 +1516,9 @@ export function mountBrain(host, env) {
       const pu = pulses[k], u = (now - pu.t0) / pu.dur;
       if (u >= 1 || !anim) { pulses.splice(k, 1); continue; }
       if (u < 0) continue;
-      const pts = pu.s.pts, f = (pu.back ? 1 - u : u) * (pts.length - 1), j = Math.min(pts.length - 2, Math.floor(f)), w = f - j;
-      list.push(pts[j][0] + (pts[j + 1][0] - pts[j][0]) * w, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * w, pts[j][2] + (pts[j + 1][2] - pts[j][2]) * w, 0.04, ...pu.s.rgb, 0.9 * Math.sin(Math.PI * u), SPRITE.head);
+      const pts = pu.s.pts, [f0, f1] = pu.span || [0, 1], v = pu.back ? 1 - u : u; // span: the stretch of the strand it runs
+      const f = (f0 + (f1 - f0) * v) * (pts.length - 1), j = Math.min(pts.length - 2, Math.floor(f)), w = f - j;
+      list.push(pts[j][0] + (pts[j + 1][0] - pts[j][0]) * w, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * w, pts[j][2] + (pts[j + 1][2] - pts[j][2]) * w, pu.size || 0.04, ...(pu.rgb || pu.s.rgb), 0.9 * Math.sin(Math.PI * u), SPRITE.head);
     }
     // Claude thinking: a slow, warm breath through the whole brain (still, with animations off).
     if (thinking()) list.push(BRAIN_CENTER[0], BRAIN_CENTER[1] + 0.12, 0, 1.25, ...P.breath, anim ? 0.035 + 0.04 * (0.5 - 0.5 * Math.cos((2 * Math.PI * now) / 4200)) : 0.05, SPRITE.glow);
@@ -1263,6 +1564,7 @@ export function mountBrain(host, env) {
         else ribbon(rt, t0, 1, (t) => 0.6 * (1 - age) * ((t - t0) / rt.span) ** 2, a.rgb, 14);
       }
     }
+    for (const fx of effects) { const u = (now - fx.t0) / fx.dur; if (fx.beams && u >= 0 && u < 1) fx.beams(ribbon, u); }
     if (out.length > beamData.length) beamData = new Float32Array(out.length * 2);
     beamData.set(out);
     return beamData.subarray(0, out.length);
@@ -1423,14 +1725,14 @@ export function mountBrain(host, env) {
       a.chip.classList.toggle('gone', !!(a.hideAt && now > a.hideAt));
       const p = project(a.comet && a.comet.route ? cometHead(a.comet, now) : a.pos);
       const [, who, k, code] = a.chip.children;
-      const { verb, text } = saying(a);
+      const { verb, text, cls } = saying(a);
       const label = a.id === 'main' ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
       const key = `${label}|${verb}|${a.kind}|${text}|${compact}|${a.def.type}`;
       if (a.chipKey !== key) {
         a.chipKey = key;
         setText(who, compact || a.id === 'main' ? label : `${label} ${a.def.type}`);
         setText(k, compact ? '' : verb);
-        k.className = `k ${a.kind}`;
+        k.className = `k ${cls}`;
         setText(code, compact ? '' : text);
         a.chipW = 0;
       }
@@ -1577,6 +1879,7 @@ export function mountBrain(host, env) {
     $('regionLegend').innerHTML = Object.keys(LOBES).map((l) => `<li><span class="dot" style="background:${lobeCss(l)}"></span>${esc(T.lobes[l][1])} <small>${esc(T.lobes[l][0])}</small></li>`).join('');
     $('kindLegend').innerHTML = ['read', 'edit', 'error', 'command', 'focus'].map((k) => `<li><span class="dot ${k === 'focus' ? 'sel' : k}"></span>${esc(T['k_' + k])}</li>`).join('') +
       `<li class="wide"><span class="dot agent"></span>${esc(T.k_agent)}</li>`;
+    $('fxLegend').innerHTML = `<h3>${esc(T.fxTitle)}</h3><ul>${Object.keys(FX_ICONS).map((k) => `<li><span class="fxi fx-${k}">${ICON(FX_ICONS[k])}</span><span><b>${esc(T.fx[k][0])}</b> ${esc(T.fx[k][1])}</span></li>`).join('')}</ul><p>${esc(T.fxOff)}</p>`;
     renderProjects();
   }
   function renderProjects() {
@@ -1604,6 +1907,13 @@ export function mountBrain(host, env) {
     for (const box of $('rail').querySelectorAll('.checks input[type=checkbox]')) box.checked = true;
     refresh();
   });
+
+  // The legend of the actions' figures: shown on hover or focus (CSS), pinned with a click or a tap, closed with Escape
+  // or a click elsewhere.
+  const pinLegend = (on) => { $('fxHelp').classList.toggle('open', on); $('fxBtn').setAttribute('aria-expanded', String(on)); };
+  $('fxBtn').addEventListener('click', () => pinLegend(!$('fxHelp').classList.contains('open')));
+  $('fxHelp').addEventListener('keydown', (e) => { if (e.key === 'Escape') { pinLegend(false); $('fxBtn').blur(); } });
+  document.addEventListener('pointerdown', (e) => { if (!$('fxHelp').contains(e.target)) pinLegend(false); }, outside);
 
   const search = $('search');
   function runSearch() {
@@ -1931,6 +2241,7 @@ export function mountBrain(host, env) {
     get intro() { return { on: intro.on, done: intro.done, clock: intro.on && intro.t0 != null ? (performance.now() - intro.t0) / 1000 : null }; },
     counts: () => (R ? { ...R.counts, dendrites: R.layers.dendrites?.count, tracts: R.layers.tracts?.count } : null),
     lanes: () => lanesOf().top,
+    fx: () => ({ effects: effects.length, beams: effects.filter((x) => x.beams).length, born: born.size, sparks: sparks.length, pulses: pulses.length, ripples: ripples.length, waiting: waiting() }),
     // Checks for the routes. routeCheck: n random moves between cells: how many follow real links, their hops, how
     // long working one out takes, and how many of their points (each segment's ends and three points between) fall
     // outside the brain. trailsNow: the same for what is on screen. linkCheck: the links' own fibers.
@@ -2040,7 +2351,9 @@ export function mountBrain(host, env) {
     agents.clear();
     embers.clear();
     trails.length = 0; heats.length = 0; sparks.length = 0; rings.length = 0; flashes.length = 0; signals.length = 0; pulses.length = 0; ripples = [];
-    for (let i = 0; i < N; i++) { state[i * 4 + 1] = 0; state[i * 4 + 2] = -100; state[i * 4 + 3] = 0; }
+    effects.length = 0;
+    if (born.size) { born.clear(); deepLights(); }
+    for (let i = 0; i < N; i++) { state[i * 4] = nodeBright(i); state[i * 4 + 1] = 0; state[i * 4 + 2] = -100; state[i * 4 + 3] = 0; }
     if (R) R.updateState(state);
     trace.items = [];
     session.status = 'idle';
@@ -2064,6 +2377,10 @@ export function mountBrain(host, env) {
   }
   return {
     onEvent, seed, reset, destroy, debug,
+    // Cells of files that were just created: each is born (it fades in, its branches grow, its links reach out).
+    born(ids) { for (const i of ids) if (i != null && i >= 0 && i < N) birth(i); },
+    // Claude is waiting for the user's OK (or no longer is).
+    setWaiting(on) { setWaiting(agentOf('main'), !!on); },
     // The project being worked on (lit while its session works).
     setSession({ project }) { if (project !== undefined && project !== session.project) { session.project = project; if (session.status === 'working') setProjectActive(project); renderNow(); } },
     setLang: applyLang,

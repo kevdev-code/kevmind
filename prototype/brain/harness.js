@@ -2,6 +2,7 @@
 // and for checks at a known size, where real data would be whatever the machine happens to hold. It mounts the same
 // view the dashboard does and plays a replay of one working session in a loop.
 // ?nodes=3000 (the stress case), ?speed=2, ?nointro, ?noreplay, ?light, ?bloom=off|light|full|only, ?skip=layers, ?shell=n.
+// ?actions: instead of the replay, each action's figure in turn (the ten of the legend), to look at them one by one.
 import { mountBrain } from '../../public/brain/view.js';
 import { makeGraph, makeReplay } from './data.js';
 
@@ -22,9 +23,9 @@ const defs = new Map(replay.agents.map((a) => [a.id, a]));
 const brain = mountBrain(document.getElementById('brainView'), {
   graph, strings: () => window.I18N[lang].brain, lang: () => lang, project: replay.project,
   options: { skip: (params.get('skip') || '').split(',').filter(Boolean), shell: params.get('shell'), light: params.has('light'), bloom: params.get('bloom'), intro: params.has('nointro') ? false : undefined },
-  onReady: () => setTimeout(startReplay, 0), // once the intro is over (or skipped)
+  onReady: () => setTimeout(params.has('actions') ? startActions : startReplay, 0), // once the intro is over (or skipped)
 });
-window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show, event: brain.onEvent });
+window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show, event: brain.onEvent, seed: brain.seed, reset: brain.reset, born: brain.born, setWaiting: brain.setWaiting });
 window.__graph = graph; // for scripted moves in screenshots
 
 // The harness's own controls, at the end of the rail.
@@ -56,6 +57,39 @@ function startReplay() {
   if (params.has('noreplay')) return;
   rp.t0 = performance.now(); rp.idx = 0;
   nextEvent();
+}
+// The actions, one every 2.8 s, on cells of the demo project; then again. What a real session would send is sent here
+// by hand: an edit's lines, a search's folder and its matches, a command's end.
+function startActions() {
+  const P = replay.project, inP = graph.nodes.filter((n) => n.project === P), words = window.I18N[lang].brain.fx;
+  const file = (re) => inP.find((n) => n.type === 'file' && re.test(n.path)).id, tool = (name) => inP.find((n) => n.type === 'tool' && n.name === name).id;
+  const main = { agent: 'main', def: defs.get('main') }, sub = { agent: 'a1', def: defs.get('a1') };
+  const a = file(/features/), b = file(/services/), c = file(/routes/), name = (i) => graph.nodes[i].name;
+  const matches = inP.filter((n) => n.type === 'file' && /backend\/src\/services\//.test(n.path)).slice(0, 8).map((n) => n.id);
+  const send = (ev) => brain.onEvent(ev), later = (ms, ev) => setTimeout(() => send(ev), ms);
+  const steps = [
+    ['read', () => send({ ...main, kind: 'read', node: a, text: name(a) })],
+    ['edit', () => send({ ...main, kind: 'edit', node: b, text: name(b), add: 14, del: 6 })],
+    ['create', () => send({ ...main, kind: 'create', node: c, text: name(c) })],
+    ['search', () => { send({ ...main, kind: 'search', node: tool('Grep'), text: '"AppointmentService"', dir: '/backend/src/services' }); later(350, { ...main, kind: 'outcome', hits: matches }); }],
+    ['command', () => { send({ ...main, kind: 'command', node: tool('Bash'), text: 'npm test' }); later(1900, { ...main, kind: 'outcome', done: true }); }],
+    ['web', () => send({ ...main, kind: 'web', node: tool('WebFetch'), text: 'docs.example.com/api' })],
+    ['agent', () => send({ ...sub, kind: 'start' })],
+    ['wait', () => send({ ...main, kind: 'wait' })],
+    ['error', () => send({ ...main, kind: 'error', node: tool('Bash'), text: 'Bash' })],
+    ['done', () => { send({ ...sub, kind: 'stop' }); send({ ...main, kind: 'stop' }); }],
+  ];
+  let k = 0;
+  const next = () => {
+    if (k === 0) { brain.reset(); send({ ...main, kind: 'start' }); send({ ...main, kind: 'read', node: file(/controllers|features/), text: '' }); }
+    const [key, run] = steps[k];
+    document.getElementById('replayClock').textContent = `${k + 1}/${steps.length} · ${words[key][0]}`;
+    run();
+    k = (k + 1) % steps.length;
+    rp.timer = setTimeout(next, 2800 / SPEED);
+  };
+  document.getElementById('replayBtn').hidden = true;
+  setTimeout(next, 600);
 }
 function restartReplay() {
   brain.reset();
