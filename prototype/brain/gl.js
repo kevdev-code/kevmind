@@ -109,7 +109,7 @@ export const NODE_VS = `#version 300 es
 in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part; in vec4 a_state;
 uniform mat4 u_vp; uniform float u_time, u_px, u_life; uniform vec2 u_depth; uniform float u_proj[32];
 uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec3 u_kind[6];
-out vec3 v_color, v_flash; out float v_alpha, v_shape, v_white, v_far, v_ember;
+out vec3 v_color, v_flash; out float v_alpha, v_shape, v_white, v_far, v_ember, v_near;
 ${DEPTH}
 ${REVEAL}
 void main() {
@@ -145,6 +145,7 @@ void main() {
   // Nearer cells a little bigger, farther ones a little smaller, beyond perspective.
   float px = vis * min(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w, 220.0);
   gl_PointSize = px;
+  v_near = smoothstep(18.0, 70.0, px); // drawn large: up close, where a cell is seen as a body
 }`;
 // A glowing cell, shaded as a small 3D body lit from the upper left: a soft gradient body, a bright nucleus, a rim
 // light (brighter where the surface turns away), and a halo that grows when the cell is active. Per type: a sphere
@@ -152,7 +153,7 @@ void main() {
 // notes), a small cube (Serena notes), a torus (tools). Farther cells have softer edges.
 export const NODE_FS = `#version 300 es
 precision mediump float;
-in vec3 v_color, v_flash; in float v_alpha, v_shape, v_white, v_far, v_ember;
+in vec3 v_color, v_flash; in float v_alpha, v_shape, v_white, v_far, v_ember, v_near;
 out vec4 o;
 const vec3 LIGHT = vec3(-0.45, 0.55, 0.70);
 void main() {
@@ -160,14 +161,19 @@ void main() {
   q.y = -q.y;
   if (dot(q, q) > 1.0) discard;
   vec2 p = q / 0.46; // the body fills 46% of the sprite; the rest is halo
-  float d, nucleus = 0.0, ridge = 0.0;
+  float d, nucleus = 0.0, ridge = 0.0, rimK = 1.3, base = 0.45, haloK = 1.0, soft = 3.0, tint = 0.55, kd = 0.8;
   vec3 n;
-  if (v_shape < 0.5) { // sphere with a nucleus
-    float r = length(p);
+  if (v_shape < 0.5) { // sphere: a body lit like one (lit side, terminator, shadow), a crisp edge, a bright nucleus
+    float r = length(p), aa = max(fwidth(r), 0.02);
     d = r - 1.0;
     n = vec3(p, sqrt(max(0.0, 1.0 - r * r)));
-    vec2 c = p - vec2(-0.2, 0.22);
-    nucleus = exp(-dot(c, c) * 7.0);
+    float cr = length(p - vec2(-0.12, 0.14));
+    nucleus = (1.0 - smoothstep(0.24 - aa, 0.24 + aa, cr)) * 0.5 + exp(-cr * cr * 40.0) * 0.35;
+    // A soft edge, or a white dot in a dim flat disc, reads as bokeh. Up close the cell gets the light to show its shape
+    // (crowded lobes keep file cells dim, which is fine while they are small); at overview the same energy as before.
+    float lift = 1.0 + 1.6 * v_near;
+    base = 0.3 * lift; kd = 1.3 * lift; rimK = 0.3; haloK = 0.35; soft = 0.5; tint = 0.3;
+    nucleus *= 1.0 + 0.8 * v_near;
   } else if (v_shape < 1.5) { // octahedron: four facets toward the viewer, ridges between them
     d = (abs(p.x) * 0.9 + abs(p.y) * 0.75) - 1.0;
     n = normalize(vec3(sign(p.x) * 0.55, sign(p.y) * 0.5, 0.68));
@@ -194,12 +200,12 @@ void main() {
     n = vec3(dir * clamp(k, -1.0, 1.0), sqrt(max(0.0, 1.0 - k * k)));
     nucleus = exp(-pow((r - 0.64) / 0.12, 2.0)) * 0.5; // a bright line along the top of the tube
   }
-  float w = max(fwidth(d), 0.02) * (1.0 + v_far * 3.0);
+  float w = max(fwidth(d), 0.02) * (1.0 + v_far * soft);
   float body = 1.0 - smoothstep(-w, w, d);
-  float diff = max(dot(n, normalize(LIGHT)), 0.0), rim = pow(1.0 - clamp(n.z, 0.0, 1.0), 2.0);
-  vec3 lit = v_color * (0.45 + 0.8 * diff) + v_color * rim * 1.3 + mix(v_color, vec3(1.0), 0.55) * (nucleus * 1.1 + ridge * 0.45);
+  float diff = max(dot(n, normalize(LIGHT)), 0.0), rim = pow(1.0 - clamp(n.z, 0.0, 1.0), 2.0) * rimK / 1.3;
+  vec3 lit = v_color * (base + kd * diff) + v_color * rim * 1.3 + mix(v_color, vec3(1.0), tint) * (nucleus * 1.1 + ridge * 0.45);
   lit = mix(lit, vec3(1.0), v_white * 0.55) + v_flash;
-  float halo = exp(-max(d, 0.0) * 3.4) * (0.16 + 0.4 * v_ember) * (1.0 - body);
+  float halo = exp(-max(d, 0.0) * 3.4) * (0.16 * haloK + 0.4 * v_ember) * (1.0 - body) * (1.0 - dot(q, q)); // to 0 at the sprite's edge: no disc
   vec3 col = lit * body + (v_color + v_flash) * halo;
   float a = (body + halo) * v_alpha;
   if (a < 0.004) discard;
