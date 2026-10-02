@@ -13,12 +13,12 @@ test('conflict alerts keep only the newest 50 per session', () => {
   const t0 = Date.UTC(2026, 9, 1, 12);
   let s;
   // Claude and one subagent take turns on the same file every 2 s for 10 minutes: 299 conflicts.
-  for (let i = 0; i < 300; i++) s = edit(st, t0 + i * 2000, 'src/routes/appointments.ts', i % 2 ? 'agent-x' : null);
+  for (let i = 0; i < 300; i++) s = edit(st, t0 + i * 2000, 'src/routes/orders.ts', i % 2 ? 'agent-x' : null);
   assert.equal(s.alerts.length, MAX_ALERTS);
   assert.equal(MAX_ALERTS, 50);
   assert.equal(s.alerts.at(-1).ts, t0 + 299 * 2000, 'the newest alert is kept');
   assert.equal(s.alerts[0].ts, t0 + 250 * 2000, 'the oldest ones are dropped');
-  for (const a of s.alerts) assert.deepEqual([a.kind, a.file], ['conflict', 'appointments.ts']);
+  for (const a of s.alerts) assert.deepEqual([a.kind, a.file], ['conflict', 'orders.ts']);
   assert.equal(st.summary(s).alerts.length, MAX_ALERTS, 'the page gets the same capped list');
 });
 

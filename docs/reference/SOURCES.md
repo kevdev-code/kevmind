@@ -2,7 +2,7 @@
 
 Public-domain plates from Henry Gray, *Anatomy of the Human Body*, 20th edition (1918), illustrated by Henry Vandyke
 Carter (1831–1897), via Wikimedia Commons. They were traced once into the outline profiles in
-`prototype/brain/shape.js`, and `prototype/brain/bench/views.mjs` overlays them on the brain view to check the shape.
+`public/brain/shape.js`, and `prototype/brain/bench/views.mjs` overlays them on the brain view to check the shape.
 
 | File | Shows | Source |
 |---|---|---|

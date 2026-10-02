@@ -167,7 +167,7 @@ Combine them to record a single project: `http://localhost:4777/?project=KevMind
 
 ```bash
 npx kevmind clear                     # removes demo sessions from the event logs
-npx kevmind clear --project OdonMind  # removes one project's history (by folder name or path)
+npx kevmind clear --project my-app  # removes one project's history (by folder name or path)
 npx kevmind clear --all               # wipes everything (asks first; --yes skips the question)
 ```
 

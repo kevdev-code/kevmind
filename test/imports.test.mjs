@@ -87,33 +87,33 @@ test('JavaScript and TypeScript: aliases from tsconfig or jsconfig, with comment
 
 test('Dart: the package\'s own name, relative paths, parts, exports and conditional imports', async () => {
   const links = await linksOf({
-    'app/pubspec.yaml': 'name: fuodz\ndescription: A shop\n',
-    'app/lib/views/home.page.dart': [
+    'app/pubspec.yaml': 'name: shop_app\ndescription: A shop\n',
+    'app/lib/views/catalog.page.dart': [
       "import 'dart:convert';",
       "import 'package:flutter/material.dart';",            // another package
-      "import 'package:fuodz/models/order.dart';",          // this package: its lib folder
-      "import 'package:fuodz/services/auth.service.dart' as auth show login;",
-      "import 'base.view_model.dart';",                     // relative, no ./
+      "import 'package:shop_app/models/catalog_item.dart';",          // this package: its lib folder
+      "import 'package:shop_app/services/session.service.dart' as auth show login;",
+      "import 'base.model.dart';",                     // relative, no ./
       "import '../widgets/busy.dart';",
-      "export 'home.exports.dart';",
-      "part 'home.page.g.dart';",
+      "export 'catalog.exports.dart';",
+      "part 'catalog.page.g.dart';",
       "import 'io_stub.dart' if (dart.library.io) 'io_real.dart';",
-      "// import 'package:fuodz/models/gone.dart';",
+      "// import 'package:shop_app/models/gone.dart';",
     ].join('\n'),
-    'app/lib/views/home.page.g.dart': "part of 'home.page.dart';\n",
-    'app/lib/models/order.dart': '', 'app/lib/models/gone.dart': '', 'app/lib/services/auth.service.dart': '', 'app/lib/views/base.view_model.dart': '',
-    'app/lib/widgets/busy.dart': '', 'app/lib/views/home.exports.dart': '', 'app/lib/views/io_stub.dart': '', 'app/lib/views/io_real.dart': '',
+    'app/lib/views/catalog.page.g.dart': "part of 'catalog.page.dart';\n",
+    'app/lib/models/catalog_item.dart': '', 'app/lib/models/gone.dart': '', 'app/lib/services/session.service.dart': '', 'app/lib/views/base.model.dart': '',
+    'app/lib/widgets/busy.dart': '', 'app/lib/views/catalog.exports.dart': '', 'app/lib/views/io_stub.dart': '', 'app/lib/views/io_real.dart': '',
     // A second app in the same workspace with the same package name: each resolves to its own lib.
-    'rider/pubspec.yaml': 'name: fuodz\n',
-    'rider/lib/main.dart': "import 'package:fuodz/models/order.dart';\n",
-    'rider/lib/models/order.dart': '',
+    'kiosk/pubspec.yaml': 'name: shop_app\n',
+    'kiosk/lib/main.dart': "import 'package:shop_app/models/catalog_item.dart';\n",
+    'kiosk/lib/models/catalog_item.dart': '',
   });
   assert.deepEqual(links, [
-    'app/lib/views/home.page.dart -> app/lib/models/order.dart', 'app/lib/views/home.page.dart -> app/lib/services/auth.service.dart',
-    'app/lib/views/home.page.dart -> app/lib/views/base.view_model.dart', 'app/lib/views/home.page.dart -> app/lib/views/home.exports.dart',
-    'app/lib/views/home.page.dart -> app/lib/views/home.page.g.dart', 'app/lib/views/home.page.dart -> app/lib/views/io_real.dart',
-    'app/lib/views/home.page.dart -> app/lib/views/io_stub.dart', 'app/lib/views/home.page.dart -> app/lib/widgets/busy.dart',
-    'app/lib/views/home.page.g.dart -> app/lib/views/home.page.dart', 'rider/lib/main.dart -> rider/lib/models/order.dart',
+    'app/lib/views/catalog.page.dart -> app/lib/models/catalog_item.dart', 'app/lib/views/catalog.page.dart -> app/lib/services/session.service.dart',
+    'app/lib/views/catalog.page.dart -> app/lib/views/base.model.dart', 'app/lib/views/catalog.page.dart -> app/lib/views/catalog.exports.dart',
+    'app/lib/views/catalog.page.dart -> app/lib/views/catalog.page.g.dart', 'app/lib/views/catalog.page.dart -> app/lib/views/io_real.dart',
+    'app/lib/views/catalog.page.dart -> app/lib/views/io_stub.dart', 'app/lib/views/catalog.page.dart -> app/lib/widgets/busy.dart',
+    'app/lib/views/catalog.page.g.dart -> app/lib/views/catalog.page.dart', 'kiosk/lib/main.dart -> kiosk/lib/models/catalog_item.dart',
   ]);
 });
 
@@ -151,30 +151,30 @@ test('Python: relative dots, packages from the folder above or src, submodules, 
 test('PHP: use statements through composer\'s PSR-4 folders, grouped and aliased, and required files', async () => {
   const links = await linksOf({
     'composer.json': JSON.stringify({ autoload: { 'psr-4': { 'App\\': 'app/', 'Database\\Seeders\\': 'database/seeders/' } }, 'autoload-dev': { 'psr-4': { 'Tests\\': 'tests/' } } }),
-    'app/Http/Controllers/OrderController.php': [
+    'app/Http/Controllers/InvoiceController.php': [
       '<?php',
       'namespace App\\Http\\Controllers;',
       'use Illuminate\\Http\\Request;',                    // the framework, in vendor: no link
       'use Exception;',
-      'use App\\Models\\Order;',
-      'use App\\Models\\{User, Vendor as Shop};',
-      'use App\\Services\\Payment as Pay, App\\Services\\Mailer;',
+      'use App\\Models\\Invoice;',
+      'use App\\Models\\{User, Supplier as Source};',
+      'use App\\Services\\Billing as Bill, App\\Services\\Mailer;',
       'use function App\\Helpers\\money;',                 // a function, not a file
       'use Tests\\TestCase;',
-      "require_once __DIR__ . '/../../Helpers/currency.php';",
+      "require_once __DIR__ . '/../../Helpers/format.php';",
       "include 'partials/footer.php';",
-      'class OrderController extends Controller {',
+      'class InvoiceController extends Controller {',
       '    use \\App\\Traits\\Billable;',                  // a trait, by its full name
       '    public function index() { return array_map(function ($o) use ($x) { return $o; }, []); }',
       '}',
     ].join('\n'),
-    'app/Models/Order.php': '', 'app/Models/User.php': '', 'app/Models/Vendor.php': '', 'app/Services/Payment.php': '', 'app/Services/Mailer.php': '',
-    'app/Helpers/money.php': '', 'app/Helpers/currency.php': '', 'app/Traits/Billable.php': '', 'tests/TestCase.php': '', 'app/Http/Controllers/partials/footer.php': '',
-  }, { only: ['app/Http/Controllers/OrderController.php'] });
+    'app/Models/Invoice.php': '', 'app/Models/User.php': '', 'app/Models/Supplier.php': '', 'app/Services/Billing.php': '', 'app/Services/Mailer.php': '',
+    'app/Helpers/money.php': '', 'app/Helpers/format.php': '', 'app/Traits/Billable.php': '', 'tests/TestCase.php': '', 'app/Http/Controllers/partials/footer.php': '',
+  }, { only: ['app/Http/Controllers/InvoiceController.php'] });
   assert.deepEqual(links, [
-    'app/Helpers/currency.php', 'app/Http/Controllers/partials/footer.php', 'app/Models/Order.php', 'app/Models/User.php', 'app/Models/Vendor.php',
-    'app/Services/Mailer.php', 'app/Services/Payment.php', 'app/Traits/Billable.php', 'tests/TestCase.php',
-  ].map((to) => `app/Http/Controllers/OrderController.php -> ${to}`));
+    'app/Helpers/format.php', 'app/Http/Controllers/partials/footer.php', 'app/Models/Invoice.php', 'app/Models/Supplier.php', 'app/Models/User.php',
+    'app/Services/Billing.php', 'app/Services/Mailer.php', 'app/Traits/Billable.php', 'tests/TestCase.php',
+  ].map((to) => `app/Http/Controllers/InvoiceController.php -> ${to}`));
 });
 
 test('C#: a using names a namespace, so the link goes to the files of that namespace whose type the file mentions', async () => {

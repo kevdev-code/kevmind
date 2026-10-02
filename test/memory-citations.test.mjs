@@ -25,11 +25,11 @@ test('the root CLAUDE.md flags only the two truly missing paths, with their line
   assert.match(missing[0].fix, /docs\/old-guide\.md \(line 7\)/);
 
   const cited = r.instructions.find((i) => i.display === 'CLAUDE.md').cites.map((c) => c.path).sort();
-  for (const p of ['service/types/user.types.ts', 'data/rolePermissions.ts', 'backend/src/app.ts', 'db/tenantContext.ts', 'docs/guide.md']) {
+  for (const p of ['api/types/order.types.ts', 'data/shippingRules.ts', 'backend/src/app.ts', 'db/requestContext.ts', 'docs/guide.md']) {
     assert.ok(cited.includes(p), `${p} is cited and found`);
   }
-  for (const p of ['middleware/tenantContext.ts', 'backend/src/legacy.ts', 'src/legacy/old-api.ts', 'src/generated/schema.ts', 'src/old/thing.ts',
-    'test/integration-harness', 'doctors.service.ts', 'backend/src/middleware/tenantContext.ts', '.claude/worktrees/old-wt']) {
+  for (const p of ['middleware/requestContext.ts', 'backend/src/legacy.ts', 'src/legacy/old-api.ts', 'src/generated/schema.ts', 'src/old/thing.ts',
+    'test/integration-harness', 'drivers.service.ts', 'backend/src/middleware/requestContext.ts', '.claude/worktrees/old-wt']) {
     assert.ok(!cited.includes(p), `${p} is skipped (negation, Don't list or column, stale column, ❌ item, or a branch name)`);
   }
 });
@@ -42,8 +42,8 @@ test('a file that moved is a low-confidence suggestion with its new location, no
   assert.equal(moved[0].tier, 'suggestion');
   assert.ok(moved[0].file.endsWith('dates.md'));
   assert.deepEqual(moved[0].params.items, [
-    { path: 'frontend/src/core/utils/formatDate.ts', lines: [10], to: ['frontend/src/lib/formatDate.ts'] },
-    { path: '@/core/utils/formatDate', lines: [11], to: ['frontend/src/lib/formatDate.ts'] },
+    { path: 'frontend/src/core/utils/shortDate.ts', lines: [10], to: ['frontend/src/lib/shortDate.ts'] },
+    { path: '@/core/utils/shortDate', lines: [11], to: ['frontend/src/lib/shortDate.ts'] },
   ]);
   assert.ok(!r.problems.some((p) => p.code === 'cited_file_missing' && p.file.endsWith('dates.md')));
 });

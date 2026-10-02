@@ -26,7 +26,7 @@ Status as of 2026-10-01. Version **0.4.2** in the repo; **0.4.1** is on npm (0.4
 
 - **Per-event cost:** 3.6–3.9 ms of main thread per event at 5 events/s (goal was 2 ms; was 25 ms). Script is ~0.6 ms; the rest is the browser producing frames. Idle and hidden-tab budgets are met (no layout/paint when idle; ~0.2% CPU hidden).
 - **Timeline zoom:** never narrower than 60 s, so in short sessions the bars are slivers at the right edge.
-- **Episode insights are still building:** as of 2026-10-01 KevMind's and OdonMind's episodes are on one local day, so answers come from git only until work repeats on a second day.
+- **Episode insights are still building:** as of 2026-10-01 the recorded episodes are on one local day, so answers come from git only until work repeats on a second day.
 - **Long sessions:** the server never prunes a session's agent list, so SSE payloads grow in sessions that launch hundreds of subagents (heap plateaus ~1.3 MB in a 1 h synthetic run).
 - **721–1100 px:** two-column layout keeps the page scroll (the app shell is ≥1101 px; Memory ≥901 px).
 - **Experience verdict:** "helping / turn off" needs 50 tool calls; none yet.

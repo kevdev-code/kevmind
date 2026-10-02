@@ -71,7 +71,7 @@ function startActions() {
     ['read', () => send({ ...main, kind: 'read', node: a, text: name(a) })],
     ['edit', () => send({ ...main, kind: 'edit', node: b, text: name(b), add: 14, del: 6 })],
     ['create', () => send({ ...main, kind: 'create', node: c, text: name(c) })],
-    ['search', () => { send({ ...main, kind: 'search', node: tool('Grep'), text: '"AppointmentService"', dir: '/backend/src/services' }); later(350, { ...main, kind: 'outcome', hits: matches }); }],
+    ['search', () => { send({ ...main, kind: 'search', node: tool('Grep'), text: '"BookingService"', dir: '/backend/src/services' }); later(350, { ...main, kind: 'outcome', hits: matches }); }],
     ['command', () => { send({ ...main, kind: 'command', node: tool('Bash'), text: 'npm test' }); later(1900, { ...main, kind: 'outcome', done: true }); }],
     ['web', () => send({ ...main, kind: 'web', node: tool('WebFetch'), text: 'docs.example.com/api' })],
     ['agent', () => send({ ...sub, kind: 'start' })],

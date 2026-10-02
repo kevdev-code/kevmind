@@ -743,7 +743,7 @@ async function locate(ws, p, fileDir) {
   const found = working || branch === true;
   let moved = [];
   if (!found) {
-    // Same file name elsewhere; an extensionless import such as "@/core/utils/formatDate" tries the usual extensions.
+    // Same file name elsewhere; an extensionless import such as "@/core/utils/shortDate" tries the usual extensions.
     const last = rel.slice(rel.lastIndexOf('/') + 1);
     const names = EXT.test(rel) ? [last] : ['.ts', '.tsx', '.js', '.jsx', '.mjs'].map((x) => last + x);
     const hits = new Set();

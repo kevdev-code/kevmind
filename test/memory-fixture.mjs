@@ -19,7 +19,7 @@ const gitIn = (dir) => {
   };
 };
 
-// A workspace like OdonMind: a root repository with backend/ and frontend/ as their own repositories (ignored by
+// A workspace with nested repositories: a root repository with backend/ and frontend/ as their own repositories (ignored by
 // the root), a CLAUDE.md at the root that every one of them inherits, and memory notes for the root project.
 // Each line of the root CLAUDE.md tests one rule; `expect` lists what must be flagged and where.
 export function buildWorkspaceFixture(dir) {
@@ -30,19 +30,19 @@ export function buildWorkspaceFixture(dir) {
   write(path.join(home, '.claude', 'CLAUDE.md'), '# User\n');
 
   write(path.join(backend, 'src', 'app.ts'), 'export {};\n');
-  write(path.join(backend, 'src', 'db', 'tenantContext.ts'), 'export {};\n');
-  write(path.join(frontend, 'src', 'service', 'types', 'user.types.ts'), 'export {};\n');
-  write(path.join(frontend, 'src', 'data', 'rolePermissions.ts'), 'export {};\n');
-  write(path.join(frontend, 'src', 'lib', 'formatDate.ts'), 'export {};\n');
+  write(path.join(backend, 'src', 'db', 'requestContext.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'api', 'types', 'order.types.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'data', 'shippingRules.ts'), 'export {};\n');
+  write(path.join(frontend, 'src', 'lib', 'shortDate.ts'), 'export {};\n');
   write(path.join(frontend, 'CLAUDE.md'), '# Frontend\n\nHelpers live in `src/helpers/gone-helper.ts`.\n');
   write(path.join(root, 'docs', 'guide.md'), '# Guide\n');
   write(path.join(root, '.gitignore'), 'backend/\nfrontend/\n');
   write(path.join(root, 'CLAUDE.md'), [
     '# Workspace',                                                                                  // 1
     '',                                                                                             // 2
-    'Frontend types live in `service/types/user.types.ts` and `data/rolePermissions.ts`.',          // 3: found under frontend/src
+    'Frontend types live in `api/types/order.types.ts` and `data/shippingRules.ts`.',          // 3: found under frontend/src
     'The API starts in `backend/src/app.ts`.',                                                      // 4: found in the backend repo
-    'There is **no** `middleware/tenantContext.ts`. Tenant context lives in `db/tenantContext.ts`.', // 5: negated, then found
+    'There is **no** `middleware/requestContext.ts`. Request context lives in `db/requestContext.ts`.', // 5: negated, then found
     'Old code in `backend/src/gone.ts` must be ported.',                                            // 6: MISSING
     'See [the guide](docs/guide.md) and [the old guide](docs/old-guide.md).',                      // 7: link found, link MISSING
     'El archivo `backend/src/legacy.ts` ya no existe.',                                             // 8: negated (Spanish)
@@ -61,8 +61,8 @@ export function buildWorkspaceFixture(dir) {
     '',                                                                                             // 21
     '| Was written | Reality |',                                                                    // 22
     '|---|---|',                                                                                    // 23
-    '| Service `doctors.service.ts` | `backend/src/app.ts` |',                                      // 24: stale column
-    '| Key file `backend/src/middleware/tenantContext.ts` | Does not exist |',                       // 25: negation elsewhere on the line
+    '| Service `drivers.service.ts` | `backend/src/app.ts` |',                                      // 24: stale column
+    '| Key file `backend/src/middleware/requestContext.ts` | Does not exist |',                       // 25: negation elsewhere on the line
     '',                                                                                             // 26
     'Se borraron `.claude/worktrees/old-wt` y nada más.',                                           // 27: Spanish removal verb
     'Fixed in a1b2c3d on `test/old-branch`, then merged.',                                         // 28: a deleted branch in a known namespace
@@ -83,8 +83,8 @@ export function buildWorkspaceFixture(dir) {
   const memDir = path.join(home, '.claude', 'projects', slugOf(root), 'memory');
   write(path.join(memDir, 'MEMORY.md'), '- [Dates](dates.md) — where date formatting lives\n');
   write(path.join(memDir, 'dates.md'), note('dates', 'Date formatting', [
-    'Dates are formatted in `frontend/src/core/utils/formatDate.ts`.', // line 10: now at frontend/src/lib/formatDate.ts
-    'Imported as `@/core/utils/formatDate`.',                          // line 11: extensionless, same file
+    'Dates are formatted in `frontend/src/core/utils/shortDate.ts`.', // line 10: now at frontend/src/lib/shortDate.ts
+    'Imported as `@/core/utils/shortDate`.',                          // line 11: extensionless, same file
   ].join('\n')));
 
   const projects = [{ root, name: 'Workspace' }, { root: backend, name: 'backend' }, { root: frontend, name: 'frontend' }];
@@ -147,8 +147,8 @@ export function buildFixture(dir) {
   write(path.join(memDir, 'beta.md'), note('beta-note', 'Second fixture note', 'Back to [[alpha]].\n\n## Details\n\nNothing else.'));
   write(path.join(memDir, 'orphan.md'), note('orphan', 'A note nobody listed in MEMORY.md', 'Orphan body.'));
   write(path.join(memDir, 'big.md'), note('big', 'A very long note', 'Long history paragraph. '.repeat(1000)));
-  write(path.join(memDir, 'dates-a.md'), note('dates-server-utc', 'Server timezone UTC shifts appointment dates for Mexico clinics', 'Server side dates.'));
-  write(path.join(memDir, 'dates-b.md'), note('dates-only-utc-shift', 'Date-only fields shift one day because of UTC timezone in Mexico', 'Client side dates.'));
+  write(path.join(memDir, 'dates-a.md'), note('dates-server-utc', 'Server timezone UTC shifts delivery dates for Lisbon stores', 'Server side dates.'));
+  write(path.join(memDir, 'dates-b.md'), note('dates-only-utc-shift', 'Date-only fields shift one day because of UTC timezone in Lisbon', 'Client side dates.'));
 
   // Serena: one project note with a broken mem: link, and a global config holding a secret KevMind must not keep.
   write(path.join(root, '.serena', 'memories', 'overview.md'), '# Overview\n\nSee mem:auth/login and mem:missing-topic.\n');

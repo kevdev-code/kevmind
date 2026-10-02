@@ -1,4 +1,4 @@
-// Brain view (Phase 4): the synthetic graph of the benchmark is deterministic and OdonMind-sized, paths land in the right lobe,
+// Brain view (Phase 4): the synthetic graph of the benchmark is deterministic and the size of a mid-sized workspace, paths land in the right lobe,
 // and the layout keeps every node inside its lobe.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,14 +8,14 @@ import { layout, lobeAt, insideBrain, enclosed, pathInside, leavesBrain, lobeSha
 import { FIL_FLOATS as GL_FIL_FLOATS } from '../public/brain/gl.js';
 
 test('paths map to lobes and regions', () => {
-  assert.equal(lobeOfPath('frontend/src/features/appointments/AppointmentsPage.tsx'), 'occipital');
-  assert.equal(lobeOfPath('backend/src/services/appointments.service.ts'), 'parietal');
-  assert.equal(lobeOfPath('backend/test/integration/appointments.test.ts'), 'cerebellum');
-  assert.equal(lobeOfPath('frontend/src/service/api/__tests__/patients.api.test.ts'), 'cerebellum');
-  assert.equal(lobeOfPath('backend/drizzle/tenant/0003_create_patients.sql'), 'stem');
+  assert.equal(lobeOfPath('frontend/src/features/bookings/BookingsPage.tsx'), 'occipital');
+  assert.equal(lobeOfPath('backend/src/services/bookings.service.ts'), 'parietal');
+  assert.equal(lobeOfPath('backend/test/integration/bookings.test.ts'), 'cerebellum');
+  assert.equal(lobeOfPath('frontend/src/api/__tests__/customers.api.test.ts'), 'cerebellum');
+  assert.equal(lobeOfPath('backend/migrations/main/0003_create_customers.sql'), 'stem');
   assert.equal(lobeOfPath('package.json'), 'stem');
   assert.equal(lobeOfPath('docs/architecture/overview.md'), 'frontal');
-  assert.equal(regionOfPath('frontend/src/features/appointments/X.tsx'), 'frontend/src/features');
+  assert.equal(regionOfPath('frontend/src/features/bookings/X.tsx'), 'frontend/src/features');
   assert.equal(regionOfPath('src/state.js'), 'src');
   assert.equal(regionOfPath('package.json'), '(root)');
 });
@@ -23,14 +23,14 @@ test('paths map to lobes and regions', () => {
 test('synthetic graph is deterministic and shaped like the real projects', () => {
   const a = makeGraph({ now: 0 }), b = makeGraph({ now: 0 });
   assert.deepEqual(a, b);
-  const clinic = a.nodes.filter((n) => n.project === 'demo-clinic');
-  const notes = clinic.filter((n) => n.type === 'memory' && n.noteType !== 'index');
+  const agency = a.nodes.filter((n) => n.project === 'demo-agency');
+  const notes = agency.filter((n) => n.type === 'memory' && n.noteType !== 'index');
   assert.ok(notes.length >= 45 && notes.length <= 55, `~50 memory notes, got ${notes.length}`);
-  assert.ok(clinic.filter((n) => n.type === 'file').length >= 250, 'a few hundred files');
+  assert.ok(agency.filter((n) => n.type === 'file').length >= 250, 'a few hundred files');
   assert.ok(makeGraph({ target: 3000 }).nodes.length >= 3000);
   const r = makeReplay(a);
   assert.deepEqual(new Set(r.events.map((e) => e.agent)), new Set(['main', 'a1', 'a2', 'a3']));
-  assert.ok(r.events.every((e) => e.node == null || a.nodes[e.node].project === 'demo-clinic'));
+  assert.ok(r.events.every((e) => e.node == null || a.nodes[e.node].project === 'demo-agency'));
 });
 
 test('layout keeps every node inside its lobe, on its hemisphere, and fills the lobe', () => {
