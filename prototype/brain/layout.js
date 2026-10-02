@@ -430,3 +430,156 @@ export function shellPoints(count = 26000, seed = 9) {
   }
   return { pos, nrm, part, ranges, parts: PARTS };
 }
+
+// ---- filaments: the shell as a web of short, slightly curved strands ---------------------------------------------
+// The brainstem's axis in the side view (least squares through its cells): its top, its bottom and its direction.
+export const STEM_AXIS = (() => {
+  let n = 0, sx = 0, sy = 0, sxy = 0, syy = 0, y0 = 9, y1 = -9;
+  for (let i = 0; i < G * G; i++) if (cls[i] === S_) {
+    const x = cellX(i % G), y = cellY((i / G) | 0);
+    n++; sx += x; sy += y; sxy += x * y; syy += y * y; y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  const b = (sxy - (sx * sy) / n) / (syy - (sy * sy) / n), a = (sx - b * sy) / n; // x = a + b·y
+  const top = [a + b * y1, y1, 0], bottom = [a + b * y0, y0, 0], l = Math.hypot(top[0] - bottom[0], top[1] - bottom[1]);
+  return { top, bottom, dir: [(top[0] - bottom[0]) / l, (top[1] - bottom[1]) / l, 0], radius: STEM_R };
+})();
+// The corpus callosum: an arch along the midline, low at its ends (genu in front, splenium behind), highest in the
+// middle, about halfway up the cerebrum.
+export const CALLOSUM = { x0: -0.56, x1: 0.5, xc: -0.03, low: 0.03, high: 0.22 };
+export function callosumY(x) {
+  const h = (CALLOSUM.x1 - CALLOSUM.x0) / 2, u = Math.max(-1, Math.min(1, (x - CALLOSUM.xc) / h));
+  return CALLOSUM.low + (CALLOSUM.high - CALLOSUM.low) * (1 - u * u);
+}
+
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+export const FIL_FLOATS = 15; // p0(3) p1(3) control(3) normal(3) alpha part tint
+
+// Filaments from the shell's points (shellPoints' output): each point joins its nearest neighbors ahead and behind
+// along its gyrus (the level line of the gyri field; the brainstem's axis on the brainstem), and now and then one in
+// any direction, so the ridges read as strands and the whole as a web. The cerebellum gets contour rings (folia) and
+// is not joined here. Grouped like the points ("lobe|side" → [start, count]), shuffled in each group.
+export function shellFilaments(sh, { seed = 11, rings = 12 } = {}) {
+  const r = rng(seed), P = sh.pos, Nm = sh.nrm, n = sh.part.length, RAD = 0.055;
+  const cellOf = (x, y, z) => ((Math.floor(x / RAD) + 64) * 128 + (Math.floor(y / RAD) + 64)) * 128 + (Math.floor(z / RAD) + 64);
+  const grid = new Map();
+  for (let i = 0; i < n; i++) {
+    const k = cellOf(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(i);
+  }
+  const groupOf = new Array(n);
+  for (const [key, [s, c]] of sh.ranges) for (let i = s; i < s + c; i++) groupOf[i] = key;
+  const out = new Map(), seen = new Set();
+  const e = 0.004;
+  const add = (i, j, alpha) => {
+    const a = Math.min(i, j), b = Math.max(i, j), id = a * n + b;
+    if (seen.has(id)) return;
+    seen.add(id);
+    const p0 = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], p1 = [P[j * 3], P[j * 3 + 1], P[j * 3 + 2]];
+    const nv = unit([Nm[i * 3] + Nm[j * 3], Nm[i * 3 + 1] + Nm[j * 3 + 1], Nm[i * 3 + 2] + Nm[j * 3 + 2]]);
+    const d = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], len = Math.hypot(...d), side = unit(cross(nv, d));
+    const bow = len * 0.12, sw = len * 0.14 * (r() * 2 - 1); // bowed a little outward (a chord would cut inside), and sideways
+    const c = [0, 1, 2].map((k) => (p0[k] + p1[k]) / 2 + nv[k] * bow + side[k] * sw);
+    const key = groupOf[i];
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push([...p0, ...p1, ...c, ...nv, alpha, sh.part[i], r()]);
+  };
+  for (let i = 0; i < n; i++) {
+    const part = sh.part[i];
+    if (part === 1) continue; // the cerebellum: rings instead
+    const p = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], nv = [Nm[i * 3], Nm[i * 3 + 1], Nm[i * 3 + 2]];
+    let along;
+    if (part === 2) along = STEM_AXIS.dir;
+    else { // the gyrus runs along the level line of the field: across its gradient, in the surface
+      const g = [gyri(p[0] + e, p[1], p[2]) - gyri(p[0] - e, p[1], p[2]), gyri(p[0], p[1] + e, p[2]) - gyri(p[0], p[1] - e, p[2]), gyri(p[0], p[1], p[2] + e) - gyri(p[0], p[1], p[2] - e)];
+      const gn = dot3(g, nv), gt = [g[0] - gn * nv[0], g[1] - gn * nv[1], g[2] - gn * nv[2]];
+      along = Math.hypot(...gt) > 1e-6 ? unit(cross(nv, gt)) : unit(cross(nv, [0, 1, 0]));
+    }
+    let fwd = -1, back = -1, fs = 1e9, bs = 1e9;
+    const any = [];
+    const cx = Math.floor(p[0] / RAD), cy = Math.floor(p[1] / RAD), cz = Math.floor(p[2] / RAD);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const list = grid.get(((cx + dx + 64) * 128 + (cy + dy + 64)) * 128 + (cz + dz + 64));
+      if (!list) continue;
+      for (const j of list) {
+        if (j === i || sh.part[j] !== part) continue;
+        const d = [P[j * 3] - p[0], P[j * 3 + 1] - p[1], P[j * 3 + 2] - p[2]], len = Math.hypot(...d);
+        if (len > RAD || len < 1e-4) continue;
+        if (Nm[j * 3] * nv[0] + Nm[j * 3 + 1] * nv[1] + Nm[j * 3 + 2] * nv[2] < 0.6) continue; // the same face of the surface
+        if (part === 0 && P[j * 3 + 2] * p[2] < 0) continue; // never across the fissure
+        const c = dot3(d, along) / len, score = len * (1 + 2.5 * (1 - Math.abs(c)));
+        if (c > 0 && score < fs) { fs = score; fwd = j; }
+        if (c <= 0 && score < bs) { bs = score; back = j; }
+        any.push(j);
+      }
+    }
+    const k = part === 2 ? 1.25 : 1; // the brainstem's bundle a little brighter
+    if (fwd >= 0) add(i, fwd, k * (0.6 + 0.4 * r()));
+    if (back >= 0) add(i, back, k * (0.6 + 0.4 * r()));
+    if (any.length && r() < 0.3) add(i, any[Math.floor(r() * any.length)], 0.25 + 0.25 * r());
+  }
+  // The cerebellum's folia: contour rings, the surface sliced at even steps across its width (concentric from the
+  // side), broken where the cerebrum hides it.
+  const cx0 = colCbl.x0, cx1 = colCbl.x1, STEPS = 72, step = (cx1 - cx0) / STEPS;
+  for (let k = 1; k <= rings; k++) for (const s of [1, -1]) {
+    const z = s * CBL_HALF * (k / (rings + 1)) * 0.98, key = `cerebellum|${s}`;
+    if (!out.has(key)) out.set(key, []);
+    // The slice's upper and lower edges, each a polyline broken wherever the slice has a gap; the short ends close it.
+    const top = [], bot = [];
+    for (let t = 0; t <= STEPS; t++) {
+      const x = cx0 + step * t, sp = cblSpan(x, z);
+      top.push(sp ? [x, sp[1], z] : null); bot.push(sp ? [x, sp[0], z] : null);
+    }
+    const yc = [...top, ...bot].filter(Boolean).reduce((a, p, _, l) => a + p[1] / l.length, 0), xc = (cx0 + cx1) / 2;
+    const edge = (p0, p1) => {
+      const m = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, z];
+      if (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) > 0.06) return;
+      // Facing out of its side, so the rings read as concentric contours from the side; dimmer where the occipital
+      // lobes cover them, so the cerebellum still reads whole through the cerebrum's web.
+      const nv = unit([(m[0] - xc) * 0.3, (m[1] - yc) * 0.3, s]);
+      out.get(key).push([...p0, ...p1, ...m, ...nv, inCerebrum(m) ? 0.6 : 1.8, 1, r()]);
+    };
+    for (const line of [top, bot]) for (let t = 0; t < STEPS; t++) if (line[t] && line[t + 1]) edge(line[t], line[t + 1]);
+    for (let t = 0; t <= STEPS; t++) if (top[t] && (!top[t - 1] || !top[t + 1])) edge(top[t], bot[t]); // the ends
+  }
+  let total = 0;
+  for (const list of out.values()) total += list.length;
+  const data = new Float32Array(total * FIL_FLOATS), ranges = new Map();
+  let o = 0;
+  for (const [key, list] of out) {
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
+    ranges.set(key, [o, list.length]);
+    for (const f of list) data.set(f, (o++) * FIL_FLOATS);
+  }
+  return { data, ranges, count: total };
+}
+
+// Purkinje-like cells in the cerebellum: a soma near its floor and a flat dendritic fan growing toward the surface,
+// branching four times. Returns segments [[p0, p1, level], ...] and somas [p, ...].
+export function purkinjeTrees(count = 7, seed = 5) {
+  const r = rng(seed), segs = [], somas = [];
+  const pts = [pool.get('cerebellum|1'), pool.get('cerebellum|-1')];
+  const c = lobeShape('cerebellum', 1).c;
+  for (let k = 0, tries = 0; k < count && tries < 4000; tries++) {
+    const pp = pts[k % 2], i = Math.floor(r() * (pp.length / 3)), p = [pp[i * 3], pp[i * 3 + 1], pp[i * 3 + 2]];
+    if (Math.abs(p[2]) < 0.12 || p[1] > c[1] + 0.02 || !inCerebellum(p, 0.06)) continue; // a lower, lateral spot
+    const u = unit([(p[0] - c[0]) * 0.6, 1, 0]); // the fan grows up and out, in the x-y plane (across the folia)
+    somas.push(p);
+    const grow = (from, dir, len, depth) => {
+      const to = [from[0] + dir[0] * len, from[1] + dir[1] * len, from[2] + (r() - 0.5) * 0.006];
+      if (!inCerebellum(to, 0.004) || inCerebrum(to)) return; // in the cerebellum's own, visible part
+      segs.push([from, to, depth > 1 ? 1 : 0]);
+      if (depth >= 4) return;
+      const kids = r() < 0.3 ? 3 : 2;
+      for (let j = 0; j < kids; j++) {
+        const a = ((j / (kids - 1)) - 0.5) * 1.1 + (r() - 0.5) * 0.25, ca = Math.cos(a), sa = Math.sin(a);
+        grow(to, [dir[0] * ca - dir[1] * sa, dir[0] * sa + dir[1] * ca, 0], len * 0.72, depth + 1);
+      }
+    };
+    grow(p, u, 0.045, 0);
+    k++;
+  }
+  return { segs, somas };
+}

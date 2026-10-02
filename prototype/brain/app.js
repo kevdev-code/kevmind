@@ -2,9 +2,9 @@
 // activity trace. Rendering rules: nothing renders while the tab is hidden or another view is shown; frames are
 // capped at 30 fps and the loop stops as soon as nothing moves (camera, beams, flashes, Follow, Auto-rotate);
 // "Animations off" (or reduced motion) draws single static frames.
-import { makeGraph, makeReplay, NODE_TYPES, EDGE_TYPES } from './data.js';
-import { layout, shellPoints, lobeShape, LOBES, BRAIN_CENTER, BRAIN_RADIUS } from './layout.js';
-import { Renderer, oklch, KIND, SHAPE, EDGE, SPRITE, NODE_FLOATS, FIBER_FLOATS, SPRITE_FLOATS, perspective, multiply, orbitView } from './gl.js';
+import { makeGraph, makeReplay, NODE_TYPES, EDGE_TYPES, rng } from './data.js';
+import { layout, lobeAt, shellPoints, shellFilaments, purkinjeTrees, lobeShape, LOBES, BRAIN_CENTER, BRAIN_RADIUS, STEM_AXIS, CALLOSUM, callosumY } from './layout.js';
+import { Renderer, oklch, KIND, SHAPE, EDGE, SPRITE, NODE_FLOATS, FIBER_FLOATS, SPRITE_FLOATS, INTRO, perspective, multiply, orbitView } from './gl.js';
 
 const params = new URLSearchParams(location.search);
 const TARGET = Number(params.get('nodes')) || 0;
@@ -28,6 +28,7 @@ const I18N = {
     search: 'Search notes and files', noResults: 'No matches', projects: 'Projects', nodeTypes: 'Node types', edgeTypes: 'Links',
     regions: 'Regions', colors: 'Activity', nodes: 'Nodes', anim: 'Animations', zoomIn: 'Zoom in', zoomOut: 'Zoom out',
     fit: 'Fit', relayout: 'Re-layout', follow: 'Follow', rotate: 'Auto-rotate', camera: 'Camera',
+    look: 'What to show', labels: 'Labels', cut: 'Cut',
     hint: 'Drag to orbit · Shift-drag to pan · Scroll to zoom toward the cursor · Click a node to focus',
     noWebgl: 'This view needs WebGL 2, which is turned off in this browser.',
     elsewhere: 'Live and Memory are in the real dashboard. This prototype only has the Brain view, and it stops rendering while you are here.',
@@ -55,6 +56,7 @@ const I18N = {
     search: 'Buscar notas y archivos', noResults: 'Sin resultados', projects: 'Proyectos', nodeTypes: 'Tipos de nodo', edgeTypes: 'Conexiones',
     regions: 'Regiones', colors: 'Actividad', nodes: 'Nodos', anim: 'Animaciones', zoomIn: 'Acercar', zoomOut: 'Alejar',
     fit: 'Encuadrar', relayout: 'Reacomodar', follow: 'Seguir', rotate: 'Girar solo', camera: 'Cámara',
+    look: 'Qué mostrar', labels: 'Etiquetas', cut: 'Corte',
     hint: 'Arrastra para orbitar · Mayús + arrastra para mover · Rueda para acercar al cursor · Clic en un nodo para enfocarlo',
     noWebgl: 'Esta vista necesita WebGL 2, que está desactivado en este navegador.',
     elsewhere: 'En vivo y Memoria están en el panel real. Este prototipo solo tiene la vista Cerebro, que deja de dibujarse mientras estás aquí.',
@@ -84,23 +86,29 @@ let T = I18N[lang];
 // ---- colors ------------------------------------------------------------------------------------------------------
 const C = (l, c, h) => oklch(l / 100, c, h);
 const P = {
-  bg: C(12.5, 0.028, 280), bgCenter: C(22, 0.055, 280), accent: C(74, 0.145, 288),
+  // A deep blue-violet night.
+  bg: C(9.5, 0.045, 282), bgCenter: C(19, 0.085, 280), accent: C(74, 0.145, 288),
   // What happened to a node: DESIGN.md's state hues (read, edit, error), command gray, selection violet.
   kinds: [[0, 0, 0], C(76, 0.115, 245), C(77, 0.13, 350), C(72, 0.17, 25), C(72, 0.012, 285), C(74, 0.145, 288)].flat(),
-  edgeAlpha: [0.34, 0.12, 0.42, 0.24, 0.15, 0.26, 0.5, 1],
-  // The shell: cool, desaturated blue-gray, about three quarters as bright as the old white shell, with a soft edge;
-  // nodes and pulses stay brighter.
-  dust: C(80, 0.025, 250), dustAlpha: 1.0 * SHELL, dustSize: LIGHT ? 0.0145 : 0.0105, dustEdge: 0.5, // fewer, larger dots when light
+  // The six link types (fainter than before: the tracts carry the structure), the midline, beams, dendrites, tracts
+  // and the fixed structures.
+  edgeAlpha: [0.2, 0.07, 0.25, 0.14, 0.09, 0.16, 0.5, 1, 0.85, 0.42, 0.4],
+  // The shell: a web of thin strands, cool blue-gray with a little violet, with a soft edge and a few sparkling
+  // junctions; nodes, tracts and pulses stay brighter.
+  dust: C(80, 0.025, 250), dustTint: C(74, 0.07, 292), filCbl: C(93, 0.045, 212), filStem: C(93, 0.05, 250), filAlpha: 0.34 * SHELL, filWidth: LIGHT ? 1.7 : 1.4,
+  dustAlpha: 0.3 * SHELL, dustSize: LIGHT ? 0.0145 : 0.0105, dustEdge: 0.5,
   breath: C(82, 0.07, 60), // Claude thinking: a warm cream glow through the whole brain
 };
 const kindRgb = (k) => P.kinds.slice(KIND[k] * 3, KIND[k] * 3 + 3);
+const DENDRITE_ALPHA = P.edgeAlpha[EDGE.dendrite];
 // Categorical color per lobe kind: the brain view's one exemption from one-hue-per-meaning (DESIGN.md, Brain view).
 // Regions in a lobe shift a little around its hue so neighbors stay apart.
-const LOBE_COLOR = { prefrontal: [80, 0.13, 78], frontal: [78, 0.13, 152], parietal: [72, 0.14, 295], occipital: [76, 0.12, 238],
-  temporal: [74, 0.15, 356], cerebellum: [78, 0.11, 190], stem: [80, 0.05, 85] };
+// A tight palette: blue and cyan, violet, pink; the cerebellum and brainstem nearly white.
+const LOBE_COLOR = { prefrontal: [80, 0.12, 268], frontal: [74, 0.13, 236], parietal: [71, 0.15, 306], occipital: [77, 0.11, 200],
+  temporal: [74, 0.15, 352], cerebellum: [86, 0.05, 212], stem: [88, 0.045, 250] };
 // Agents: colored beams with a white core and a numbered label, so they never pass for a region (user's choice).
-// Claude itself is coral, its warm color; subagents are cyan, chartreuse and lilac.
-const AGENT_HUES = [[74, 0.14, 38], [82, 0.12, 200], [87, 0.16, 117], [76, 0.11, 314]];
+// Claude itself is coral, its warm color, the one warm hue on screen; subagents are cyan, orchid and ice blue.
+const AGENT_HUES = [[74, 0.14, 38], [84, 0.11, 195], [79, 0.13, 322], [88, 0.07, 250]];
 
 // ---- data ----------------------------------------------------------------------------------------------------
 const graph = makeGraph({ target: TARGET });
@@ -150,11 +158,13 @@ for (let i = 0; i < N; i++) { size[i] = sizeOf(i); bright[i] = brightOf(i); }
 const state = new Float32Array(N * 4); // brightness, ember, ignition time, kind
 for (let i = 0; i < N; i++) state[i * 4 + 2] = -100;
 
+// The part of the brain a node is in (0 cerebrum, 1 cerebellum, 2 brainstem): when the intro reaches it.
+const partOf = (i) => ({ stem: 2, cerebellum: 1 })[lobeOf(i)] || 0;
 function nodeData() {
   const d = new Float32Array(N * NODE_FLOATS);
   for (let i = 0; i < N; i++) {
     const n = nodes[i], seed = (Math.sin(i * 12.9898 + 4.1) * 43758.5453) % 1;
-    d.set([...at(i), size[i], SHAPE[n.type], n.project == null ? -1 : projIndex.get(n.project), ...regionColor[n.region], Math.abs(seed)], i * NODE_FLOATS);
+    d.set([...at(i), size[i], SHAPE[n.type], n.project == null ? -1 : projIndex.get(n.project), ...regionColor[n.region], Math.abs(seed), partOf(i)], i * NODE_FLOATS);
   }
   return d;
 }
@@ -174,13 +184,19 @@ function bspline(P) {
 // The path between points of two regions in different lobes: a B-spline through the lobes' centers and one lane per
 // pair of lobes (across hemispheres it crosses the midline high, like the corpus callosum; within one it dips toward
 // the core), so fibers gather into bundles and an agent's pulse travels along them.
-function lanePath(pa, ga, pb, gb) {
-  const la = lobeShape(regions[ga].lobe, L.side[ga]).c, lb = lobeShape(regions[gb].lobe, L.side[gb]).c;
-  const m = [0, 1, 2].map((i) => (la[i] + lb[i]) / 2);
-  const lane = L.side[ga] !== L.side[gb] ? [m[0] * 0.8, 0.18, 0] : [0, 1, 2].map((i) => m[i] + (CORE[i] - m[i]) * 0.35);
+function laneCurve(lobeA, sa, lobeB, sb, pa, pb) {
+  const la = lobeShape(lobeA, sa).c, lb = lobeShape(lobeB, sb).c;
+  const m = [0, 1, 2].map((i) => (la[i] + lb[i]) / 2), x = clamp(m[0] * 0.8, CALLOSUM.x0, CALLOSUM.x1);
+  // Within a hemisphere the lane arches up and in over the middle, longer lanes higher (like the long association
+  // tracts); the brainstem's lanes dip toward the core instead.
+  const span = Math.hypot(la[0] - lb[0], la[1] - lb[1], la[2] - lb[2]);
+  const lane = sa * sb < 0 ? [x, callosumY(x), 0]
+    : sa === 0 || sb === 0 ? [0, 1, 2].map((i) => m[i] + (CORE[i] - m[i]) * 0.35)
+    : [m[0] * 0.9, Math.min(0.42, Math.max(m[1], CORE[1]) + 0.08 + 0.16 * span), m[2] * 0.7];
   const poly = [pa, la, lane, lb, pb]; // few control points, so the lane bends in long curves, not corners
   return bspline(poly.map((p, i) => [0, 1, 2].map((k) => pa[k] + (pb[k] - pa[k]) * (i / 4) + (p[k] - pa[k] - (pb[k] - pa[k]) * (i / 4)) * 0.85)));
 }
+const lanePath = (pa, ga, pb, gb) => laneCurve(regions[ga].lobe, L.side[ga], regions[gb].lobe, L.side[gb], pa, pb);
 // fiberData(cross, same): segments per curve between regions and inside one.
 function fiberData(segCross, segSame) {
   const out = [], owner = [], start = new Int32Array(edges.length), segs = new Int32Array(edges.length);
@@ -215,11 +231,153 @@ function fiberData(segCross, segSame) {
 }
 
 let shellXYZ = new Float32Array(0); // the shell's points, also used to frame the brain
-function dustData() {
+const partY = new Float32Array([9, -9, 9, -9, 9, -9]); // each part's lowest and highest point: the intro's wave
+function shellData() {
   const sh = shellPoints(LIGHT ? 12000 : 26000), n = sh.part.length;
   shellXYZ = new Float32Array(n * 4); // x, y, z, part: for framing and the outline
-  for (let i = 0; i < n; i++) shellXYZ.set([sh.pos[i * 3], sh.pos[i * 3 + 1], sh.pos[i * 3 + 2], sh.part[i]], i * 4);
-  return sh;
+  for (let i = 0; i < n; i++) {
+    const y = sh.pos[i * 3 + 1], k = sh.part[i] * 2;
+    shellXYZ.set([sh.pos[i * 3], y, sh.pos[i * 3 + 2], sh.part[i]], i * 4);
+    partY[k] = Math.min(partY[k], y); partY[k + 1] = Math.max(partY[k + 1], y);
+  }
+  return { sh, fil: shellFilaments(sh) };
+}
+
+// ---- neurons: dendrites and axons ------------------------------------------------------------------------------
+// Each node is a neuron: its soma is the sprite; its dendrites and axon are short fibers in the cached layer.
+// Pyramidal cells (memory notes, instructions): an apical dendrite toward the surface that forks, two or three basal
+// dendrites, an axon down toward the core. Round cells (code files, Serena notes, tools): three or four dendrites
+// around and a shorter axon. The main branches (level 0) come first; the forks (level 1) only show zoomed in or
+// while the neuron is active (the shader decides), and only the main ones are drawn while the camera moves.
+const v3 = {
+  add: (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k],
+  unit: (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; },
+  cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+};
+const neuron = { owner: new Int32Array(0), hl: new Float32Array(0) };
+function neuronData() {
+  const L0 = [], L1 = [], o0 = [], o1 = [];
+  for (let i = 0; i < N; i++) {
+    const n = nodes[i], p = at(i), r = rng(i * 7919 + 13), part = partOf(i);
+    const pj = n.project == null ? -1 : projIndex.get(n.project);
+    const col = regionColor[n.region].map((c) => c * 0.85 + 0.12);
+    const seg = (a, b, w, level) => {
+      (level ? L1 : L0).push(...a, ...b, 0, 0, ...col, ...col, EDGE.dendrite, w, 0, 0, pj, level + 2 * part);
+      (level ? o1 : o0).push(i);
+    };
+    const u = v3.unit([p[0] * 0.7, p[1] + 0.12, p[2]]); // outward, from the core toward the surface
+    const e1 = v3.unit(v3.cross(u, Math.abs(u[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), e2 = v3.cross(u, e1);
+    const around = (a) => v3.add(v3.add([0, 0, 0], e1, Math.cos(a)), e2, Math.sin(a));
+    const jitter = (d, k) => v3.unit(v3.add(d, around(r() * 6.283), k * r()));
+    const neg = (d) => d.map((c) => -c);
+    const len = size[i] * 1.5 * (0.65 + 0.35 * crowdOf(i)), soma = size[i] * 0.12;
+    // A branch stays inside the brain: one that would leave its volume is shortened, or dropped.
+    const inside = (a, d, l) => { for (let t = 0; t < 3; t++, l /= 2) if (lobeAt(v3.add(a, d, l))) return l; return 0; };
+    const limb = (from, dir, l, w, forks) => {
+      l = inside(from, dir, l);
+      if (!l) return;
+      const to = v3.add(from, dir, l);
+      seg(from, to, w, 0);
+      for (let k = 0; k < forks; k++) {
+        const d = v3.unit(v3.add(dir, around(r() * 6.283), k % 2 ? -0.75 : 0.75)), lf = inside(to, d, l * (0.4 + 0.2 * r()));
+        if (lf) seg(to, v3.add(to, d, lf), w * 0.85, 1);
+      }
+    };
+    if (n.type === 'memory' || n.type === 'instruction') {
+      limb(v3.add(p, u, soma), jitter(u, 0.25), len * 1.5, 3, 2); // apical
+      const basal = n.type === 'instruction' ? 3 : 2, a0 = r() * 6.283;
+      for (let k = 0; k < basal; k++) limb(p, v3.unit(v3.add(neg(u).map((c) => c * 0.55), around(a0 + (k * 6.283) / basal))), len * 0.6, 2.6, 1);
+      limb(v3.add(p, u, -soma), jitter(neg(u), 0.15), len * 2.2, 2.4, 1); // axon
+    } else {
+      const k0 = 3 + (r() < 0.5 ? 1 : 0), a0 = r() * 6.283;
+      for (let k = 0; k < k0; k++) limb(p, v3.unit(v3.add(around(a0 + (k * 6.283) / k0), u, (r() - 0.35) * 0.9)), len * 0.6, 2.6, 1);
+      limb(p, jitter(neg(u), 0.25), len * 1.2, 2.4, 0); // axon
+    }
+  }
+  neuron.owner = Int32Array.from([...o0, ...o1]);
+  neuron.hl = new Float32Array(neuron.owner.length);
+  neuron.data = new Float32Array([...L0, ...L1]);
+  neuron.segsOf = nodes.map(() => []); // each neuron's segments, for the active layer
+  neuron.owner.forEach((i, s) => neuron.segsOf[i].push(s));
+  return { data: neuron.data };
+}
+
+// ---- tracts: the main lanes as thick, glowing bundles, and the fixed structures --------------------------------
+// The busiest lanes between lobes become bundles of a few strands that fan out at both ends, along the paths the
+// agents' pulses take (across hemispheres, over the corpus callosum's arch). With them, fixed and decorative: the
+// corpus callosum itself (strands along its arch), the brainstem as a bright bundle fanning up into both
+// hemispheres, and Purkinje cells in the cerebellum. Pulses run along the strands while work goes on.
+let tractStrands = []; // [{ pts, rgb, lobes }]: where pulses run
+let purkinje = { segs: [], somas: [] };
+function tractData() {
+  const out = [], hl = [], strands = [], r = rng(23);
+  // A strand: segments along the points, fading in and out at its ends (taper) so bundles dissolve into the lobes.
+  const strand = (pts, rgb, type, width, core, k, part, lobes, taper = 0.18) => {
+    const cum = [0];
+    for (let j = 1; j < pts.length; j++) cum.push(cum[j - 1] + Math.hypot(pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1], pts[j][2] - pts[j - 1][2]));
+    const total = cum[cum.length - 1] || 1;
+    for (let j = 0; j + 1 < pts.length; j++) {
+      const t = (cum[j] + cum[j + 1]) / 2 / total, end = taper ? Math.min(1, Math.min(t, 1 - t) / taper) : 1;
+      out.push(...pts[j], ...pts[j + 1], cum[j] / total, cum[j + 1] / total, ...rgb, ...rgb, type, width, core, 0, -1, 2 * part);
+      hl.push(k * Math.max(0.02, end * end * (3 - 2 * end)));
+    }
+    if (lobes) strands.push({ pts, rgb, lobes });
+  };
+  const white = (c, k) => c.map((v) => v + (1 - v) * k);
+  const frame = (d) => { const e1 = v3.unit(v3.cross(d, Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])); return [e1, v3.cross(d, e1)]; };
+  // 1. The busiest lanes, from the links themselves.
+  const lanes = new Map();
+  let cross = 0, total = 0;
+  for (const e of edges) {
+    const ga = nodes[e.a].region, gb = nodes[e.b].region, ka = `${regions[ga].lobe}|${L.side[ga]}`, kb = `${regions[gb].lobe}|${L.side[gb]}`;
+    if (ka === kb) continue;
+    total++;
+    if (L.side[ga] * L.side[gb] < 0) cross++;
+    const key = ka < kb ? `${ka}>${kb}` : `${kb}>${ka}`;
+    lanes.set(key, (lanes.get(key) || 0) + 1);
+  }
+  const top = [...lanes].sort((a, b) => b[1] - a[1]).filter(([, c], k) => k < 10 && c >= Math.max(3, total * 0.03));
+  const max = top.length ? top[0][1] : 1;
+  for (const [key, count] of top) {
+    const [[la, sa], [lb, sb]] = key.split('>').map((x) => { const [l, sd] = x.split('|'); return [l, Number(sd)]; });
+    const A = lobeShape(la, sa).c, B = lobeShape(lb, sb).c, path = laneCurve(la, sa, lb, sb, A, B), k = Math.sqrt(count / max);
+    const ca = C(...LOBE_COLOR[la]), cb = C(...LOBE_COLOR[lb]), rgb = white(ca.map((c, i) => (c + cb[i]) / 2), 0.08);
+    const K = 5 + Math.round(3 * k), wMid = 0.01 + 0.012 * k, wEnd = 0.07 + 0.05 * k;
+    for (let j = 0; j < K; j++) {
+      const a = r() * 6.283, rad = j ? 0.35 + 0.65 * r() : 0, pts = [];
+      for (let q = 0; q <= 24; q++) { // the middle 80% of the lane: the bundle fans out and fades before the lobes' centers
+        const t = 0.1 + (0.8 * q) / 24, b = path(t), t0 = path(t - 0.01), t1 = path(t + 0.01), s = (t - 0.1) / 0.8;
+        const [e1, e2] = frame(v3.unit([t1[0] - t0[0], t1[1] - t0[1], t1[2] - t0[2]])), w = (wMid + (wEnd - wMid) * (1 - Math.sin(Math.PI * s)) ** 2) * rad;
+        pts.push(v3.add(v3.add(b, e1, Math.cos(a) * w), e2, Math.sin(a) * w));
+      }
+      strand(pts, rgb, EDGE.tract, j ? 1.6 + 1.2 * k : 2.4 + 1.6 * k, j ? 0 : 1, (0.45 + 0.55 * k) * (j ? 0.7 : 1), 0, new Set([la, lb]), 0.3);
+    }
+  }
+  // 2. The corpus callosum: strands along its arch, side by side across the midline, brighter the more links cross.
+  const cc = C(80, 0.1, 205), kc = 0.45 + 0.55 * Math.min(1, (cross / Math.max(1, total)) * 3);
+  for (let j = 0; j < 8; j++) {
+    const z = (j - 3.5) * 0.03, dy = (r() - 0.5) * 0.035, pts = [];
+    for (let q = 0; q <= 32; q++) { const x = CALLOSUM.x0 + ((CALLOSUM.x1 - CALLOSUM.x0) * q) / 32; pts.push([x, callosumY(x) + dy - Math.abs(z) * 0.4, z]); }
+    if (j % 2) pts.reverse(); // half run back to front, so the intro lights it from both ends
+    strand(pts, cc, EDGE.tract, j === 3 || j === 4 ? 2.6 : 1.8, j === 3 || j === 4 ? 1 : 0, kc * (j === 3 || j === 4 ? 1 : 0.75), 0, new Set(['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal']), 0.12);
+  }
+  // 3. The brainstem: a bright bundle up its axis and through the core, fanning into both hemispheres.
+  const sb = white(C(...LOBE_COLOR.stem), 0.1), A = STEM_AXIS, perp = [A.dir[1], -A.dir[0], 0];
+  for (let j = 0; j < 12; j++) {
+    const a = r() * 6.283, rr = A.radius * 0.55 * Math.sqrt(r()), ox = Math.cos(a) * rr, oz = Math.sin(a) * rr, side = j % 2 ? 1 : -1;
+    const at0 = v3.add(v3.add(A.bottom, perp, ox), [0, 0, 1], oz), at1 = v3.add(v3.add(A.top, perp, ox), [0, 0, 1], oz);
+    const core = [A.top[0] + 0.08, A.top[1] + 0.22, oz * 2 + side * 0.03];
+    const to = [-0.22 + r() * 0.45, 0.02 + r() * 0.12, side * (0.12 + r() * 0.14)];
+    const path = bspline([at0, v3.add(at0, A.dir, 0.15), at1, core, to]), pts = [];
+    for (let q = 0; q <= 28; q++) pts.push(path(q / 28));
+    strand(pts, sb, EDGE.structure, j < 4 ? 2.2 : 1.6, j < 4 ? 1 : 0, 0.9, 2, new Set(['stem']), 0.06);
+  }
+  // 4. Purkinje cells: flat, branching trees in the cerebellum (their somas are sprites).
+  purkinje = purkinjeTrees(LIGHT ? 4 : 7);
+  const pk = white(C(...LOBE_COLOR.cerebellum), 0.35);
+  for (const [a, b, level] of purkinje.segs) { out.push(...a, ...b, 0, 0, ...pk, ...pk, EDGE.structure, level ? 2 : 2.6, 0, 0, -1, level + 2); hl.push(0.8); }
+  tractStrands = strands;
+  return { data: new Float32Array(out), hl: new Float32Array(hl) };
 }
 // Where agents work, the shell around their lobe brightens softly, then fades back (eases in 0.6 s, out 2 s).
 const shellGlow = new Map();
@@ -249,7 +407,8 @@ const HOME = { yaw: 0.32, pitch: 0.16, zoom: 1, target: [...BRAIN_CENTER] }; // 
 const cam = structuredClone(HOME), goal = structuredClone(HOME), vel = { yaw: 0, pitch: 0 };
 let follow = false, autoRotate = false, lastInput = 0, lastEvent = -1e9;
 let W = 1, H = 1, VP = null, PX = 1, basis = null, depth = [3, 6], camDirty = true, camVersion = 0, scrVersion = -1, labelsDirty = true;
-let staticKey = 0; // bumped whenever the cached static layers (ground, shell, haze, fibers) must be redrawn
+let staticKey = 0; // bumped whenever the main cache (haze and links over the deep cache) must be redrawn
+let deepKey = 0; // bumped whenever the deep cache (ground, shell, dendrites, tracts) must be redrawn
 const scr = new Float32Array(N * 3);
 const projCur = new Float32Array(32).fill(0.8), projTarget = new Float32Array(32).fill(0.8);
 const embers = new Map();
@@ -260,6 +419,19 @@ let lastSignal = 0;
 let ripples = [];
 let busyUntil = 0;
 const busy = (until) => { if (until > busyUntil) busyUntil = until; };
+const pulses = []; // pulses running along the tracts
+let lastPulse = 0;
+// Labels: off at overview (only the agent tags show); on while zoomed in, for the lobe under the pointer, or always
+// with the Labels toggle.
+let labelsOn = (() => { try { return localStorage.getItem('kevmind.brain.labels') === 'on'; } catch { return false; } })();
+let hoverLobe = null;
+// The cut: the near hemisphere's cerebrum cut away (its shell gone, its nodes and links dimmed) to show the inside.
+let cutOn = false, cutSide = 0, cutChanged = false;
+const cutAway = (i) => cutSide !== 0 && partOf(i) === 0 && L.pos[i * 3 + 2] * cutSide > 0.004;
+// The intro: once per page load the brain builds itself (gl.js INTRO has the timeline); a click, a drag, the wheel or
+// a key skips to the end.
+const intro = { on: false, done: false, t0: 0, pulsed: false };
+const introAllowed = () => anim && !reduced.matches && !params.has('nointro');
 const tSec = (now = performance.now()) => (now - T0) / 1000;
 
 // ---- renderer --------------------------------------------------------------------------------------------------
@@ -269,8 +441,15 @@ const edgeHl = new Float32Array(edges.length);
 // ponytail: two fixed levels; the coarse one exists for software and weak GPUs, where cost grows with segments.
 const lod = [{ cross: LIGHT ? 8 : 14, same: 2 }, { cross: 1, same: 1 }].map((x) => ({ ...x, owner: new Int32Array(0), hl: new Float32Array(0) }));
 let fine = null; // the smooth fibers, for signals running along them
+let tractHl = new Float32Array(0), tractShown = new Float32Array(0);
 function uploadGeometry() {
   R.setNodes(nodeData(), state);
+  const nd = neuronData();
+  R.setLayer('dendrites', nd.data, neuron.hl);
+  const td = tractData();
+  tractHl = td.hl;
+  tractShown = new Float32Array(tractHl);
+  R.setLayer('tracts', td.data, tractShown);
   lod.forEach((l, k) => {
     const f = fiberData(l.cross, l.same);
     l.owner = f.owner;
@@ -281,8 +460,10 @@ function uploadGeometry() {
 }
 try {
   R = new Renderer(canvas, P);
+  const shell = shellData();
   uploadGeometry();
-  R.setDust(dustData());
+  R.setDust(shell.sh);
+  R.setFilaments(shell.fil);
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); $('noGl').hidden = false; });
 } catch (err) {
   console.warn(err);
@@ -295,6 +476,7 @@ function nodeBright(i) {
   let b = bright[i];
   if (focusSet) b *= focusSet.has(i) ? 1.4 : 0.14;
   else if (matchSet) b *= matchSet.has(i) ? 1.4 : 0.16;
+  if (cutAway(i)) b *= 0.08;
   return Math.max(b, 0.002);
 }
 // Link brightness: hidden, dimmed (focus or search elsewhere), normal, lit where work just happened (embers), focus.
@@ -306,6 +488,7 @@ function edgeLights() {
     if (v && focusSet) v = e.a === focus || e.b === focus ? 3 : 0.12;
     else if (v && matchSet) v = matchSet.has(e.a) && matchSet.has(e.b) ? 1.2 : 0.12;
     else if (v) v = 1 + 1.4 * Math.max(state[e.a * 4 + 1], state[e.b * 4 + 1]);
+    if (v && (cutAway(e.a) || cutAway(e.b))) v *= 0.1;
     edgeHl[k] = v;
   });
   lod.forEach((l, k) => {
@@ -315,6 +498,34 @@ function edgeLights() {
   staticKey++;
   return shown;
 }
+// The deep cache's lighting, which only filters, focus, search and the cut change. Dendrites: hidden with their
+// neuron, dimmed by focus, search and the cut; the focus and its neighbors, and search hits, above 1.5 (full detail
+// at any zoom). Tracts dim with focus and search.
+function deepLights() {
+  for (let s = 0; s < neuron.owner.length; s++) {
+    const i = neuron.owner[s];
+    let v = visible[i] ? (0.35 + 0.6 * bright[i]) * crowdOf(i) : 0; // crowded lobes: dimmer, like their nodes
+    if (v && focusSet) v = focusSet.has(i) ? (i === focus ? 2.6 : 1.7) : 0.12;
+    else if (v && matchSet) v = matchSet.has(i) ? 1.7 : 0.12;
+    if (v && cutAway(i)) v *= 0.1;
+    neuron.hl[s] = v;
+  }
+  for (let k = 0; k < tractHl.length; k++) tractShown[k] = tractHl[k] * (focusSet || matchSet ? 0.35 : 1);
+  if (R) { R.updateLayer('dendrites', neuron.hl); R.updateLayer('tracts', tractShown); }
+  deepKey++;
+}
+// Active neurons (embers: just read, edited or run): their dendrites in full detail and bright, redrawn every frame
+// on top of the cache, so activity never redraws the cache's thousands of dendrites. At most the 40 most recent.
+function activeNeurons() {
+  if (!R) return;
+  const live = [...embers].filter(([i]) => visible[i] && !cutAway(i) && state[i * 4 + 1] > 0).sort((a, b) => b[1].at - a[1].at).slice(0, 40);
+  const segs = [], hl = [];
+  for (const [i] of live) for (const s of neuron.segsOf[i] || []) {
+    segs.push(...neuron.data.subarray(s * FIBER_FLOATS, (s + 1) * FIBER_FLOATS));
+    hl.push(1.6 + state[i * 4 + 1]);
+  }
+  R.setLayer('active', new Float32Array(segs), new Float32Array(hl));
+}
 function refresh() {
   for (let i = 0; i < N; i++) {
     const n = nodes[i];
@@ -323,6 +534,8 @@ function refresh() {
   for (let i = 0; i < N; i++) state[i * 4] = nodeBright(i);
   if (R) R.updateState(state);
   const shown = edgeLights();
+  deepLights();
+  activeNeurons();
   let n = 0;
   for (let i = 0; i < N; i++) n += visible[i];
   setText($('counts'), T.counts(filter.projects.size, n, shown));
@@ -374,10 +587,12 @@ function updateCamera() {
   PX = H / (2 * Math.tan(FOV / 2));
   const wc = project(BRAIN_CENTER)[2];
   depth = [wc - BRAIN_RADIUS, wc + BRAIN_RADIUS];
+  const cs = cutOn ? (basis.eye[2] >= BRAIN_CENTER[2] ? 1 : -1) : 0; // the cut takes the hemisphere facing the camera
+  if (cs !== cutSide) { cutSide = cs; cutChanged = true; }
   camVersion++;
   labelsDirty = true;
   camDirty = false;
-  staticKey++;
+  staticKey++; deepKey++;
 }
 function project(p) {
   const m = VP;
@@ -387,7 +602,7 @@ function project(p) {
   return [((x / w + 1) / 2) * W, ((1 - y / w) / 2) * H, w];
 }
 function screenPositions() { // for picking, only when asked after the camera moved
-  if (scrVersion === camVersion) return;
+  if (scrVersion === camVersion || !VP) return;
   scrVersion = camVersion;
   for (let i = 0; i < N; i++) { const p = project(at(i)); scr[i * 3] = p[0]; scr[i * 3 + 1] = p[1]; scr[i * 3 + 2] = p[2]; }
 }
@@ -522,6 +737,7 @@ function arrive(a, animate) {
   if (R) R.updateState(state, i, i + 1);
   if (animate) { rings.push({ p: a.pos, t0: now, dur: 750, rgb: kindRgb(c.kind) }); flashes.push({ g: nodes[i].region, t0: now }); busy(now + 1700); }
   cooling();
+  activeNeurons();
   if (focus === i) renderFocus();
   labelsDirty = true;
   followGoal();
@@ -541,7 +757,7 @@ function cooling() {
       if (state[i * 4 + 1] !== s) { state[i * 4 + 1] = s; changed = true; if (R) R.updateState(state, i, i + 1); }
       if (!s) { embers.delete(i); state[i * 4 + 3] = 0; }
     }
-    if (changed) request();
+    if (changed) { activeNeurons(); request(); }
     if (embers.size) cooling();
   }, 15000);
 }
@@ -559,13 +775,36 @@ let raf = 0, lastFrame = 0, wasMoving = false;
 function request() {
   if (!raf && R && view === 'brain' && !document.hidden) raf = requestAnimationFrame(frame);
 }
+// The clock starts once the first two frames are drawn: the first one draws the caches in full (and compiles shaders
+// in a fresh browser), which can take a moment on a slow machine, and that moment shouldn't eat the opening.
+function startIntro(now) { intro.on = true; intro.t0 = null; intro.warm = 0; busy(now + INTRO.end * 1000 + 600); }
+function endIntro() {
+  if (intro.done) return;
+  intro.on = false; intro.done = true;
+  staticKey++;
+  labelsDirty = true;
+  startReplay();
+  request();
+}
+// The shaders' intro clock and the two closing waves' radii.
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+function introView(clock) {
+  const w = INTRO.waves.map((t0) => { const u = (clock - t0) / INTRO.wave; return u >= 0 && u <= 1 ? u * BRAIN_RADIUS * 1.25 : -9; });
+  return [clock, w[0], w[1], 0];
+}
 function frame(now) {
   raf = 0;
   if (!R || view !== 'brain' || document.hidden) return;
+  if (!intro.done && !intro.on) { if (introAllowed()) startIntro(now); else endIntro(); }
   // 30 fps cap; about 12 when only Claude's breath moves
   if (anim && now - lastFrame < (now < busyUntil || wasMoving || drag ? FRAME_MS : 80) - 2) { raf = requestAnimationFrame(frame); return; }
   const dt = Math.min(100, now - lastFrame);
   lastFrame = now;
+  let clock = 99; // the intro's clock (s); 99 once it's over
+  if (intro.on) {
+    clock = intro.t0 == null ? 0 : (now - intro.t0) / 1000;
+    if (clock >= INTRO.end) { endIntro(); clock = 99; } else busy(now + 50);
+  }
   for (let k = 0; k < 32; k++) {
     const d = projTarget[k] - projCur[k];
     if (Math.abs(d) > 0.002) { projCur[k] += anim ? d * Math.min(1, dt / 220) : d; staticKey++; } else projCur[k] = projTarget[k];
@@ -573,29 +812,38 @@ function frame(now) {
   for (const a of agents.values()) if (a.comet && (!anim || now >= a.comet.t0 + a.comet.dur)) arrive(a, anim);
   const moving = camStep(now, dt) || !!(drag && drag.moved);
   if (camDirty) updateCamera();
+  if (cutChanged) { cutChanged = false; refresh(); }
   if (wasMoving && !moving) staticKey++; // the camera stopped: redraw the static layers with smooth fibers
   wasMoving = moving;
   const time = tSec(now);
   ripples = ripples.filter((r) => time - r.t < 2.4);
   for (let k = rings.length - 1; k >= 0; k--) if (now - rings[k].t0 > rings[k].dur) rings.splice(k, 1);
-  const haze = buildSprites(now);
+  const haze = buildSprites(now, clock);
   R.setBeams(buildBeams(now));
-  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye }, { haze, staticKey, skip: SKIP, lod: moving ? 1 : 0, glow: glowLayer(now, dt) });
+  // Neurons: faint dendrites at overview, full ones zoomed in (active neurons are always full, through their hl).
+  P.edgeAlpha[EDGE.dendrite] = DENDRITE_ALPHA * (0.3 + 0.7 * smooth(1, 0.5, cam.zoom));
+  const mid = project(BRAIN_CENTER); // the brain's center and radius on screen, for the intro's closing waves
+  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye, intro: introView(clock), yr: partY, center: BRAIN_CENTER, cut: cutSide,
+    mid, radiusPx: (BRAIN_RADIUS * PX) / mid[2], waveR: BRAIN_RADIUS },
+  { haze, deepKey, mainKey: staticKey, skip: SKIP, lod: moving && !intro.on ? 1 : 0, glow: glowLayer(now, dt), introOn: intro.on });
+  if (intro.on && intro.t0 == null && ++intro.warm >= 2) intro.t0 = performance.now();
   if (labelsDirty) layoutLabels();
   placeChips(now);
-  if (anim && (now < busyUntil || moving || thinking())) request();
+  if (anim && (now < busyUntil || moving || thinking() || intro.on)) request();
 }
 
 // Haze per region and the lit lobes (cached layer), then agent heads, markers and rings.
 let spriteData = new Float32Array(0), heatSig = '', heatShown = {}, heatAt = -1e9, heatTimer = 0;
-function buildSprites(now) {
+const PK_RGB = C(92, 0.04, 212), STEM_RGB = C(90, 0.05, 245);
+function buildSprites(now, clock = 99) {
   const list = [];
   for (const g of regions) {
     const n = L.count[g.id];
     if (n < 3 || (g.project != null && !filter.projects.has(g.project))) continue;
     const pf = g.project == null ? 1 : projCur[projIndex.get(g.project)];
-    list.push(...L.centroid[g.id], clamp(L.spread[g.id] * 3.6, 0.12, 0.45), ...regionColor[g.id], 0.055 * pf * pf * (focusSet || matchSet ? 0.35 : 1), SPRITE.glow);
+    list.push(...L.centroid[g.id], clamp(L.spread[g.id] * 3.6, 0.12, 0.45), ...regionColor[g.id], 0.035 * pf * pf * (focusSet || matchSet ? 0.35 : 1), SPRITE.glow);
   }
+  for (const p of purkinje.somas) list.push(...p, 0.035, ...PK_RGB, 0.55, SPRITE.glow, ...p, 0.012, ...PK_RGB, 0.9, SPRITE.head);
   // The lit lobe: where agents are, or recently were, the lobe glows in its color and cools with the embers. It is
   // in the cached layer, so it follows the work at most every 2 s (and links lit by embers update with it).
   const heat = {};
@@ -642,6 +890,33 @@ function buildSprites(now) {
     const v = sg.toB ? u : 1 - u, n = fine.segs[sg.k], j = Math.min(n - 1, Math.floor(v * n)), w = v * n - j, o = (fine.start[sg.k] + j) * FIBER_FLOATS;
     const p = [0, 1, 2].map((q) => fine.data[o + q] + (fine.data[o + 3 + q] - fine.data[o + q]) * w);
     list.push(...p, 0.03, ...sg.rgb, 0.85 * Math.sin(Math.PI * u), SPRITE.head);
+  }
+  // The intro: a seed of light at the brainstem's base and a ring of it spreading out; then, as the tracts light up,
+  // a pulse shoots along some of their strands.
+  if (intro.on && clock < 0.7) {
+    const u = clock / 0.7, b = STEM_AXIS.bottom;
+    list.push(...b, 0.05 + 0.22 * Math.sin(Math.PI * Math.min(1, clock / 0.55)), ...STEM_RGB, 0.9 * (1 - u), SPRITE.glow);
+    list.push(...b, 0.04 + 0.9 * (1 - (1 - u) ** 3), ...STEM_RGB, 0.75 * (1 - u) ** 2, SPRITE.ring);
+  }
+  if (intro.on && !intro.pulsed && clock > INTRO.tracts[0]) {
+    intro.pulsed = true;
+    for (const s of tractStrands) if (Math.random() < 0.4) pulses.push({ s, t0: now + Math.random() * 200, dur: INTRO.tracts[1] * 1000 + 150, back: false });
+  }
+  // While work goes on (events in the last 3 s), pulses run along the tracts that touch the lobe just worked on.
+  if (anim && tractStrands.length && embers.size && now - lastEvent < 3000 && now - lastPulse > 300 && pulses.length < 6) {
+    lastPulse = now;
+    let last = -1, lastAt = -1;
+    for (const [i, e] of embers) if (e.at > lastAt) { lastAt = e.at; last = i; }
+    const near = tractStrands.filter((s) => s.lobes.has(lobeOf(last))), from = near.length ? near : tractStrands;
+    pulses.push({ s: from[Math.floor(Math.random() * from.length)], t0: now, dur: 900 + Math.random() * 400, back: Math.random() < 0.5 });
+    busy(now + 1400);
+  }
+  for (let k = pulses.length - 1; k >= 0; k--) {
+    const pu = pulses[k], u = (now - pu.t0) / pu.dur;
+    if (u >= 1 || !anim) { pulses.splice(k, 1); continue; }
+    if (u < 0) continue;
+    const pts = pu.s.pts, f = (pu.back ? 1 - u : u) * (pts.length - 1), j = Math.min(pts.length - 2, Math.floor(f)), w = f - j;
+    list.push(pts[j][0] + (pts[j + 1][0] - pts[j][0]) * w, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * w, pts[j][2] + (pts[j + 1][2] - pts[j][2]) * w, 0.04, ...pu.s.rgb, 0.9 * Math.sin(Math.PI * u), SPRITE.head);
   }
   // Claude thinking: a slow, warm breath through the whole brain (still, with animations off).
   if (thinking()) list.push(BRAIN_CENTER[0], BRAIN_CENTER[1] + 0.12, 0, 1.25, ...P.breath, anim ? 0.035 + 0.04 * (0.5 - 0.5 * Math.cos((2 * Math.PI * now) / 4200)) : 0.05, SPRITE.glow);
@@ -750,7 +1025,9 @@ function layoutLabels() {
     return { lobe, top: list[0][1], live: list.some(([, pr]) => pr >= 1000), at: project(c.map((v) => v / n)), names };
   }).sort((x, y) => y.top - x.top)
     // A lobe on the far side of the brain (prefrontal from the back) has no label, unless agents work there.
-    .filter((c) => c.live || c.at[2] - wc < 0.25 * BRAIN_RADIUS);
+    .filter((c) => c.live || c.at[2] - wc < 0.25 * BRAIN_RADIUS)
+    // At overview, only the lobe under the pointer; all of them zoomed in or with the Labels toggle; none in the intro.
+    .filter((c) => !intro.on && (labelsOn || cam.zoom < 0.72 || c.lobe === hoverLobe));
   const keep = new Set();
   const show = W < 520 ? 2 : 3;
   const agentsAt = [];
@@ -1028,6 +1305,7 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#clearFocus')) setFocus(null);
 });
 document.addEventListener('keydown', (e) => {
+  if (intro.on) endIntro();
   if (e.key === '/' && document.activeElement !== search) { e.preventDefault(); search.focus(); }
   if (e.key === 'Escape' && focus != null) setFocus(null);
 });
@@ -1102,7 +1380,7 @@ function pick(x, y) {
   screenPositions();
   let best = -1, bd = Infinity;
   for (let i = 0; i < N; i++) {
-    if (!visible[i] || scr[i * 3 + 2] <= 0) continue;
+    if (!visible[i] || scr[i * 3 + 2] <= 0 || cutAway(i)) continue;
     const dx = scr[i * 3] - x, dy = scr[i * 3 + 1] - y, d2 = dx * dx + dy * dy;
     const r = Math.max(7, (size[i] * PX) / scr[i * 3 + 2] * 0.2 + 3);
     const score = d2 + (scr[i * 3 + 2] - depth[0]) * 12; // the nearer of two overlapping stars wins
@@ -1110,7 +1388,20 @@ function pick(x, y) {
   }
   return best;
 }
+// The lobe under the pointer: the nearest node's, within 64 px.
+function lobeNear(x, y) {
+  screenPositions();
+  let best = null, bd = 64 * 64;
+  for (let i = 0; i < N; i++) {
+    if (!visible[i] || scr[i * 3 + 2] <= 0 || cutAway(i)) continue;
+    const dx = scr[i * 3] - x, dy = scr[i * 3 + 1] - y, d2 = dx * dx + dy * dy;
+    if (d2 < bd) { bd = d2; best = lobeOf(i); }
+  }
+  return best;
+}
+function setHoverLobe(l) { if (l !== hoverLobe) { hoverLobe = l; labelsDirty = true; request(); } }
 canvas.addEventListener('pointerdown', (e) => {
+  if (intro.on) endIntro();
   canvas.setPointerCapture(e.pointerId);
   drag = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false, pan: e.shiftKey || e.button === 2 };
   vel.yaw = vel.pitch = 0;
@@ -1141,6 +1432,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   const i = pick(e.clientX - r.left, e.clientY - r.top);
+  setHoverLobe(i >= 0 ? lobeOf(i) : lobeNear(e.clientX - r.left, e.clientY - r.top));
   if (i !== hover) {
     hover = i;
     canvas.classList.toggle('over', i >= 0);
@@ -1155,7 +1447,7 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 const hideTip = () => { $('tip').hidden = true; hover = -1; canvas.classList.remove('over'); };
-canvas.addEventListener('pointerleave', () => { if (!drag) hideTip(); });
+canvas.addEventListener('pointerleave', () => { if (!drag) { hideTip(); setHoverLobe(null); } });
 canvas.addEventListener('pointerup', (e) => {
   const was = drag;
   drag = null;
@@ -1185,6 +1477,7 @@ function zoomAt(f, mx = W / 2, my = H / 2) {
 }
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  if (intro.on) endIntro();
   const r = canvas.getBoundingClientRect();
   zoomAt(Math.exp(e.deltaY * 0.0012), e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
@@ -1243,6 +1536,8 @@ function setAnim(on, save) {
   animSwitch.setAttribute('aria-checked', String(on));
   if (save) try { localStorage.setItem('kevmind.brain.anim', on ? 'on' : 'off'); } catch {}
   if (!on) {
+    endIntro();
+    pulses.length = 0;
     for (const a of agents.values()) { if (a.comet) arrive(a, false); a.after = null; }
     rings.length = 0; ripples = [];
     vel.yaw = vel.pitch = 0;
@@ -1260,7 +1555,7 @@ function setView(v) {
   for (const b of $('viewGroup').children) b.setAttribute('aria-pressed', String(b.dataset.view === v));
   $('brainView').hidden = v !== 'brain';
   $('elsewhere').hidden = v === 'brain';
-  if (v !== 'brain') { cancelAnimationFrame(raf); raf = 0; hideTip(); }
+  if (v !== 'brain') { cancelAnimationFrame(raf); raf = 0; hideTip(); if (intro.on) endIntro(); }
   else { for (const a of agents.values()) { if (a.comet) arrive(a, false); a.after = null; } trace.draw(); request(); }
 }
 $('viewGroup').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); });
@@ -1309,6 +1604,12 @@ function nextEvent() {
   if (!ev) { rp.timer = setTimeout(restartReplay, Math.max(0, (replay.length - elapsed) / SPEED)); return; }
   rp.timer = setTimeout(() => { onEvent(ev); rp.idx++; renderReplay(); nextEvent(); }, Math.max(0, (ev.at - elapsed) / SPEED));
 }
+// The replay starts once the intro is over (or skipped).
+function startReplay() {
+  if (params.has('noreplay')) return;
+  rp.t0 = performance.now(); rp.idx = 0;
+  nextEvent();
+}
 function restartReplay() {
   for (const a of agents.values()) { a.chip?.remove(); a.li?.remove(); }
   agents.clear();
@@ -1330,13 +1631,43 @@ setTheme((() => { try { return localStorage.getItem('kevmind.theme') || 'system'
 setAnim(anim, false);
 applyLang(lang);
 setView('brain');
-if (!params.has('noreplay')) nextEvent();
+if (!R) endIntro(); // no WebGL: no intro, the panels still follow the replay
+// Labels and Cut: two toggles next to the animations switch.
+const labelsBtn = $('labelsBtn'), cutBtn = $('cutBtn');
+labelsBtn.setAttribute('aria-pressed', String(labelsOn));
+labelsBtn.addEventListener('click', () => {
+  labelsOn = !labelsOn;
+  labelsBtn.setAttribute('aria-pressed', String(labelsOn));
+  try { localStorage.setItem('kevmind.brain.labels', labelsOn ? 'on' : 'off'); } catch {}
+  labelsDirty = true;
+  request();
+});
+cutBtn.addEventListener('click', () => {
+  cutOn = !cutOn;
+  cutBtn.setAttribute('aria-pressed', String(cutOn));
+  camDirty = true; // the camera decides which half goes
+  staticKey++;
+  request();
+});
 // For the benchmark harness: counters only, read over CDP.
 let frames = 0, firstFrame = 0;
 window.__brain = { light: LIGHT, nodes: N, edges: edges.length, frames: () => frames, staticDraws: () => (R ? R.staticDraws || 0 : 0), firstFrameMs: () => firstFrame,
+  get intro() { return { on: intro.on, done: intro.done, clock: intro.on && intro.t0 != null ? (performance.now() - intro.t0) / 1000 : null }; },
+  counts: () => (R ? { ...R.counts, dendrites: R.layers.dendrites?.count, tracts: R.layers.tracts?.count } : null),
   get busy() { return busyUntil > performance.now(); }, setAutoRotate(on) { if (on !== autoRotate) $('rotateBtn').click(); }, setFollow(on) { if (on !== follow) $('followBtn').click(); },
   get cam() { return JSON.parse(JSON.stringify({ cam, goal, vel, follow, autoRotate })); }, pos: (i) => at(i),
   look(yaw, pitch, zoom = 1) { Object.assign(cam, { yaw, pitch, zoom }); Object.assign(goal, { yaw, pitch, zoom }); camDirty = true; request(); },
+  // Close-ups for checks: the camera on a lobe's center (or a point), from an angle, zoomed.
+  aim(at, yaw, pitch, zoom) {
+    const target = typeof at === 'string' ? lobeShape(at, -1).c : at;
+    vel.yaw = vel.pitch = 0;
+    Object.assign(cam, { yaw, pitch, zoom, target: [...target] });
+    Object.assign(goal, structuredClone(cam));
+    lastInput = performance.now();
+    camDirty = true;
+    request();
+  },
+  cut(on) { if (on !== cutOn) cutBtn.click(); },
   // A fixed view, framed like Fit (top uses pitch 1.55, past the orbit's limit), and the outline measured from it.
   view(yaw, pitch) {
     const f = fitFor(yaw, pitch);
@@ -1359,4 +1690,15 @@ window.__brain = { light: LIGHT, nodes: N, edges: edges.length, frames: () => fr
   },
   labels: () => [...lobeEls].filter(([, el]) => !el.hidden).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), leader: leaderEls.get(l)?.style.display !== 'none' })) };
 const _draw = R ? R.draw.bind(R) : null;
-if (R) R.draw = (...a) => { frames++; if (!firstFrame) firstFrame = Math.round(performance.now()); return _draw(...a); };
+// The intro, measured: frames drawn, their rate between the first and the last, the longest wait between two, and how
+// long its first two frames took (its clock starts after them).
+let introFrames = 0, introGap = 0, lastDraw = 0, introFirst = 0, introLast = 0;
+window.__brain.introStats = () => ({ frames: introFrames, fps: +((introFrames - 1) / ((introLast - introFirst) / 1000)).toFixed(1), maxGapMs: Math.round(introGap), warmMs: Math.round(intro.t0 - introFirst) });
+if (R) R.draw = (...a) => {
+  const t = performance.now();
+  frames++;
+  if (!firstFrame) firstFrame = Math.round(t);
+  if (intro.on) { if (introFrames) introGap = Math.max(introGap, t - lastDraw); else introFirst = t; introFrames++; introLast = t; }
+  lastDraw = t;
+  return _draw(...a);
+};

@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeGraph, makeReplay, lobeOfPath, regionOfPath } from '../prototype/brain/data.js';
-import { layout, lobeAt, lobeShape, shellPoints } from '../prototype/brain/layout.js';
+import { layout, lobeAt, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../prototype/brain/layout.js';
+import { FIL_FLOATS as GL_FIL_FLOATS } from '../prototype/brain/gl.js';
 
 test('paths map to lobes and regions', () => {
   assert.equal(lobeOfPath('frontend/src/features/appointments/AppointmentsPage.tsx'), 'occipital');
@@ -81,4 +82,46 @@ test('the shell has a brain\'s proportions (length 1 : width 0.83 : cerebrum hei
   const stemX = (y0, y1) => { let t = 0, n = 0; for (let i = 0; i < s.length; i += 4) if (s[i + 3] === 2 && s[i + 1] >= y0 && s[i + 1] < y1) { t += s[i]; n++; } return t / n; };
   const mid = (stem.mn[1] + stem.mx[1]) / 2;
   assert.ok(stem.mx[1] < cer.mn[1] + 0.25 && stemX(stem.mn[1], mid) < stemX(mid, stem.mx[1]), 'brainstem below the base, tilted back');
+});
+
+test('the shell is a web of short strands along its own points; the cerebellum has contour rings', () => {
+  const sh = shellPoints(12000), f = shellFilaments(sh), d = f.data, n = d.length / FIL_FLOATS;
+  assert.equal(FIL_FLOATS, GL_FIL_FLOATS, 'layout and renderer agree on the layout of a strand');
+  assert.ok(n > sh.part.length * 0.9, `about one strand or more per point (${n} for ${sh.part.length})`);
+  // The ranges cover every strand once, by lobe and hemisphere.
+  let covered = 0;
+  for (const [key, [start, count]] of f.ranges) { assert.match(key, /^[a-z]+\|(-1|0|1)$/); assert.equal(start, covered); covered += count; }
+  assert.equal(covered, n);
+  const points = new Set();
+  for (let i = 0; i < sh.part.length; i++) points.add([0, 1, 2].map((a) => sh.pos[i * 3 + a].toFixed(5)).join());
+  let rings = 0, total = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * FIL_FLOATS, p0 = [d[o], d[o + 1], d[o + 2]], p1 = [d[o + 3], d[o + 4], d[o + 5]], c = [d[o + 6], d[o + 7], d[o + 8]], part = d[o + 13];
+    const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]), mid = [0, 1, 2].map((a) => (p0[a] + p1[a]) / 2);
+    assert.ok(Math.hypot(c[0] - mid[0], c[1] - mid[1], c[2] - mid[2]) <= 0.21 * len + 1e-6, 'slightly curved, never a loop');
+    if (part === 1) { rings++; assert.equal(p0[2], p1[2], 'a ring lies in one slice'); continue; }
+    total += len;
+    assert.ok(len <= 0.055 + 1e-6, `a short strand (${len.toFixed(3)})`);
+    assert.ok(points.has(p0.map((v) => v.toFixed(5)).join()) && points.has(p1.map((v) => v.toFixed(5)).join()), 'joins two shell points');
+    if (part === 0) assert.ok(p0[2] * p1[2] >= 0, 'never across the fissure');
+  }
+  assert.ok(rings > 300, `the cerebellum's rings (${rings} segments)`);
+  assert.ok(total / (n - rings) < 0.03, 'mostly short ridge strands');
+});
+
+test('the fixed structures sit where they belong', () => {
+  // The corpus callosum arches through the cerebrum, highest in its middle.
+  for (let x = CALLOSUM.x0; x <= CALLOSUM.x1; x += 0.05) {
+    const where = lobeAt([x, callosumY(x), 0.06]);
+    assert.ok(where && !['cerebellum', 'stem'].includes(where[0]), `callosum at x ${x.toFixed(2)} inside the cerebrum`);
+  }
+  assert.ok(callosumY(CALLOSUM.xc) > callosumY(CALLOSUM.x0) + 0.1 && callosumY(CALLOSUM.xc) > callosumY(CALLOSUM.x1) + 0.1, 'an arch');
+  // The brainstem's axis leans back going down.
+  assert.ok(STEM_AXIS.bottom[0] < STEM_AXIS.top[0] && STEM_AXIS.bottom[1] < STEM_AXIS.top[1]);
+  // Purkinje cells: somas and every branch inside the cerebellum.
+  const pk = purkinjeTrees(7);
+  assert.equal(pk.somas.length, 7);
+  for (const p of pk.somas) assert.equal(lobeAt(p)?.[0], 'cerebellum');
+  for (const [, b] of pk.segs) assert.ok(lobeAt(b) === null || lobeAt(b)[0] === 'cerebellum', 'a branch stays in the cerebellum');
+  assert.ok(pk.segs.length > 7 * 10, 'branching trees');
 });

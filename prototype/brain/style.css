@@ -48,9 +48,9 @@
    labels and panels legible over additive light. The renderer's palette (app.js) uses the same values. */
 .well {
   --command: oklch(72% 0.012 285); /* the renderer's command color */
-  --night: oklch(12.5% 0.028 280);
-  --night-center: oklch(22% 0.055 280);
-  --night-veil: oklch(12.5% 0.028 280 / 0.82); /* labels stay readable over the light */
+  --night: oklch(9.5% 0.045 282);
+  --night-center: oklch(19% 0.085 280);
+  --night-veil: oklch(9.5% 0.045 282 / 0.82); /* labels stay readable over the light */
   --veil: oklch(15.5% 0.016 285);
 }
 
@@ -177,7 +177,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .trace-legend { display: flex; gap: var(--sp-3); margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); }
 .trace-legend span::before { content: ''; display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; background: var(--trace-line); }
 .trace-legend .tk::before { height: 8px; background: var(--trace-think); }
-.seg.camera { background: var(--veil); box-shadow: 0 0 0 1px var(--border); }
+.seg.camera, .seg.looks { background: var(--veil); box-shadow: 0 0 0 1px var(--border); }
 
 .now { width: 300px; max-width: calc(100% - 32px); background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
 .now-top { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
@@ -235,7 +235,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
   .top { padding: var(--sp-2) var(--sp-3); }
   .proto { display: none; }
   .overlay.tl { left: var(--sp-3); }
-  .overlay.tr { right: var(--sp-3); gap: var(--sp-2); }
+  .overlay.tr { right: var(--sp-3); gap: var(--sp-2); flex-direction: column; align-items: flex-end; }
   .titlerow { flex-direction: column; gap: 0; } /* the counts under the title, clear of the switch */
   .overlay.bl { top: 76px; }
   .seg.camera { gap: 0; } .seg.camera button { padding: 6px 6px; font-size: var(--fs-xs); } /* one row: the brain stays clear */
