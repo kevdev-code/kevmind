@@ -91,6 +91,7 @@ function setLang(next) {
   updateAttention();
   if (typeof renderMemoryView === 'function') renderMemoryView();
   window.renderShare?.();
+  window.brainLang?.();
 }
 
 function applyStatic() {
@@ -112,7 +113,7 @@ document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('clic
 // ---------- rendering is batched: one frame for any number of messages ----------
 let frame = 0;
 let dirty = false;
-const liveVisible = () => !document.hidden && !document.body.classList.contains('view-memory');
+const liveVisible = () => !document.hidden && !document.body.classList.contains('view-memory') && !document.body.classList.contains('view-brain');
 function schedule() {
   dirty = true;
   if (!frame && liveVisible()) frame = requestAnimationFrame(flush);
@@ -173,6 +174,7 @@ function connect() {
     }
     const first = visibleSessions()[0];
     if (!selectedId && first) return select(first.id, false);
+    window.brainFollow?.(); // the Brain tab follows the selected session (brain.js)
     schedule();
   };
 }
@@ -188,6 +190,7 @@ async function select(id, byUser = true) {
   pinned = byUser;
   const r = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
   if (r.ok) current = await r.json();
+  window.brainFollow?.();
   schedule();
 }
 

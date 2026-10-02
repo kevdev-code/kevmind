@@ -216,7 +216,9 @@ export class State {
         const file = input.file_path || input.notebook_path || null;
         if (READ_TOOLS.has(tool)) this.touchFile(s, file, 'read', actor, ts);
         if (EDIT_TOOLS.has(tool)) this.touchFile(s, file, 'edit', actor, ts);
-        this.push(s, { ts, kind: kindOf(tool), actor: actor.id, tool, detail: describe(tool, input) });
+        // The file of a read or an edit, relative to the session's folder when it is inside it: the Brain view finds
+        // its node by it (the feed shows only the file's name).
+        this.push(s, { ts, kind: kindOf(tool), actor: actor.id, tool, detail: describe(tool, input), ...(file ? { path: relTo(s.cwd, file) } : {}) });
         break;
       }
 
@@ -340,6 +342,12 @@ function isStale(s, now) {
 // Last path segment, accepting both / and \ so Windows paths work on any host.
 export function baseName(p) {
   return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+}
+
+// A file's path relative to a folder when it is inside it (with forward slashes), else as it came.
+function relTo(dir, file) {
+  const f = String(file).replace(/\\/g, '/'), d = String(dir || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  return d && f.length > d.length + 1 && f.slice(0, d.length + 1).toLowerCase() === d.toLowerCase() + '/' ? f.slice(d.length + 1) : f;
 }
 
 function projectName(cwd) {

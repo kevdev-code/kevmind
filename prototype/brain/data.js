@@ -1,43 +1,10 @@
-// Synthetic data for the brain prototype, shaped like the owner's real projects (OdonMind: ~50 memory notes,
+// Synthetic data for the brain's benchmark and checks, shaped like the owner's real projects (OdonMind: ~50 memory notes,
 // 4 instruction files, 1 Serena note, nested frontend/backend repos, a few hundred touched files). Every name is
 // invented; the page labels it synthetic. Deterministic: the same seed gives the same graph and replay.
 
-export const NODE_TYPES = ['instruction', 'memory', 'serena', 'file', 'tool'];
-export const EDGE_TYPES = ['link', 'index', 'import', 'cites', 'cochange', 'readfirst'];
-// Lobe of each kind of knowledge. Geometry lives in layout.js.
-export const LOBES = ['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem'];
+import { NODE_TYPES, EDGE_TYPES, rng, lobeOfPath, regionOfPath } from '../../public/brain/graph.js';
 
-export function rng(seed) {
-  let a = seed >>> 0;
-  const next = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  next.int = (n) => Math.floor(next() * n);
-  next.pick = (arr) => arr[Math.floor(next() * arr.length)];
-  return next;
-}
-
-// Where a code file lives in the brain, from its path alone.
-export function lobeOfPath(p) {
-  const s = p.toLowerCase();
-  if (/(^|\/)(test|tests|__tests__)\/|\.(test|spec)\.[a-z]+$/.test(s)) return 'cerebellum';
-  if (/(^|\/)(drizzle|migrations|\.github|scripts|docker)\/|(^|\/)(package\.json|tsconfig[^/]*|[^/]*\.config\.[a-z]+|dockerfile|docker-compose\.ya?ml|\.env\.example)$/.test(s)) return 'stem';
-  if (/(^|\/)docs?\/|\.mdx?$/.test(s)) return 'frontal';
-  if (/(^|\/)(frontend|client|web|public|components|pages|app|features|styles)\/|\.(tsx|jsx|css|scss|html|vue|svelte)$/.test(s)) return 'occipital';
-  return 'parietal';
-}
-
-// Region of a code file: its folder, two levels deep (three inside a nested repo).
-export function regionOfPath(p) {
-  const parts = p.split('/');
-  if (parts.length === 1) return '(root)';
-  const nested = /^(frontend|backend|client|server|web|api|mobile)$/.test(parts[0]);
-  return parts.slice(0, Math.min(parts.length - 1, nested ? 3 : 2)).join('/');
-}
+export { NODE_TYPES, EDGE_TYPES, rng, lobeOfPath, regionOfPath }; // the real graph's own (public/brain/graph.js)
 
 const DOMAINS = ['appointments', 'patients', 'treatments', 'odontogram', 'invoices', 'payments', 'schedule', 'reminders',
   'inventory', 'prescriptions', 'xrays', 'insurance', 'reports', 'notifications', 'settings', 'clinics', 'users', 'auth',

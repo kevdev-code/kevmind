@@ -7,7 +7,7 @@
 // Lobes are the side map's regions through the whole depth, mirrored on both hemispheres, so a lobe's nodes fill its
 // territory; each lobe's volume is shared among its regions in proportion to their node counts, and a short force
 // simulation evens the nodes out inside it.
-import { rng } from './data.js';
+import { rng } from './graph.js';
 import { SHAPE, CORONAL, TOP, CEREBELLUM } from './shape.js';
 
 // Proportions of a real brain: length 1 : width 0.83 : cerebrum height 0.62 (here the length is 2).

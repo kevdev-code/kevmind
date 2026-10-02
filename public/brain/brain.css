@@ -1,0 +1,188 @@
+/* The Brain view (DESIGN.md, section 7). Loaded when the view is first opened. Its chrome uses the dashboard's
+   tokens; the well is a night window that stays dark in both themes, because the glow is additive light and needs a
+   dark ground. Every rule is scoped to .brain-view, so nothing here touches Live or Memory. */
+.brain-view { --command: oklch(58% 0.012 285); } /* commands and tools: a neutral gray, never white (white is Claude) */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brain-view { --command: oklch(72% 0.012 285); } }
+:root[data-theme="dark"] .brain-view { --command: oklch(72% 0.012 285); }
+/* The well: the dark theme's tokens whatever the page's theme, plus its own ground (deeper than the canvas, lit a
+   little at the center) and the veil that keeps panels legible over additive light (labels use the night as a text
+   glow). The renderer's palette (view.js) uses the same values. */
+.brain-view .well {
+  --bg: oklch(17% 0.009 285); --surface: oklch(21% 0.011 285); --raised: oklch(25% 0.012 285);
+  --border: oklch(30% 0.013 285); --border-strong: oklch(37% 0.014 285);
+  --text: oklch(94.5% 0.006 285); --text-2: oklch(80% 0.011 285); --text-3: oklch(69% 0.013 285);
+  --accent: oklch(74% 0.145 288); --accent-fill: oklch(56% 0.190 288); --accent-soft: oklch(30% 0.065 288);
+  --working: oklch(78% 0.150 155); --waiting: oklch(83% 0.140 80); --error: oklch(72% 0.170 25);
+  --read: oklch(76% 0.115 245); --edit: oklch(77% 0.130 350); --done: oklch(48% 0.014 285);
+  --working-soft: oklch(26% 0.040 155);
+  --focus: oklch(74% 0.145 288); --command: oklch(72% 0.012 285);
+  --night: oklch(9.5% 0.045 282); --night-center: oklch(19% 0.085 280); --veil: oklch(15.5% 0.016 285);
+  color-scheme: dark;
+}
+
+/* app shell: the rail on the canvas, the well fills the rest */
+.brain-view { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: 252px minmax(0, 1fr); }
+body.view-brain .memory-view { display: none; }
+@media (min-width: 901px) {
+  body.view-brain { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+}
+.brain-view > .rail { display: block; border-right: 1px solid var(--border); overflow-y: auto; padding: var(--sp-4); scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.brain-view .head { margin: 0 0 var(--sp-2); }
+.brain-view .filters > summary { display: none; }
+.brain-view .filters section { margin-top: var(--sp-5); }
+.brain-view .search { display: flex; align-items: center; gap: var(--sp-2); border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); padding: 0 var(--sp-2); }
+.brain-view .search:focus-within { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 2px; }
+.brain-view .search svg { width: 14px; height: 14px; color: var(--text-3); flex: none; }
+.brain-view .search input { flex: 1; min-width: 0; border: 0; background: none; padding: 6px 0; font-size: var(--fs-sm); outline: none; }
+.brain-view .search input::placeholder { color: var(--text-3); }
+.brain-view .search kbd { font: 500 var(--fs-xs) var(--font); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 5px; }
+.brain-view .results { margin-top: var(--sp-1); }
+.brain-view .results button, .brain-view .nbrs button { width: 100%; text-align: left; border: 0; background: none; border-radius: var(--r-sm); padding: 4px 6px; cursor: pointer; display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 0 8px; align-items: center; }
+.brain-view .results button:hover, .brain-view .nbrs button:hover { background: var(--raised); }
+.brain-view .results svg, .brain-view .nbrs svg { width: 14px; height: 14px; }
+.brain-view .results .nm, .brain-view .nbrs .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); }
+.brain-view .results .pj, .brain-view .nbrs .pj { grid-column: 2; color: var(--text-3); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .results .none { color: var(--text-3); font-size: var(--fs-xs); padding: 4px 6px; }
+.brain-view .checks li + li { margin-top: 2px; }
+.brain-view .checks label { display: grid; grid-template-columns: 16px 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 3px 4px; border-radius: var(--r-sm); cursor: pointer; font-size: var(--fs-sm); }
+.brain-view .checks label:hover { background: var(--raised); }
+.brain-view .checks input { margin: 0; accent-color: var(--accent-fill); }
+.brain-view .checks .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .checks .n { color: var(--text-3); font-size: var(--fs-xs); }
+.brain-view .checks svg { width: 16px; height: 16px; color: var(--text-2); }
+.brain-view .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: var(--fs-xs); color: var(--text-2); }
+.brain-view .legend li { display: flex; align-items: center; gap: 6px; }
+.brain-view .legend .dot { width: 8px; height: 8px; display: inline-block; }
+.brain-view .legend .dot.read { background: var(--read); } .brain-view .legend .dot.edit { background: var(--edit); }
+.brain-view .legend .dot.error { background: var(--error); } .brain-view .legend .dot.command { background: var(--command); }
+.brain-view .legend .dot.sel { background: var(--accent); }
+.brain-view .legend .dot.agent { background: radial-gradient(circle, #fff 0 32%, var(--text-2) 48%); }
+.brain-view .legend .wide { grid-column: 1 / -1; }
+.brain-view .legend.regions { grid-template-columns: 1fr; gap: 3px; }
+.brain-view .legend.regions small { color: var(--text-3); font-size: var(--fs-xs); margin-left: 2px; }
+.brain-view .legend.regions .dot { box-shadow: 0 0 0 1px var(--border-strong); } /* the palest ones (warm white, amber) still read on the light theme's rail */
+.brain-view .row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-2); }
+
+/* the well */
+.brain-view .well { position: relative; overflow: hidden; min-height: 0; color: var(--text);
+  background: radial-gradient(ellipse 70% 60% at 52% 46%, var(--night-center), var(--night) 70%); }
+#brain { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; transition: opacity 160ms var(--ease-out); }
+#brain.dragging { cursor: grabbing; }
+#brain.over { cursor: pointer; }
+#brain.fading { opacity: 0; }
+.brain-view .labels, .brain-view .chips { position: absolute; inset: 0; pointer-events: none; z-index: 1; } /* above the canvas, under the panels; tags after labels */
+.brain-view .leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.brain-view .leaders line { stroke: currentColor; stroke-opacity: 0.6; stroke-width: 1; }
+.brain-view .labels { transition: opacity var(--dur-2) var(--ease-out); }
+.brain-view .labels.away { opacity: 0; } /* while the user drags */
+.brain-view .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: var(--fs-xs); line-height: 1.2; color: var(--text-2); }
+/* On the brain, right on its region: plain text, no box; the lobe in its color, its role and folders dimmer. A soft
+   dark halo behind the letters only (stacked shadows of the night) keeps it readable over the light. */
+.brain-view .lbl.lobe { display: flex; flex-direction: column; align-items: center; gap: 2px; letter-spacing: 0.02em; opacity: 0.86;
+  text-shadow: 0 0 2px var(--night), 0 0 2px var(--night), 0 0 2px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 8px var(--night), 0 0 8px var(--night), 0 0 14px var(--night), 0 0 14px var(--night);
+  transition: opacity var(--dur-2) var(--ease-out); }
+.brain-view .lbl.lobe .row { display: inline-flex; align-items: baseline; gap: 5px; margin: 0; }
+.brain-view .lbl.lobe .dot { width: 6px; height: 6px; border-radius: 50%; align-self: center; flex: none; box-shadow: 0 0 5px 2px var(--night); }
+.brain-view .lbl.lobe b { font-size: var(--fs-xs); font-weight: 500; }
+.brain-view .lbl.lobe i { font-style: normal; color: var(--text-2); } /* dimmer than the name, still readable over the light */
+.brain-view .lbl.lobe .groups { display: flex; gap: 4px; align-items: baseline; }
+.brain-view .lbl.lobe.on { opacity: 1; } /* agents work here */
+.brain-view .lbl.lobe.on b { font-weight: 600; }
+.brain-view .lbl.lobe.dim .dot { opacity: 0.45; } /* agents work elsewhere: the text stays as it is, readable */
+/* Over a crowded patch of cells: a stronger halo behind the letters, still no box. */
+.brain-view .lbl.lobe.dense { opacity: 0.95;
+  text-shadow: 0 0 2px var(--night), 0 0 2px var(--night), 0 0 2px var(--night), 0 0 2px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 4px var(--night), 0 0 4px var(--night),
+    0 0 7px var(--night), 0 0 7px var(--night), 0 0 7px var(--night), 0 0 7px var(--night), 0 0 12px var(--night), 0 0 12px var(--night), 0 0 12px var(--night), 0 0 18px var(--night), 0 0 18px var(--night); }
+.brain-view .lbl.lobe.dense .dot { box-shadow: 0 0 6px 3px var(--night); }
+.brain-view .labels.tracking .lbl.lobe { will-change: transform; } /* the camera moves by itself: labels follow, each on its own layer */
+.brain-view .lbl.lobe.off { opacity: 0; } /* not shown: on the far side, or no room in its region */
+.brain-view .lbl.lobe.under { opacity: 0.1; transition: none; } /* an agent's tag over it wins; instant: a fade re-rasterizes the label each time a chip passes */
+.brain-view .chip { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--fs-xs); padding: 2px 8px 2px 6px; border-radius: var(--r-pill); background: var(--veil); border: 1px solid var(--border); color: var(--text); will-change: transform; transition: opacity var(--dur-2) var(--ease-out); }
+.brain-view .chip .who { font-weight: 600; }
+.brain-view .chip .dot { background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }
+.brain-view .chip .k.read { color: var(--read); } .brain-view .chip .k.edit { color: var(--edit); } .brain-view .chip .k.error { color: var(--error); } .brain-view .chip .k.command { color: var(--command); }
+.brain-view .chip .k.think { color: var(--text-2); }
+.brain-view .chip code { color: var(--text-2); font-size: var(--fs-xs); max-width: 240px; overflow: hidden; text-overflow: ellipsis; } /* 12 px floor: not 0.92em of 12 px; a long command is cut */
+.brain-view .chip.gone { opacity: 0; }
+.brain-view .chip .k:empty, .brain-view .chip code:empty { display: none; }
+
+.brain-view .overlay { position: absolute; z-index: 2; }
+.brain-view .overlay.tl { top: var(--sp-3); left: var(--sp-4); pointer-events: none; }
+.brain-view .titlerow { display: flex; align-items: baseline; gap: var(--sp-3); }
+.brain-view .title { margin: 0; font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.005em; }
+.brain-view .overlay.tr { top: var(--sp-3); right: var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); }
+.brain-view .overlay.br { right: var(--sp-4); bottom: var(--sp-4); }
+.brain-view .overlay.bl { left: var(--sp-4); bottom: var(--sp-4); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+.brain-view .hint { margin: 2px 0 0; font-size: var(--fs-xs); color: var(--text-3); pointer-events: none; }
+.brain-view .trace { width: 250px; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-2) var(--sp-3); --trace-line: var(--text-2); --trace-think: color-mix(in oklch, var(--text-3) 38%, transparent); }
+.brain-view .trace-top { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); }
+.brain-view .trace-top b { font-weight: 600; }
+.brain-view .trace-top small { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); }
+.brain-view .trace .dot { background: var(--text-3); }
+.brain-view .trace.working .dot { background: var(--working); } .brain-view .trace.working b { color: var(--working); }
+.brain-view .trace.thinking .dot { background: var(--text); }
+.brain-view .trace.idle b { color: var(--text-3); }
+#eeg { display: block; width: 100%; height: 40px; margin-top: 6px; }
+.brain-view .trace-legend { display: flex; gap: var(--sp-3); margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); }
+.brain-view .trace-legend span::before { content: ''; display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; background: var(--trace-line); }
+.brain-view .trace-legend .tk::before { height: 8px; background: var(--trace-think); }
+.brain-view .seg.camera, .brain-view .seg.looks { background: var(--veil); box-shadow: 0 0 0 1px var(--border); }
+
+.brain-view .now { width: 300px; max-width: calc(100% - 32px); background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
+.brain-view .now-top { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex-wrap: nowrap; }
+.brain-view .status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-xs); padding: 2px 10px 2px 8px; border-radius: var(--r-pill); background: var(--raised); color: var(--text-2); white-space: nowrap; }
+.brain-view .status.working { background: var(--working-soft); color: var(--working); }
+.brain-view .status.working .dot { background: var(--working); }
+.brain-view .nowproj { font-weight: 600; font-size: var(--fs-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .agents li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; font-size: var(--fs-xs); padding: 2px 0; }
+.brain-view .agents .sw { width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle, #fff 0 30%, var(--agent) 46%); }
+.brain-view .agents .lb { font-weight: 600; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .agents .st { color: var(--text-3); }
+.brain-view .agents .act { grid-column: 2 / 4; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .agents li.done .lb, .brain-view .agents li.done .act { color: var(--text-3); }
+
+.brain-view .card { position: absolute; z-index: 3; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); color: var(--text); }
+.brain-view .fcard { top: 56px; right: var(--sp-4); width: 300px; max-height: calc(100% - 56px - var(--now-h, 0px) - var(--sp-4) - var(--sp-3)); overflow-y: auto; scrollbar-width: thin; }
+.brain-view .fcard .x { float: right; }
+.brain-view .tip { position: absolute; z-index: 4; left: 0; top: 0; pointer-events: none; max-width: 320px; background: var(--veil); border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); }
+.brain-view .nname { font-family: var(--mono); font-weight: 350; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+.brain-view .nkind { color: var(--text-2); font-size: var(--fs-xs); margin-top: 2px; } /* inline, so the line wraps as text */
+.brain-view .nkind svg { width: 12px; height: 12px; vertical-align: -1px; margin-right: 6px; }
+.brain-view .npath { font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); color: var(--text-3); overflow-wrap: anywhere; margin-top: 2px; }
+.brain-view .nstats { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.brain-view .nstats b { color: var(--text); font-weight: 600; }
+.brain-view .nstats .ember.read { color: var(--read); } .brain-view .nstats .ember.edit { color: var(--edit); } .brain-view .nstats .ember.error { color: var(--error); }
+.brain-view .nbrs { margin-top: var(--sp-3); }
+.brain-view .nbrs h3 { margin: var(--sp-2) 0 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
+.brain-view .nogl { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: var(--sp-6); text-align: center; color: var(--text-2); }
+/* Before there is anything to draw: one calm line, in place of the view. */
+.brain-empty { flex: 1; display: grid; place-items: center; padding: var(--sp-6); color: var(--text-2); text-align: center; grid-column: 1 / -1; }
+.brain-empty p { max-width: 52ch; margin: 0; }
+
+/* narrower screens: the rail folds into a disclosure above the well; the page scrolls */
+@media (max-width: 900px) {
+  .brain-view { display: block; }
+  .brain-view > .rail { border-right: 0; border-bottom: 1px solid var(--border); padding: var(--sp-2) var(--sp-3); overflow: visible; }
+  .brain-view .filters > summary { display: list-item; cursor: pointer; font-size: var(--fs-sm); font-weight: 600; padding: 4px 0; }
+  .brain-view .filters[open] > summary { margin-bottom: var(--sp-2); }
+  .brain-view .well { height: 78vh; min-height: 480px; }
+  .brain-view .hint { display: none; }
+  .brain-view .fcard { top: auto; bottom: var(--sp-3); right: var(--sp-3); left: var(--sp-3); width: auto; max-height: 50%; }
+  .brain-view .now { width: auto; left: var(--sp-3); right: var(--sp-3); bottom: var(--sp-3); }
+  .brain-view .overlay.tl { flex-direction: column; gap: 0; }
+}
+@media (max-width: 640px) {
+  .brain-view .trace { width: 190px; padding: 4px var(--sp-2); }
+  .brain-view .trace .trace-top small, .brain-view .trace-legend { display: none; }
+  #eeg { height: 22px; margin-top: 2px; }
+  .brain-view .overlay.bl { bottom: auto; top: 64px; left: var(--sp-3); right: var(--sp-3); } /* bounded, so the camera buttons wrap inside */
+  .brain-view .seg.camera { flex-wrap: wrap; }
+}
+@media (max-width: 520px) {
+  .brain-view .overlay.tl { left: var(--sp-3); }
+  .brain-view .overlay.tr { right: var(--sp-3); gap: var(--sp-2); flex-direction: column; align-items: flex-end; }
+  .brain-view .titlerow { flex-direction: column; gap: 0; } /* the counts under the title, clear of the switch */
+  .brain-view .overlay.bl { top: 76px; }
+  .brain-view .seg.camera { gap: 0; } .brain-view .seg.camera button { padding: 6px 6px; font-size: var(--fs-xs); } /* one row: the brain stays clear */
+  .brain-view .agents .act { display: none; }
+}

@@ -13,6 +13,7 @@ import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from
 import { writeConfig, experienceTools, pluginOption } from './config.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 import { makeShare } from './share.js';
+import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -23,6 +24,7 @@ export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read b
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
+const BRAIN_CACHE_MS = 20_000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
@@ -88,6 +90,20 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   const tailTimer = setInterval(tailTranscripts, 1000);
   const memory = memoryApi(state);
   const experience = experienceKeeper();
+  // The Brain view's graph: built from the memory reports, the experience aggregate and the tool counts, at most
+  // every 20 s (the view asks again when Claude touches a file it doesn't know yet). Read-only, like the Memory tab.
+  let brainHit = null;
+  const brain = () => {
+    if (brainHit && Date.now() - brainHit.at < BRAIN_CACHE_MS) return brainHit.promise;
+    const promise = (async () => {
+      const projects = memory.projects().filter((p) => p.source === 'session').slice(0, BRAIN_LIMITS.projects);
+      const reports = await Promise.all(projects.map((p) => memory.report(p.key).catch(() => null)));
+      return buildBrain({ projects: projects.map((p, i) => ({ ...p, report: reports[i] })), agg: await experience.aggregate(), tools: memory.tools() });
+    })();
+    brainHit = { at: Date.now(), promise };
+    promise.catch(() => { brainHit = null; });
+    return promise;
+  };
 
   // "View on phone": a second, read-only listener on the home network while it is on (src/share.js).
   const share = makeShare({ port, handle, onChange: () => broadcastLocal({ type: 'share', share: share.status() }) });
@@ -186,6 +202,11 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       return;
     }
 
+    if (url.pathname === '/api/brain') {
+      brain().then((g) => json(res, g), (err) => json(res, { error: String(err?.message || err) }, 500));
+      return;
+    }
+
     if (url.pathname === '/api/sessions') return json(res, state.list());
 
     if (url.pathname.startsWith('/api/sessions/')) {
@@ -208,14 +229,14 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
 
   // Dev only: reload the open page when a dashboard file changes (debounced, editors fire several events per save).
   let reloadTimer;
-  const watcher = dev ? fs.watch(PUBLIC_DIR, () => {
+  const watchers = dev ? [PUBLIC_DIR, path.join(PUBLIC_DIR, 'brain')].map((dir) => fs.watch(dir, () => {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => broadcast({ type: 'reload' }), 100);
-  }) : null;
+  })) : [];
 
   function shutdown() {
     share.stop();
-    watcher?.close();
+    for (const w of watchers) w.close();
     clearInterval(tailTimer);
     experience.stop();
     for (const res of clients) res.end();
@@ -257,14 +278,14 @@ export const isDemoEvent = (e) => String(e?.session_id || '').startsWith('demo-'
 // Memory tab data. The project list and "last read" come from all the logs (not only the 24 h in memory),
 // read incrementally; what loaded comes from the InstructionsLoaded events of the project's latest session.
 function memoryApi(state) {
-  const usage = { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [] };
+  const usage = { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [], tools: new Map() };
   const refresh = () => {
     for (const name of logFiles(DATA_DIR)) {
       const file = path.join(DATA_DIR, name);
       let size;
       try { size = fs.statSync(file).size; } catch { continue; }
       const from = usage.offsets[name] || 0;
-      if (size < from) { Object.assign(usage, { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [] }); return refresh(); }
+      if (size < from) { Object.assign(usage, { offsets: {}, rest: {}, since: null, cwds: new Map(), reads: [], tools: new Map() }); return refresh(); }
       if (size === from) continue;
       const fd = fs.openSync(file, 'r');
       const buf = Buffer.alloc(size - from);
@@ -279,6 +300,11 @@ function memoryApi(state) {
         const e = o.e || {};
         usage.since = Math.min(usage.since ?? o.ts, o.ts);
         if (e.cwd) usage.cwds.set(e.cwd, Math.max(usage.cwds.get(e.cwd) || 0, o.ts));
+        // How often each tool was used and failed, for the Brain view's tool nodes.
+        if (e.tool_name && (e.hook_event_name === 'PreToolUse' || e.hook_event_name === 'PostToolUseFailure')) {
+          const t = usage.tools.get(e.tool_name) || usage.tools.set(e.tool_name, { uses: 0, errors: 0, lastAt: 0 }).get(e.tool_name);
+          if (e.hook_event_name === 'PreToolUse') { t.uses++; t.lastAt = Math.max(t.lastAt, o.ts); } else t.errors++;
+        }
         if (e.hook_event_name === 'PreToolUse' && e.tool_name === 'Read' && e.cwd && e.tool_input?.file_path) {
           usage.reads.push({ ts: o.ts, root: projectRoot(e.cwd), path: e.tool_input.file_path });
         }
@@ -306,7 +332,7 @@ function memoryApi(state) {
     promise.catch(() => cache.delete(key));
     return promise;
   };
-  return { projects, report };
+  return { projects, report, tools: () => { refresh(); return usage.tools; } };
 }
 
 // Keeps ~/.kevmind/experience.json current for the MCP server: new log lines every 15 s, each project's git
@@ -341,7 +367,7 @@ function experienceKeeper() {
     const now = Date.now();
     return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
   };
-  return { panel, stop: () => clearInterval(timer) };
+  return { panel, aggregate: async () => { await tick(); return agg; }, stop: () => clearInterval(timer) };
 }
 
 // Events of a project, for `kevmind clear --project`: matched by project folder name or path.

@@ -1,11 +1,11 @@
-// Brain prototype (Phase 4): the synthetic graph is deterministic and OdonMind-sized, paths land in the right lobe,
+// Brain view (Phase 4): the synthetic graph of the benchmark is deterministic and OdonMind-sized, paths land in the right lobe,
 // and the layout keeps every node inside its lobe.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeGraph, makeReplay, lobeOfPath, regionOfPath } from '../prototype/brain/data.js';
-import { layout, lobeAt, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../prototype/brain/layout.js';
-import { FIL_FLOATS as GL_FIL_FLOATS } from '../prototype/brain/gl.js';
+import { layout, lobeAt, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../public/brain/layout.js';
+import { FIL_FLOATS as GL_FIL_FLOATS } from '../public/brain/gl.js';
 
 test('paths map to lobes and regions', () => {
   assert.equal(lobeOfPath('frontend/src/features/appointments/AppointmentsPage.tsx'), 'occipital');
@@ -137,7 +137,7 @@ test('the fixed structures sit where they belong', () => {
 // The region colors are told apart at a glance, also with the common color vision deficiencies, never take Claude's
 // coral, and read as label text on the night. The palette is lifted from the page's source (it needs a DOM to load).
 test('region colors: apart for every kind of color vision, in gamut, readable as labels, coral kept for Claude', () => {
-  const src = fs.readFileSync(new URL('../prototype/brain/app.js', import.meta.url), 'utf8');
+  const src = fs.readFileSync(new URL('../public/brain/view.js', import.meta.url), 'utf8');
   const lift = (name) => new Function(`return ${src.match(new RegExp(`const ${name} = ([\\s\\S]*?);\\n`))[1]}`)();
   const LOBE_COLOR = lift('LOBE_COLOR'), coral = JSON.parse(src.match(/const AGENT_MAIN = (\[[^\]]*\])/)[1]);
   assert.deepEqual(Object.keys(LOBE_COLOR), ['prefrontal', 'frontal', 'parietal', 'occipital', 'temporal', 'cerebellum', 'stem']);

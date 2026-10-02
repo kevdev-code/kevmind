@@ -15,8 +15,9 @@ let memTimer = null;
 const memOpen = new Set(); // rows whose details are expanded
 const memPathsOpen = new Set(); // problem rows whose list of paths is expanded, kept across refreshes
 
-try { if (localStorage.getItem(VIEW_KEY) === 'memory' && !focus) view = 'memory'; } catch { /* storage unavailable */ }
-if (params.get('view') === 'memory' && !focus) view = 'memory';
+const VIEWS = ['live', 'memory', 'brain'];
+try { const v = localStorage.getItem(VIEW_KEY); if (VIEWS.includes(v) && !focus) view = v; } catch { /* storage unavailable */ }
+if (VIEWS.includes(params.get('view')) && !focus) view = params.get('view');
 
 document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
@@ -24,10 +25,13 @@ function setView(next) {
   view = next;
   try { localStorage.setItem(VIEW_KEY, view); } catch { /* ignore */ }
   document.body.classList.toggle('view-memory', view === 'memory');
+  document.body.classList.toggle('view-brain', view === 'brain');
   $('memoryView').hidden = view !== 'memory';
+  $('brainView').hidden = view !== 'brain';
   document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   pollMemory();
   if (view === 'live') wakeLive();
+  window.brainShow?.(view === 'brain'); // brain.js: built when first shown, drawn only while shown
 }
 
 // Poll only while the Memory view is shown and the tab is visible.

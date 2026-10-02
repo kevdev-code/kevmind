@@ -18,6 +18,7 @@
       <div class="seg" role="group" id="viewGroup">
         <button type="button" data-view="live" data-i18n="viewLive"></button>
         <button type="button" data-view="memory" data-i18n="viewMemory"></button>
+        <button type="button" data-view="brain" data-i18n="viewBrain"></button>
       </div>
     </div>
     <div class="top-right">
@@ -149,6 +150,9 @@
     </section>
   </main>
 
+  <!-- Brain tab: what KevMind knows about your projects, as a brain. Built by public/brain/view.js when first opened -->
+  <main class="brain-view" id="brainView" hidden></main>
+
   <dialog class="share-panel" id="sharePanel" aria-labelledby="shareTitle">
     <div class="share-head">
       <h2 id="shareTitle" data-i18n="shareTitle"></h2>
@@ -160,6 +164,7 @@
   <script src="i18n.js"></script>
   <script src="app.js"></script>
   <script src="memory.js"></script>
+  <script src="brain.js"></script>
   <script type="module" src="share.js"></script>
 </body>
 </html>

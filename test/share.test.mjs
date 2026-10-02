@@ -93,6 +93,13 @@ test('sharing: off by default, a token to get in, a new link revokes the old, re
     assert.equal(health.shared, true);
     assert.equal(health.share, undefined, 'a shared device never sees the link');
 
+    // The Brain tab works from a shared device too: its data and its code, with the token only.
+    assert.equal((await req(`${shared}/api/brain`)).status, 401);
+    const brain = await req(`${shared}/api/brain`, { headers: { cookie } });
+    assert.equal(brain.status, 200);
+    assert.ok(Array.isArray(JSON.parse(brain.body).nodes));
+    for (const f of ['/brain.js', '/brain/view.js', '/brain/gl.js', '/brain/layout.js', '/brain/graph.js', '/brain/brain.css']) assert.equal((await req(`${shared}${f}`, { headers: { cookie } })).status, 200, f);
+
     // Read-only: nothing that changes anything.
     for (const [method, p] of [['POST', '/api/tools'], ['POST', '/api/share'], ['POST', '/api/share/regenerate'], ['POST', '/events'], ['POST', '/shutdown'], ['GET', '/api/share']]) {
       const r = await req(`${shared}${p}`, { method, headers: { cookie, 'content-type': 'application/json' }, body: '{"on":true}' });

@@ -93,10 +93,10 @@ for (const [gpu, nodes] of [['hw', 0], ['hw', 3000], ['swiftshader', 0], ['swift
   await p.send('Page.bringToFront');
   await p.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await sleep(600);
-  await p.eval("document.querySelector('[data-view=live]').click()");
+  await p.eval('__brain.hide()'); // as when another view of the dashboard is shown
   run.otherView = await sample(e, p, 5);
   log('other view', JSON.stringify(run.otherView));
-  await p.eval("document.querySelector('[data-view=brain]').click()");
+  await p.eval('__brain.show()');
   await sleep(400);
   await p.eval("document.getElementById('animSwitch').click()");
   run.animationsOff = await sample(e, p, 8);
