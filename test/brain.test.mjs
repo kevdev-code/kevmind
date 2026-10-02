@@ -194,3 +194,36 @@ test('an agent\'s way between two cells: real links only, fewest hops, then the 
   assert.equal(pathFinder(9, chain(9))(0, 8), null);
   assert.equal(pathFinder(9, chain(9), 8)(0, 8).length, 8);
 });
+
+// A function of the view, lifted from its source with the words it uses (the view itself needs a browser).
+function liftView(name, scope) {
+  const src = fs.readFileSync(new URL('../public/brain/view.js', import.meta.url), 'utf8'), start = src.indexOf(`function ${name}(`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return new Function(...Object.keys(scope), `${src.slice(start, i + 1)}; return ${name};`)(...Object.values(scope));
+  }
+  throw new Error(`${name} not found`);
+}
+
+test('an agent\'s tag says one verb and the file or command, in both languages', () => {
+  const w = {};
+  new Function('window', fs.readFileSync(new URL('../public/i18n.js', import.meta.url), 'utf8'))(w);
+  const say = (lang, kind, text) => { const { verb, text: t } = liftView('saying', { T: w.I18N[lang].brain })({ kind, text }); return `${verb} ${t}`.trim(); };
+  assert.equal(say('en', 'read', 'view.js'), 'reads view.js');
+  assert.equal(say('es', 'edit', 'view.js'), 'edita view.js');
+  assert.equal(say('en', 'read', 'README.md'), 'reads README.md', 'a name that only starts like the verb keeps it');
+  assert.equal(say('en', 'command', 'npm test'), 'runs npm test');
+  // A command described with its own verb is not given a second one (the screenshots said "edits edits a file").
+  assert.equal(say('en', 'command', 'Run the tests'), 'Run the tests');
+  assert.equal(say('en', 'edit', 'edits a file'), 'edits a file');
+  assert.equal(say('es', 'command', 'Ejecutar las pruebas'), 'Ejecutar las pruebas');
+  assert.equal(say('es', 'read', 'lee un archivo'), 'lee un archivo');
+  assert.equal(say('en', 'think', 'anything'), 'thinking', 'only actions on a file or a tool carry a text');
+});
+
+test('the benchmark\'s replay names files and tools only: no verbs, no notes', async () => {
+  const { makeGraph, makeReplay } = await import('../prototype/brain/data.js');
+  const graph = makeGraph({}), names = new Set(graph.nodes.map((n) => n.name));
+  for (const e of makeReplay(graph).events) assert.ok(!e.text || names.has(e.text), `"${e.text}" is a node's name`);
+});

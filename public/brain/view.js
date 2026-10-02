@@ -30,7 +30,7 @@ const TEMPLATE = `
   <div class="labels" id="labels" aria-hidden="true"></div>
   <div class="chips" id="chips" aria-hidden="true"></div>
   <div class="overlay tl">
-    <div class="titlerow"><h2 class="title" id="wellTitle" data-bi18n="viewBrain"></h2><span class="muted" id="counts"></span></div>
+    <div class="titlerow"><h2 class="title" id="wellTitle" data-bi18n="viewBrain"></h2><span class="muted" id="counts"></span><span class="filtered" id="filtered" hidden><span data-bi18n="filtersOn"></span> · <button type="button" id="filtersReset" data-bi18n="filtersReset"></button></span></div>
     <p class="hint" id="hint" data-bi18n="hint"></p>
   </div>
   <div class="overlay tr">
@@ -391,9 +391,14 @@ export function mountBrain(host, env) {
       lanes.set(key, (lanes.get(key) || 0) + 1);
     }
     const top = [...lanes].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).filter(([, c], k) => k < 10 && c >= Math.max(3, total * 0.03));
-    return { top, crossShare: cross / Math.max(1, total) };
+    let shown = 0;
+    for (const e of edges) if (edgeShown(e)) shown++;
+    // The corpus callosum and the brainstem's bundle are scenery, but they look like bundles of links: with few links
+    // shown they dim (down to 30%), so they are not read as links that are not there.
+    const share = shown / Math.max(1, edges.length), w = clamp((share - 0.02) / 0.48, 0, 1);
+    return { top, crossShare: cross / Math.max(1, total), fixed: 0.3 + 0.7 * w * w * (3 - 2 * w) };
   }
-  function tractData({ top, crossShare }) {
+  function tractData({ top, crossShare, fixed }) {
     const out = [], hl = [], strands = [], r = rng(23);
     // A strand: segments along the points, fading in and out at its ends (taper) so bundles dissolve into the lobes.
     const strand = (pts, rgb, type, width, core, k, part, lobes, taper = 0.18) => {
@@ -431,7 +436,7 @@ export function mountBrain(host, env) {
       }
     }
     // 2. The corpus callosum: strands along its arch, side by side across the midline, brighter the more links cross.
-    const cc = C(88, 0.04, 250), kc = 0.45 + 0.55 * Math.min(1, crossShare * 3);
+    const cc = C(88, 0.04, 250), kc = (0.45 + 0.55 * Math.min(1, crossShare * 3)) * fixed;
     for (let j = 0; j < 8; j++) {
       const z = (j - 3.5) * 0.03, dy = (r() - 0.5) * 0.035, pts = [];
       for (let q = 0; q <= 32; q++) { const x = CALLOSUM.x0 + ((CALLOSUM.x1 - CALLOSUM.x0) * q) / 32; pts.push([x, callosumY(x) + dy - Math.abs(z) * 0.4, z]); }
@@ -447,7 +452,7 @@ export function mountBrain(host, env) {
       const to = [-0.22 + r() * 0.45, 0.02 + r() * 0.12, side * (0.12 + r() * 0.14)];
       const path = bspline([at0, v3.add(at0, A.dir, 0.15), at1, core, to]), pts = [];
       for (let q = 0; q <= 28; q++) pts.push(path(q / 28));
-      strand(pts, sb, EDGE.structure, j < 4 ? 2.2 : 1.6, j < 4 ? 1 : 0, 0.9, 2, new Set(['stem']), 0.06);
+      strand(pts, sb, EDGE.structure, j < 4 ? 2.2 : 1.6, j < 4 ? 1 : 0, 0.9 * fixed, 2, new Set(['stem']), 0.06);
     }
     // 4. Purkinje cells: flat, branching trees in the cerebellum (their somas are sprites).
     purkinje = purkinjeTrees(LIGHT ? 4 : 7);
@@ -524,7 +529,7 @@ export function mountBrain(host, env) {
   let tractHl = new Float32Array(0), tractShown = new Float32Array(0);
   let tractSig = null;
   function syncTracts(force) {
-    const lanes = lanesOf(), sig = `${lanes.top.map(([k, c]) => `${k}:${c}`).join(',')}|${Math.round(lanes.crossShare * 50)}`;
+    const lanes = lanesOf(), sig = `${lanes.top.map(([k, c]) => `${k}:${c}`).join(',')}|${Math.round(lanes.crossShare * 50)}|${Math.round(lanes.fixed * 20)}`;
     if (sig === tractSig && !force) return;
     tractSig = sig;
     const td = tractData(lanes);
@@ -634,6 +639,8 @@ export function mountBrain(host, env) {
     let n = 0;
     for (let i = 0; i < N; i++) n += visible[i];
     setText($('counts'), T.counts(filter.projects.size, n, shown));
+    // Something is hidden by a filter: say so next to the counts, with the way back, so it is not read as missing data.
+    $('filtered').hidden = filter.projects.size === graph.projects.length && filter.types.size === NODE_TYPES.length && filter.edges.size === EDGE_TYPES.length;
     canvas.setAttribute('aria-label', T.canvas(filter.projects.size, n, shown));
     labelsDirty = true;
     request();
@@ -764,6 +771,14 @@ export function mountBrain(host, env) {
       agents.set(id, a);
     }
     return a;
+  }
+  // What an agent is doing, in words: a verb and what it acts on (a file's name, a command). The verb is said once: a
+  // text that already starts with it (a command described as "Run the tests", "Ejecutar pruebas") stands alone.
+  function saying(a) {
+    const verb = { read: T.v_read, edit: T.v_edit, command: T.v_command, error: T.v_error, think: T.thinking, done: T.done, start: T.started }[a.kind] || '';
+    const text = ['read', 'edit', 'command', 'error'].includes(a.kind) ? String(a.text || '').trim() : '';
+    const first = (text.match(/^\p{L}+/u) || [''])[0].toLowerCase(), v = verb.toLowerCase();
+    return { verb: first && (first === v || first + 's' === v || first === v + 'r') ? '' : verb, text };
   }
   const DONE_MS = 15_000;
   const dismiss = (a) => { a.chip?.remove(); a.li?.remove(); agents.delete(a.id); };
@@ -1408,15 +1423,15 @@ export function mountBrain(host, env) {
       a.chip.classList.toggle('gone', !!(a.hideAt && now > a.hideAt));
       const p = project(a.comet && a.comet.route ? cometHead(a.comet, now) : a.pos);
       const [, who, k, code] = a.chip.children;
-      const verb = { read: T.v_read, edit: T.v_edit, command: T.v_command, error: T.v_error, think: T.thinking, done: T.done, start: T.started }[a.kind] || '';
+      const { verb, text } = saying(a);
       const label = a.id === 'main' ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
-      const key = `${label}|${verb}|${a.kind}|${a.text}|${compact}|${a.def.type}`;
+      const key = `${label}|${verb}|${a.kind}|${text}|${compact}|${a.def.type}`;
       if (a.chipKey !== key) {
         a.chipKey = key;
         setText(who, compact || a.id === 'main' ? label : `${label} ${a.def.type}`);
         setText(k, compact ? '' : verb);
         k.className = `k ${a.kind}`;
-        setText(code, !compact && ['read', 'edit', 'command', 'error'].includes(a.kind) ? a.text : '');
+        setText(code, compact ? '' : text);
         a.chipW = 0;
       }
       placed.push([a, p[0], p[1]]);
@@ -1490,8 +1505,8 @@ export function mountBrain(host, env) {
       setText(lb, a.def.label);
       const main = a.id === 'main'; // Claude between prompts is idle, not "done"
       setText(stt, a.status === 'done' ? (main ? T.idle : T.done) : a.status === 'idle' ? T.idle : main ? T.working : T.running);
-      const verb = { read: T.v_read, edit: T.v_edit, command: T.v_command, error: T.v_error, think: T.thinking, start: T.started }[a.kind] || '';
-      setText(act, ['read', 'edit', 'command', 'error'].includes(a.kind) ? `${verb} ${a.text}` : a.kind === 'done' ? (main ? '' : a.def.task || T.done) : verb || a.def.task || '');
+      const { verb, text } = saying(a);
+      setText(act, text ? `${verb} ${text}`.trim() : a.kind === 'done' ? (main ? '' : a.def.task || T.done) : verb || a.def.task || '');
       a.li.className = a.status === 'done' ? 'done' : '';
     }
   }
@@ -1579,6 +1594,14 @@ export function mountBrain(host, env) {
     else if (t.dataset.project) t.checked ? filter.projects.add(t.dataset.project) : filter.projects.delete(t.dataset.project);
     else return;
     if (focus != null && !visible[focus]) setFocus(null);
+    refresh();
+  });
+
+  $('filtersReset').addEventListener('click', () => {
+    for (const p of graph.projects) filter.projects.add(p.id);
+    for (const t of NODE_TYPES) filter.types.add(t);
+    for (const t of EDGE_TYPES) filter.edges.add(t);
+    for (const box of $('rail').querySelectorAll('.checks input[type=checkbox]')) box.checked = true;
     refresh();
   });
 

@@ -212,7 +212,7 @@ window.I18N = {
     shareReadonlyTitle: 'Viewing from another device: you can watch, not change settings',
     // The Brain view (public/brain/view.js reads this block).
     brain: {
-      viewBrain: 'Brain', filters: 'Filters', loading: 'Reading what KevMind knows…',
+      viewBrain: 'Brain', filters: 'Filters', filtersOn: 'Filters active', filtersReset: 'Reset', loading: 'Reading what KevMind knows…',
       empty: 'Nothing to show yet. The brain fills in as Claude Code works here: instruction files, memory notes and the files it reads and edits.',
       loadError: (e) => `Could not build the brain: ${e}`,
       search: 'Search notes and files', noResults: 'No matches', projects: 'Projects', nodeTypes: 'Node types', edgeTypes: 'Links',
@@ -451,7 +451,7 @@ window.I18N = {
     shareReadonlyTitle: 'Viendo desde otro dispositivo: puedes mirar, no cambiar ajustes',
     // La vista Cerebro (la lee public/brain/view.js).
     brain: {
-      viewBrain: 'Cerebro', filters: 'Filtros', loading: 'Leyendo lo que KevMind sabe…',
+      viewBrain: 'Cerebro', filters: 'Filtros', filtersOn: 'Filtros activos', filtersReset: 'Restablecer', loading: 'Leyendo lo que KevMind sabe…',
       empty: 'Aún no hay nada que mostrar. El cerebro se llena conforme Claude Code trabaja aquí: instrucciones, notas de memoria y los archivos que lee y edita.',
       loadError: (e) => `No se pudo armar el cerebro: ${e}`,
       search: 'Buscar notas y archivos', noResults: 'Sin resultados', projects: 'Proyectos', nodeTypes: 'Tipos de nodo', edgeTypes: 'Conexiones',

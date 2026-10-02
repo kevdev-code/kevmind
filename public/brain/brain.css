@@ -109,6 +109,9 @@ body.view-brain .memory-view { display: none; }
 .brain-view .overlay { position: absolute; z-index: 2; }
 .brain-view .overlay.tl { top: var(--sp-3); left: var(--sp-4); pointer-events: none; }
 .brain-view .titlerow { display: flex; align-items: baseline; gap: var(--sp-3); }
+.brain-view .filtered { font-size: var(--fs-xs); color: var(--waiting); white-space: nowrap; }
+.brain-view .filtered button { pointer-events: auto; font: inherit; color: var(--text); background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: var(--r-sm); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.brain-view .filtered button:hover { background: var(--raised); }
 .brain-view .title { margin: 0; font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.005em; }
 .brain-view .overlay.tr { top: var(--sp-3); right: var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); }
 .brain-view .overlay.br { right: var(--sp-4); bottom: var(--sp-4); }
