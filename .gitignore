@@ -5,3 +5,4 @@ node_modules/
 docs/inspiration/
 # Impeccable design-tool state (critique snapshots, live mode, design.json sidecar)
 .impeccable/
+.claude/
