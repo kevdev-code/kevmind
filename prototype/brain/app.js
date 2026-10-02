@@ -1333,7 +1333,7 @@ setView('brain');
 if (!params.has('noreplay')) nextEvent();
 // For the benchmark harness: counters only, read over CDP.
 let frames = 0, firstFrame = 0;
-window.__brain = { nodes: N, edges: edges.length, frames: () => frames, staticDraws: () => (R ? R.staticDraws || 0 : 0), firstFrameMs: () => firstFrame,
+window.__brain = { light: LIGHT, nodes: N, edges: edges.length, frames: () => frames, staticDraws: () => (R ? R.staticDraws || 0 : 0), firstFrameMs: () => firstFrame,
   get busy() { return busyUntil > performance.now(); }, setAutoRotate(on) { if (on !== autoRotate) $('rotateBtn').click(); }, setFollow(on) { if (on !== follow) $('followBtn').click(); },
   get cam() { return JSON.parse(JSON.stringify({ cam, goal, vel, follow, autoRotate })); }, pos: (i) => at(i),
   look(yaw, pitch, zoom = 1) { Object.assign(cam, { yaw, pitch, zoom }); Object.assign(goal, { yaw, pitch, zoom }); camDirty = true; request(); },
