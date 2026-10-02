@@ -185,6 +185,34 @@ function classify(p) {
   return z > 0.01 && inCerebellum(p, 0.03) ? ['cerebellum', side] : null;
 }
 export const lobeAt = classify;
+// The brain's volume, where a trail may run: inside one of its three parts (cerebrum, cerebellum or brainstem), at
+// least m from the surface.
+export const insideBrain = (p, m = 0) => inCerebrum(p, m) || inCerebellum(p, m)
+  || (sample(sdStem, p[0], p[1], -1) > m && Math.abs(p[2]) < zStem(p[0], p[1]) - m);
+// The spaces between the parts (the slit where two of them meet, the pocket where the brainstem enters between the
+// temporal lobes) are enclosed by the brain: from no side does a point there show outside the brain's outline. That
+// is the test: every line through the point, in 13 directions, meets a part. Beside the brain or under it some line
+// misses, and so does one through the corner between the cerebellum and the brainstem.
+const LINES = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, -1, 0], [0, 1, 1], [0, 1, -1], [1, 0, 1], [1, 0, -1], [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1]]
+  .map((d) => { const l = Math.hypot(...d); return d.map((v) => v / l); });
+export const enclosed = (p) => insideBrain(p) || LINES.every((d) => {
+  for (let t = 0.03; t < 1.6; t += 0.03) if (insideBrain([p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t]) || insideBrain([p[0] - d[0] * t, p[1] - d[1] * t, p[2] - d[2] * t])) return true;
+  return false;
+});
+// A point of a path, kept inside the brain (m under its surface): one that falls outside is pulled toward the nearest
+// of its anchors until it is in. The ends (the two cells the path runs between) are inside by layout, so the worst
+// case is an end itself; the other anchors only help when the way to them gets inside.
+export function keepInside(p, ends, more = [], m = 0.02) {
+  if (insideBrain(p, m)) return p;
+  let best = null, bd = Infinity;
+  [...ends, ...more].forEach((q, n) => {
+    for (let st = 1; st <= 12; st++) {
+      const c = [0, 1, 2].map((i) => p[i] + (q[i] - p[i]) * (st / 12));
+      if (insideBrain(c, m) || (st === 12 && n < ends.length)) { const d = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]); if (d < bd) { bd = d; best = c; } break; }
+    }
+  });
+  return best;
+}
 
 // A fixed pool of points spread through each lobe's volume: shares out the volume among regions and gives each lobe
 // its center, extent and volume.
@@ -231,6 +259,55 @@ export const lobeShape = (lobe, side) => {
   }
   return shapes.get(key);
 };
+// A whole path kept inside the brain. Its points first (the first and last are cells, inside by layout). Then every
+// stretch between two points: one that cuts through the air (across a fold, under a lobe) is split at a point pulled
+// back in, toward the nearest lobe's center, until none does or what is left is a straight
+// crossing no longer than CROSS (two parts meet there with a slit between them, so no point of it is more than half
+// of that from a part). Where two parts are farther apart than that along the way (the pocket above the brainstem),
+// the stretch crosses from one to the other, between them. The result is checked (leavesBrain); a path that still
+// shows outside somewhere is fitted again deeper under the surface.
+const CROSS = 0.04;
+let HUBS = null;
+// Does any point of a path (each stretch's ends and three points between) show outside the brain from some side?
+export function leavesBrain(pts) {
+  for (let j = 0; j + 1 < pts.length; j++) for (let q = j ? 1 : 0; q <= 4; q++) {
+    if (!enclosed([0, 1, 2].map((i) => pts[j][i] + (pts[j + 1][i] - pts[j][i]) * (q / 4)))) return true;
+  }
+  return false;
+}
+export function pathInside(pts) {
+  let path = fit(pts, 0.02);
+  for (const m of [0.04, 0.06]) if (leavesBrain(path)) path = fit(pts, m);
+  return path;
+}
+function fit(pts, m) {
+  HUBS ||= LOBE_NAMES.flatMap((l) => sidesOf(l).map((sd) => lobeShape(l, sd).c));
+  const ends = [pts[0], pts[pts.length - 1]], mix = (p, q, w) => [0, 1, 2].map((i) => p[i] + (q[i] - p[i]) * w);
+  const far = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+  // A cell right under the surface is left and reached from within: its first step goes to the nearest point that is
+  // m deep (looked for around it, a little farther each time), or toward the center of the lobe it is in (the nearest),
+  // which from the tip of the brainstem is the way down its own axis.
+  const inward = (p) => {
+    if (insideBrain(p, m)) return [];
+    for (let rad = 0.01; rad < 0.09; rad += 0.01) for (const d of LINES) for (const sg of [1, -1]) {
+      const c = [p[0] + d[0] * rad * sg, p[1] + d[1] * rad * sg, p[2] + d[2] * rad * sg];
+      if (insideBrain(c, m)) return [c];
+    }
+    const own = HUBS.reduce((best, h) => (far(p, h) < far(p, best) ? h : best));
+    return [keepInside(p, [], [own], m)];
+  };
+  const a = inward(ends[0]), b = inward(ends[1]), deep = [a[0] || ends[0], b[0] || ends[1]]; // what the points between are pulled toward
+  const kept = [ends[0], ...a, ...pts.slice(1, -1).map((p) => keepInside(p, deep, HUBS, m)), ...b, ends[1]], out = [kept[0]];
+  const stretch = (p, q, depth) => {
+    if (depth < 10 && far(p, q) > CROSS && [0.25, 0.5, 0.75].some((w) => !insideBrain(mix(p, q, w)))) {
+      const mid = keepInside(mix(p, q, 0.5), [], HUBS, m) || p; // inward, toward a lobe's center: around the air, not along the cut
+      if (far(p, mid) > 1e-4 && far(mid, q) > 1e-4) { stretch(p, mid, depth + 1); stretch(mid, q, depth + 1); return; }
+    }
+    out.push(q);
+  };
+  for (let j = 1; j < kept.length; j++) stretch(kept[j - 1], kept[j], 0);
+  return out;
+}
 const STEM_BOTTOM = (() => { let b = 0; for (let i = 0; i < G * G; i++) if (cls[i] === S_) b = Math.max(b, (i / G) | 0); return cellY(b); })();
 export const BRAIN_CENTER = [0, (TOP_Y + STEM_BOTTOM) / 2, 0];
 export const BRAIN_RADIUS = Math.hypot(1.05, (TOP_Y - STEM_BOTTOM) / 2); // bounding sphere, for framing and depth fog

@@ -24,7 +24,8 @@ const brain = mountBrain(document.getElementById('brainView'), {
   options: { skip: (params.get('skip') || '').split(',').filter(Boolean), shell: params.get('shell'), light: params.has('light'), bloom: params.get('bloom'), intro: params.has('nointro') ? false : undefined },
   onReady: () => setTimeout(startReplay, 0), // once the intro is over (or skipped)
 });
-window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show });
+window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show, event: brain.onEvent });
+window.__graph = graph; // for scripted moves in screenshots
 
 // The harness's own controls, at the end of the rail.
 document.getElementById('filters').insertAdjacentHTML('beforeend', `<section>

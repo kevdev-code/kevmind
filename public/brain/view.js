@@ -5,8 +5,8 @@
 // it synthetic ones. Rendering rules: nothing renders while the tab is hidden or another view is shown; frames are
 // capped at 30 fps and the loop stops as soon as nothing moves (camera, beams, flashes, Follow, Auto-rotate);
 // "Animations off" (or reduced motion) draws single static frames.
-import { NODE_TYPES, EDGE_TYPES, rng } from './graph.js';
-import { layout, lobeAt, shellPoints, shellFilaments, purkinjeTrees, lobeShape, LOBES, BRAIN_CENTER, BRAIN_RADIUS, STEM_AXIS, CALLOSUM, callosumY } from './layout.js';
+import { NODE_TYPES, EDGE_TYPES, rng, pathFinder } from './graph.js';
+import { layout, lobeAt, insideBrain, enclosed, pathInside, shellPoints, shellFilaments, purkinjeTrees, lobeShape, LOBES, BRAIN_CENTER, BRAIN_RADIUS, STEM_AXIS, CALLOSUM, callosumY } from './layout.js';
 import { Renderer, oklch, KIND, SHAPE, EDGE, SPRITE, NODE_FLOATS, FIBER_FLOATS, SPRITE_FLOATS, INTRO, perspective, multiply, orbitView } from './gl.js';
 
 // The view's own markup: the rail (search, filters, legends) and the well (canvas, labels, tags, panels). Words come
@@ -493,6 +493,7 @@ export function mountBrain(host, env) {
   const rings = [];
   const flashes = []; // a region glowing where an agent just landed
   const heats = [], HEAT_R = 0.2; // [{ i, t0 }]: cells an agent just left, cooling; within HEAT_R hot spots merge
+  const sparks = [], SPARK_MS = 650; // [{ i, t0, rgb }]: cells a pulse just passed through on its way
   const signals = []; // small pulses running along fibers around recent work
   let lastSignal = 0;
   let ripples = [];
@@ -767,9 +768,108 @@ export function mountBrain(host, env) {
   const DONE_MS = 15_000;
   const dismiss = (a) => { a.chip?.remove(); a.li?.remove(); agents.delete(a.id); };
   const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
-  const cometHead = (c, now) => c.pt(ease(clamp((now - c.t0) / c.dur, 0, 1)));
+  const headT = (c, now) => c.route.head(clamp((now - c.t0) / c.dur, 0, 1)); // how far along its route (0..1)
+  const cometHead = (c, now) => c.route.pt(headT(c, now));
   const animating = () => anim && R && !document.hidden && view === 'brain' && !silent;
   const thinking = () => { for (const a of agents.values()) if (a.kind === 'think' && a.status !== 'done') return true; return false; };
+
+  // ---- routes: an agent's way from one cell to the next ----------------------------------------------------------
+  // A thought travels through the network, never through the air. From cell to cell it follows real links: the path
+  // with the fewest hops (at most 7) and, among those, the one over the strongest links, whatever the filters
+  // show, along each link's own fiber. Where no such path exists nothing is invented through unrelated files: the
+  // pulse takes the lane between the two lobes (the tracts' way), or passes by the regions' centers inside one lobe.
+  // Every point of a route is kept inside the brain's volume. A route is worked out once per pair of cells and kept.
+  const graphPath = pathFinder(N, edges);
+  const lerp3 = (p, q, w) => [p[0] + (q[0] - p[0]) * w, p[1] + (q[1] - p[1]) * w, p[2] + (q[2] - p[2]) * w];
+  const dist3 = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+  // n + 1 points evenly spaced along a polyline.
+  function resample(poly, n) {
+    const cum = [0], out = [];
+    for (let j = 1; j < poly.length; j++) cum.push(cum[j - 1] + dist3(poly[j - 1], poly[j]));
+    for (let q = 0, j = 0; q <= n; q++) {
+      const d = (cum[cum.length - 1] * q) / n;
+      while (j < poly.length - 2 && cum[j + 1] < d) j++;
+      out.push(lerp3(poly[j], poly[j + 1], cum[j + 1] > cum[j] ? (d - cum[j]) / (cum[j + 1] - cum[j]) : 0));
+    }
+    return out;
+  }
+  // A link's fiber as drawn (the smooth level), in the direction traveled.
+  function fiberPoints(k, forward) {
+    const n = fine.segs[k], o = fine.start[k] * FIBER_FLOATS, d = fine.data, pts = [];
+    for (let j = 0; j < n; j++) pts.push([d[o + j * FIBER_FLOATS], d[o + j * FIBER_FLOATS + 1], d[o + j * FIBER_FLOATS + 2]]);
+    const e = o + (n - 1) * FIBER_FLOATS;
+    pts.push([d[e + 3], d[e + 4], d[e + 5]]);
+    return forward ? pts : pts.reverse();
+  }
+  // For the checks: of a polyline's points (each segment's ends and three points between), how many are outside the
+  // brain's parts, how many of those are in the open (no part on both sides of them), and how far out the farthest is
+  // (0.02, 0.04, 0.08 or more: the nearest step at which a point around it is inside).
+  const AROUND = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 0], [1, -1, 0], [-1, 1, 0], [-1, -1, 0], [0, 1, 1], [0, 1, -1], [0, -1, 1], [0, -1, -1], [1, 0, 1], [1, 0, -1], [-1, 0, 1], [-1, 0, -1]].map((d) => v3.unit(d));
+  function outsideOf(pts) {
+    const o = { points: 0, outside: 0, open: 0, far: 0 };
+    for (let j = 0; j + 1 < pts.length; j++) for (let q = j ? 1 : 0; q <= 4; q++) {
+      const p = lerp3(pts[j], pts[j + 1], q / 4);
+      o.points++;
+      if (insideBrain(p)) continue;
+      o.outside++;
+      if (!enclosed(p)) o.open++;
+      o.far = Math.max(o.far, [0.02, 0.04, 0.08].find((rad) => AROUND.some((u) => insideBrain(v3.add(p, u, rad)))) || 0.16);
+    }
+    return o;
+  }
+  const routes = new Map();
+  // { pts, cum (0..1 along it), hops (0: no real path, a glide), marks: the cells passed [{ t, i }], legs: each hop as
+  // { key (its link, or the pair of cells for a glide), t0, t1 }, length, span (the bright head's share), head(u): where
+  // the head is at time u, pt(t) }.
+  function routeTo(a, b) {
+    const key = a * N + b;
+    if (routes.has(key)) return routes.get(key);
+    const from = at(a), to = at(b), path = graphPath(a, b), pts = [from], passed = [];
+    if (path) {
+      const per = clamp(Math.round(18 / path.length), 5, 14); // segments per hop
+      let u = a;
+      path.forEach((k, h) => {
+        const fwd = edges[k].a === u, v = fwd ? edges[k].b : edges[k].a;
+        pts.push(...pathInside(resample(fiberPoints(k, fwd), per)).slice(1)); // the link's own fiber, kept inside the brain
+        if (h < path.length - 1) passed.push([pts.length - 1, v]);
+        u = v;
+      });
+    } else {
+      const ga = nodes[a].region, gb = nodes[b].region, ca = L.centroid[ga], cb = L.centroid[gb];
+      let pt;
+      if (regions[ga].lobe !== regions[gb].lobe || L.side[ga] !== L.side[gb]) pt = lanePath(from, ga, to, gb);
+      else if (ga !== gb) pt = bspline([from, ca, cb, to]);
+      else { const c = lerp3(lerp3(from, to, 0.5), ca, 0.5); pt = (t) => [0, 1, 2].map((i) => (1 - t) * (1 - t) * from[i] + 2 * (1 - t) * t * c[i] + t * t * to[i]); }
+      pts.push(...pathInside([from, ...Array.from({ length: 15 }, (_, q) => pt((q + 1) / 16)), to]).slice(1));
+    }
+    const cum = new Float32Array(pts.length);
+    for (let j = 1; j < pts.length; j++) cum[j] = cum[j - 1] + dist3(pts[j - 1], pts[j]);
+    const length = cum[pts.length - 1] || 1e-6;
+    for (let j = 0; j < pts.length; j++) cum[j] /= length;
+    cum[pts.length - 1] = 1;
+    const hops = path ? path.length : 0, stops = [0, ...passed.map(([j]) => cum[j]), 1], n = stops.length - 1;
+    const share = stops.slice(1).map((t, j) => 0.5 / n + 0.5 * (t - stops[j])); // each hop's share of the time
+    const route = {
+      pts, cum, hops, length, marks: passed.map(([j, i]) => ({ t: cum[j], i })), span: hops > 1 ? Math.max(0.18, 0.75 / hops) : 0.6,
+      legs: path ? path.map((k, j) => ({ key: k, t0: stops[j], t1: stops[j + 1] })) : [{ key: -1 - (a < b ? a * N + b : b * N + a), t0: 0, t1: 1 }],
+      // Hop by hop: the head slows into each cell and out of it.
+      head(u) {
+        if (n === 1) return ease(u);
+        let j = 0, t0 = 0;
+        while (j < n - 1 && u > t0 + share[j]) t0 += share[j++];
+        const w = clamp((u - t0) / share[j], 0, 1);
+        return stops[j] + (stops[j + 1] - stops[j]) * w * w * (3 - 2 * w);
+      },
+      pt(t) {
+        let j = 0;
+        while (j < pts.length - 2 && cum[j + 1] < t) j++;
+        return lerp3(pts[j], pts[j + 1], cum[j + 1] > cum[j] ? clamp((t - cum[j]) / (cum[j + 1] - cum[j]), 0, 1) : 0);
+      },
+    };
+    if (routes.size > 600) routes.clear();
+    routes.set(key, route);
+    return route;
+  }
 
   // ev: { agent, kind: start | stop | read | edit | command | error | think, node, text, tokens, def: the agent's
   // { label, type, task }, ts: when it happened (only for what is applied from the past, see seed) }.
@@ -793,7 +893,7 @@ export function mountBrain(host, env) {
           if (start >= 0) { a.node = start; a.pos = at(start); }
         }
       } else {
-        a.node = main.node; a.pos = main.comet ? cometHead(main.comet, now) : main.pos;
+        a.node = main.node; a.pos = main.pos; // it starts at the cell Claude is at (or just left)
         if (animating() && a.pos) { rings.push({ p: a.pos, t0: now, dur: 800, rgb: a.rgb, s: 0.7 }); busy(now + 800); }
       }
       a.kind = 'start'; a.text = T.started;
@@ -820,22 +920,18 @@ export function mountBrain(host, env) {
       if (a.comet) arrive(a, false); // a new action before the last beam landed: land it now
       const target = ev.node ?? a.node; // an action with no node of its own (a failure) shows where the agent is
       if (target == null) { /* nowhere to show it yet: the tag and the panel still say what it does */ }
-      else if (!animating() || !a.pos) { a.comet = { to: at(target), node: target, kind: ev.kind, ts: ev.ts, past: silent }; arrive(a, false); }
+      else if (!animating() || a.node == null || !fine) { a.comet = { node: target, kind: ev.kind, ts: ev.ts, past: silent }; arrive(a, false); }
+      else if (target === a.node) { a.comet = { node: target, kind: ev.kind }; arrive(a, true); } // the same cell again: it lights up, nothing travels
       else {
-        const to = at(target);
-        // Between lobes the pulse travels the fiber lane; inside one lobe it arcs over the surface.
-        const from = a.pos, d = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-        if (a.node != null) heats.push({ i: a.node, t0: now }); // where it was cools down
-        const ga = a.node != null ? nodes[a.node].region : null, gb = nodes[target].region;
-        let pt;
-        if (ga != null && (regions[ga].lobe !== regions[gb].lobe || L.side[ga] !== L.side[gb])) pt = lanePath(from, ga, to, gb);
-        else {
-          const mid = [0, 1, 2].map((i) => (from[i] + to[i]) / 2), out = [0, 1, 2].map((i) => mid[i] - CORE[i]), ol = Math.hypot(...out) || 1;
-          const ctrl = [0, 1, 2].map((i) => mid[i] + (out[i] / ol) * (0.18 + d * 0.35));
-          pt = (t) => [0, 1, 2].map((k) => (1 - t) * (1 - t) * from[k] + 2 * (1 - t) * t * ctrl[k] + t * t * to[k]);
-        }
-        a.comet = { from, to, pt, t0: now, dur: 620 + 580 * Math.min(1, d / 1.2), node: target, kind: ev.kind };
-        busy(now + a.comet.dur + 40);
+        heats.push({ i: a.node, t0: now }); // where it was cools down
+        const route = routeTo(a.node, target);
+        // Over links: a beat per hop. With no path, a glide along the lane, as long as the way is.
+        const dur = route.hops ? Math.min(1700, 420 + 260 * route.hops) : 620 + 580 * Math.min(1, route.length / 1.2);
+        a.comet = { route, t0: now, dur, node: target, kind: ev.kind, next: 0 };
+        // A way taken again is drawn once: older trails give up the links this pulse runs over, so light doesn't pile up.
+        const mine = new Set(route.legs.map((l) => l.key));
+        for (const tr of trails) tr.c.legs.forEach((l, j) => { if (mine.has(l.key)) tr.off.add(j); });
+        busy(now + dur + 40);
       }
     }
     renderNow();
@@ -847,9 +943,9 @@ export function mountBrain(host, env) {
   function arrive(a, animate) {
     const c = a.comet, i = c.node, now = performance.now();
     a.comet = null; a.node = i; a.pos = at(i);
-    if (animate && c.from) { // the beam lingers a moment after landing, and its path stays as a trail that fades
-      a.after = { c, t0: now };
-      trails.push({ c, rgb: a.rgb, t0: now });
+    if (c.route && animating()) { // its way stays as a trail that fades (also when the next action cut the trip short)
+      if (animate) a.after = { c: c.route, t0: now }; // and the beam lingers a moment where it landed
+      trails.push({ c: c.route, rgb: a.rgb, t0: now, off: new Set() });
       if (trails.length > 14) trails.shift();
       busy(now + TRAIL_MS + 60);
     }
@@ -955,7 +1051,15 @@ export function mountBrain(host, env) {
       const d = projTarget[k] - projCur[k];
       if (Math.abs(d) > 0.002) { projCur[k] += anim ? d * Math.min(1, dt / 220) : d; staticKey++; } else projCur[k] = projTarget[k];
     }
-    for (const a of agents.values()) if (a.comet && (!anim || now >= a.comet.t0 + a.comet.dur)) arrive(a, anim);
+    for (const a of agents.values()) {
+      const c = a.comet;
+      if (!c) continue;
+      if (!anim || now >= c.t0 + c.dur) { arrive(a, anim); continue; }
+      if (c.route) for (const h = headT(c, now); c.next < c.route.marks.length && h >= c.route.marks[c.next].t - 1e-3; c.next++) {
+        sparks.push({ i: c.route.marks[c.next].i, t0: now, rgb: a.rgb }); // a cell on the way lights up as the pulse passes
+        busy(now + SPARK_MS);
+      }
+    }
     const moving = camStep(now, dt) || !!(drag && drag.moved);
     if (camDirty) updateCamera();
     if (cutChanged) { cutChanged = false; refresh(); }
@@ -1014,7 +1118,7 @@ export function mountBrain(host, env) {
     for (const a of agents.values()) {
       if (!a.pos || (a.hideAt && now > a.hideAt)) continue;
       const fade = a.status === 'done' ? 0.5 : 1;
-      if (a.comet) list.push(...cometHead(a.comet, now), 0.075, ...a.rgb, 1, SPRITE.head);
+      if (a.comet && a.comet.route) list.push(...cometHead(a.comet, now), 0.075, ...a.rgb, 1, SPRITE.head);
       else list.push(...a.pos, 0.1, ...a.rgb, 0.75 * fade, SPRITE.ring, ...a.pos, 0.045, ...a.rgb, 0.9 * fade, SPRITE.head);
     }
     // Heat: where an agent works the light is hot, near white at its center; a cell it just left cools back to its
@@ -1039,6 +1143,12 @@ export function mountBrain(host, env) {
       if (v < 0.03) continue;
       const rc = regionColor[g];
       list.push(...p, 0.11, ...whiten(rc, 0.4 * (1 - u)), 0.42 * v, SPRITE.glow, ...p, 0.05, ...whiten(rc, 0.8 * (1 - u)), 0.7 * v, SPRITE.glow);
+    }
+    for (let k = sparks.length - 1; k >= 0; k--) {
+      const sp = sparks[k], u = (now - sp.t0) / SPARK_MS;
+      if (u >= 1 || !anim) { sparks.splice(k, 1); continue; }
+      const p = at(sp.i);
+      list.push(...p, 0.07, ...whiten(regionColor[nodes[sp.i].region], 0.6), 0.6 * (1 - u) ** 2, SPRITE.glow, ...p, 0.03 + 0.05 * u, ...sp.rgb, 0.8 * (1 - u), SPRITE.ring);
     }
     for (const r of rings) {
       const u = (now - r.t0) / r.dur, e = 1 - (1 - u) ** 3;
@@ -1107,33 +1217,35 @@ export function mountBrain(host, env) {
   // it the whole path stays as a thinner arc in the agent's color and fades over a few seconds: the agent's trail, so
   // its way from file to file can be seen.
   let beamData = new Float32Array(0);
-  const trails = [], TRAIL_MS = 4500; // [{ c: the path, rgb, t0 }], the newest 14
+  const trails = [], TRAIL_MS = 4500; // [{ c: the route, rgb, t0, off: the legs a newer pulse took over }], the newest 14
   function buildBeams(now) {
     const out = [];
     const thin = clamp(W / 900, 0.6, 1); // a phone's brain is small: thinner ribbons
-    const ribbon = (c, t0, t1, alphaAt, rgb, width = 16) => {
-      const S = 16;
+    const ribbon = ({ pts, cum }, t0, t1, alphaAt, rgb, width = 16) => { // the route's own segments, from t0 to t1
       width *= thin;
-      for (let s = 0; s < S; s++) {
-        const ta = t0 + ((t1 - t0) * s) / S, tb = t0 + ((t1 - t0) * (s + 1)) / S;
-        out.push(...c.pt(ta), ...c.pt(tb), 0, 0, ...rgb, ...rgb, EDGE.beam, width, 1, Math.max(0.004, alphaAt((ta + tb) / 2)), -1, 0);
+      for (let j = 0; j + 1 < pts.length; j++) {
+        const ta = Math.max(t0, cum[j]), tb = Math.min(t1, cum[j + 1]), span = cum[j + 1] - cum[j];
+        if (tb - ta < 1e-5) continue;
+        out.push(...lerp3(pts[j], pts[j + 1], (ta - cum[j]) / span), ...lerp3(pts[j], pts[j + 1], (tb - cum[j]) / span), 0, 0, ...rgb, ...rgb, EDGE.beam, width, 1, Math.max(0.004, alphaAt((ta + tb) / 2)), -1, 0);
       }
     };
     const trail = (t) => 0.5 * (0.55 + 0.45 * t); // a little brighter toward where it went
     for (let k = trails.length - 1; k >= 0; k--) {
       const tr = trails[k], age = (now - tr.t0) / TRAIL_MS;
-      if (age >= 1 || !anim) { trails.splice(k, 1); continue; }
-      ribbon(tr.c, 0, 1, (t) => trail(t) * (1 - age) ** 1.6, tr.rgb, 10);
+      if (age >= 1 || !anim || tr.off.size === tr.c.legs.length) { trails.splice(k, 1); continue; }
+      tr.c.legs.forEach((l, j) => { if (!tr.off.has(j)) ribbon(tr.c, l.t0, l.t1, (t) => trail(t) * (1 - age) ** 1.6, tr.rgb, 10); });
     }
     for (const a of agents.values()) {
-      if (a.comet && a.comet.from) {
-        const head = ease(clamp((now - a.comet.t0) / a.comet.dur, 0, 1)), tail = Math.max(0, head - 0.6);
-        if (head > 0.02) ribbon(a.comet, 0, head, trail, a.rgb, 10); // the path so far
-        if (head > tail) ribbon(a.comet, tail, head, (t) => 0.95 * ((t - tail) / (head - tail)) ** 1.5, a.rgb);
+      if (a.comet && a.comet.route) {
+        const rt = a.comet.route, head = headT(a.comet, now), tail = Math.max(0, head - rt.span);
+        if (tail > 0.01) ribbon(rt, 0, tail, trail, a.rgb, 10); // the way so far
+        // The pulse: the link it is on glows, brightest at the head, down to the trail's light behind it (one ribbon,
+        // so the two don't add up).
+        if (head > tail) ribbon(rt, tail, head, (t) => { const w = (t - tail) / (head - tail), b = trail(t); return b + (0.92 - b) * w * w; }, a.rgb, 14);
       } else if (a.after) {
-        const age = (now - a.after.t0) / 480;
+        const age = (now - a.after.t0) / 480, rt = a.after.c, t0 = 1 - rt.span;
         if (age >= 1) a.after = null;
-        else ribbon(a.after.c, 0.4, 1, (t) => 0.7 * (1 - age) * ((t - 0.4) / 0.6), a.rgb);
+        else ribbon(rt, t0, 1, (t) => 0.6 * (1 - age) * ((t - t0) / rt.span) ** 2, a.rgb, 14);
       }
     }
     if (out.length > beamData.length) beamData = new Float32Array(out.length * 2);
@@ -1294,7 +1406,7 @@ export function mountBrain(host, env) {
       a.chip.hidden = !show;
       if (!show) continue;
       a.chip.classList.toggle('gone', !!(a.hideAt && now > a.hideAt));
-      const p = project(a.comet && a.comet.from ? cometHead(a.comet, now) : a.pos);
+      const p = project(a.comet && a.comet.route ? cometHead(a.comet, now) : a.pos);
       const [, who, k, code] = a.chip.children;
       const verb = { read: T.v_read, edit: T.v_edit, command: T.v_command, error: T.v_error, think: T.thinking, done: T.done, start: T.started }[a.kind] || '';
       const label = a.id === 'main' ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
@@ -1696,8 +1808,9 @@ export function mountBrain(host, env) {
       L = layout(graph, { seed: (Math.random() * 1e9) | 0, visible });
       for (let i = 0; i < N; i++) if (!visible[i]) for (let a = 0; a < 3; a++) L.pos[i * 3 + a] = old[i * 3 + a];
       uploadGeometry();
+      routes.clear(); // the cells moved
       for (const a of agents.values()) { if (a.comet) arrive(a, false); if (a.node != null) a.pos = at(a.node); a.after = null; }
-      trails.length = 0;
+      trails.length = 0; sparks.length = 0;
       refresh();
       camDirty = true;
       canvas.classList.remove('fading');
@@ -1716,7 +1829,7 @@ export function mountBrain(host, env) {
   onDoc('visibilitychange', () => {
     if (document.hidden) { cancelAnimationFrame(raf); raf = 0; return; }
     for (const a of agents.values()) { if (a.comet) arrive(a, false); a.after = null; } // what happened while hidden lands at once
-    rings.length = 0; ripples = []; trails.length = 0;
+    rings.length = 0; ripples = []; trails.length = 0; sparks.length = 0;
     trace.draw();
     request();
   });
@@ -1731,7 +1844,7 @@ export function mountBrain(host, env) {
       endIntro();
       pulses.length = 0;
       for (const a of agents.values()) { if (a.comet) arrive(a, false); a.after = null; }
-      rings.length = 0; ripples = []; trails.length = 0; heats.length = 0;
+      rings.length = 0; ripples = []; trails.length = 0; heats.length = 0; sparks.length = 0;
       vel.yaw = vel.pitch = 0;
       for (let i = 0; i < N; i++) state[i * 4 + 2] = -100;
       projCur.set(projTarget);
@@ -1794,6 +1907,41 @@ export function mountBrain(host, env) {
   const debug = { light: LIGHT, nodes: N, edges: edges.length, frames: () => frames, staticDraws: () => (R ? R.staticDraws || 0 : 0), firstFrameMs: () => firstFrame,
     get intro() { return { on: intro.on, done: intro.done, clock: intro.on && intro.t0 != null ? (performance.now() - intro.t0) / 1000 : null }; },
     counts: () => (R ? { ...R.counts, dendrites: R.layers.dendrites?.count, tracts: R.layers.tracts?.count } : null),
+    lanes: () => lanesOf().top,
+    // Checks for the routes. routeCheck: n random moves between cells: how many follow real links, their hops, how
+    // long working one out takes, and how many of their points (each segment's ends and three points between) fall
+    // outside the brain. trailsNow: the same for what is on screen. linkCheck: the links' own fibers.
+    route(a, b) { const rt = routeTo(a, b); return { hops: rt.hops, cells: [a, ...rt.marks.map((mk) => mk.i), b].map((i) => nodes[i].path), segments: rt.pts.length - 1 }; },
+    routeCheck(n = 1000) {
+      const out = { moves: 0, real: 0, glide: 0, hops: {}, points: 0, outside: 0, open: 0, far: {}, segments: 0, maxSegments: 0, msPerRoute: 0 };
+      const t0 = performance.now(), list = [];
+      for (let k = 0; k < n; k++) {
+        const a = Math.floor(Math.random() * N), b = Math.floor(Math.random() * N);
+        if (a !== b) list.push(routeTo(a, b));
+      }
+      out.msPerRoute = +((performance.now() - t0) / Math.max(1, list.length)).toFixed(3);
+      for (const rt of list) {
+        out.moves++;
+        if (rt.hops) { out.real++; out.hops[rt.hops] = (out.hops[rt.hops] || 0) + 1; } else out.glide++;
+        out.segments += rt.pts.length - 1; out.maxSegments = Math.max(out.maxSegments, rt.pts.length - 1);
+        const o = outsideOf(rt.pts);
+        out.points += o.points; out.outside += o.outside; out.open += o.open;
+        if (o.far) out.far[o.far] = (out.far[o.far] || 0) + 1;
+      }
+      routes.clear();
+      return out;
+    },
+    trailsNow() {
+      const all = [...trails.map((tr) => tr.c), ...[...agents.values()].filter((a) => a.comet && a.comet.route).map((a) => a.comet.route)];
+      const out = { trails: trails.length, flying: all.length - trails.length, hops: all.map((rt) => rt.hops), points: 0, outside: 0, open: 0, far: 0, sparks: sparks.length };
+      for (const rt of all) { const o = outsideOf(rt.pts); out.points += o.points; out.outside += o.outside; out.open += o.open; out.far = Math.max(out.far, o.far); }
+      return out;
+    },
+    linkCheck() {
+      const out = { links: edges.length, points: 0, outside: 0, open: 0, far: {} };
+      for (let k = 0; k < edges.length; k++) { const o = outsideOf(fiberPoints(k, true)); out.points += o.points; out.outside += o.outside; out.open += o.open; if (o.far) out.far[o.far] = (out.far[o.far] || 0) + 1; }
+      return out;
+    },
     get busy() { return busyUntil > performance.now(); }, setAutoRotate(on) { if (on !== autoRotate) $('rotateBtn').click(); }, setFollow(on) { if (on !== follow) $('followBtn').click(); },
     get cam() { return JSON.parse(JSON.stringify({ cam, goal, vel, follow, autoRotate })); }, pos: (i) => at(i),
     look(yaw, pitch, zoom = 1) { Object.assign(cam, { yaw, pitch, zoom }); Object.assign(goal, { yaw, pitch, zoom }); camDirty = true; request(); },
@@ -1868,7 +2016,7 @@ export function mountBrain(host, env) {
     for (const a of agents.values()) { a.chip?.remove(); a.li?.remove(); }
     agents.clear();
     embers.clear();
-    trails.length = 0; heats.length = 0; rings.length = 0; flashes.length = 0; signals.length = 0; pulses.length = 0; ripples = [];
+    trails.length = 0; heats.length = 0; sparks.length = 0; rings.length = 0; flashes.length = 0; signals.length = 0; pulses.length = 0; ripples = [];
     for (let i = 0; i < N; i++) { state[i * 4 + 1] = 0; state[i * 4 + 2] = -100; state[i * 4 + 3] = 0; }
     if (R) R.updateState(state);
     trace.items = [];

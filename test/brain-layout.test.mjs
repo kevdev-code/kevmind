@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeGraph, makeReplay, lobeOfPath, regionOfPath } from '../prototype/brain/data.js';
-import { layout, lobeAt, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../public/brain/layout.js';
+import { layout, lobeAt, insideBrain, enclosed, pathInside, leavesBrain, lobeShape, shellPoints, shellFilaments, purkinjeTrees, FIL_FLOATS, STEM_AXIS, CALLOSUM, callosumY } from '../public/brain/layout.js';
 import { FIL_FLOATS as GL_FIL_FLOATS } from '../public/brain/gl.js';
 
 test('paths map to lobes and regions', () => {
@@ -174,4 +174,34 @@ test('region colors: apart for every kind of color vision, in gamut, readable as
     const text = clip(lin([Math.max(76, l + 4), c, h])).map((v, a) => dec(enc(v) * 0.86 + enc(night[a]) * 0.14)); // blended as the browser does
     assert.ok((lum(text) + 0.05) / (lum(night) + 0.05) >= 4.5, `${k} label contrast`);
   }
+});
+
+test('a trail never leaves the brain: cells are inside, and any way between two of them is brought back in', () => {
+  const g = makeGraph({ target: 1500 });
+  const { pos } = layout(g);
+  const at = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+  g.nodes.forEach((n, i) => assert.ok(insideBrain(at(i)), `${n.path} is inside the brain`));
+  // Outside: above, beside and under the brain, and in the corner between the cerebellum and the brainstem.
+  for (const p of [[0, 0.75, 0], [0, 0, 0.9], [-0.75, -0.7, 0], [-0.6, -0.75, 0.2], [-0.35, -0.95, 0.15]]) assert.ok(!insideBrain(p) && !enclosed(p), `${p} is outside`);
+  // Enclosed: the pocket where the brainstem enters between the temporal lobes is in no part, yet no side shows it
+  // outside the brain's outline.
+  for (const p of [[-0.05, -0.27, 0], [-0.03, -0.285, 0.04]]) assert.ok(!insideBrain(p) && enclosed(p), `${p} is between parts`);
+  assert.ok(leavesBrain([at(0), [-0.6, -0.75, 0.2], at(1)]) && !leavesBrain([at(0), at(0)]));
+
+  // Curved ways between cells, many of them bulging out of the brain like the old free arcs did: fitted, every
+  // point of every one is inside (or enclosed where it crosses between two parts), and they still join the same cells.
+  let seed = 7, bulging = 0;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let k = 0; k < 2500; k++) {
+    const a = at(Math.floor(rnd() * g.nodes.length)), b = at(Math.floor(rnd() * g.nodes.length));
+    const mid = [0, 1, 2].map((i) => (a[i] + b[i]) / 2), out = mid.map((v, i) => v - [0, 0.12, 0][i]), ol = Math.hypot(...out) || 1;
+    const c = k % 2 ? mid.map((v, i) => v + (out[i] / ol) * 0.35) : mid.map((v) => v + (rnd() - 0.5) * 0.5); // away from the core, or anywhere
+    const way = Array.from({ length: 17 }, (_, q) => { const t = q / 16; return [0, 1, 2].map((i) => (1 - t) * (1 - t) * a[i] + 2 * (1 - t) * t * c[i] + t * t * b[i]); });
+    if (leavesBrain(way)) bulging++;
+    const path = pathInside(way);
+    assert.ok(!leavesBrain(path), `way ${k} stays in the brain`);
+    assert.deepEqual([path[0], path[path.length - 1]], [way[0], way[16]]);
+    assert.ok(path.length < 200);
+  }
+  assert.ok(bulging > 300, `many of the free curves left the brain (${bulging} of 2500)`);
 });

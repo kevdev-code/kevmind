@@ -9,7 +9,7 @@ import { buildBrain, LIMITS } from '../src/brain.js';
 import { emptyAggregate, ingest } from '../src/experience.js';
 import { keyOf } from '../src/memory.js';
 import { State } from '../src/state.js';
-import { assemble, pathIndex, toolIndex, toolLabel, lobeOfPath } from '../public/brain/graph.js';
+import { assemble, pathIndex, toolIndex, toolLabel, lobeOfPath, pathFinder } from '../public/brain/graph.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 20, 12);
@@ -171,4 +171,26 @@ test('the Brain view has every word in both languages', () => {
   const asked = new Set([...view.matchAll(/\bT\.([a-zA-Z_]\w*)/g)].map((m) => m[1]).concat([...view.matchAll(/data-bi18n(?:-placeholder|-label)?="(\w+)"/g)].map((m) => m[1])));
   for (const t of ['instruction', 'memory', 'serena', 'file', 'tool']) asked.add('t_' + t);
   assert.deepEqual([...asked].filter((k) => !(k in en.brain)), []);
+});
+
+test('an agent\'s way between two cells: real links only, fewest hops, then the strongest; never invented', () => {
+  const link = (a, b, type) => ({ a, b, type });
+  // 0 → 2 two ways in two hops: through 1 over imports, or through 3 over index entries (weaker).
+  const edges = [link(0, 1, 'import'), link(1, 2, 'import'), link(0, 3, 'index'), link(3, 2, 'index'), link(2, 4, 'cochange'), link(5, 6, 'link')];
+  const find = pathFinder(7, edges), cells = (a, b) => { const p = find(a, b); if (!p) return p; let u = a; return [a, ...p.map((k) => (u = edges[k].a === u ? edges[k].b : edges[k].a))]; };
+  assert.deepEqual(cells(0, 2), [0, 1, 2], 'the stronger links');
+  assert.deepEqual(cells(2, 0), [2, 1, 0], 'either direction: a link is walked both ways');
+  assert.deepEqual(cells(0, 4), [0, 1, 2, 4]);
+  assert.deepEqual(find(0, 0), [], 'the same cell: nowhere to go');
+  assert.equal(find(0, 5), null, 'no path: nothing is invented');
+  // Fewer hops win over stronger links: a direct index entry beats two imports.
+  assert.deepEqual(pathFinder(3, [link(0, 1, 'import'), link(1, 2, 'import'), link(0, 2, 'index')])(0, 2), [2]);
+  // Two kinds of link between the same two cells are a stronger tie than one.
+  const twice = [link(0, 1, 'cochange'), link(1, 3, 'cochange'), link(0, 2, 'cochange'), link(0, 2, 'import'), link(2, 3, 'cochange')];
+  assert.deepEqual(pathFinder(4, twice)(0, 3), [3, 4], 'through the doubly linked cell, over its import');
+  // At most 7 hops: a chain of 8 cells is in reach end to end, one of 9 is not.
+  const chain = (n) => Array.from({ length: n - 1 }, (_, i) => link(i, i + 1, 'import'));
+  assert.equal(pathFinder(8, chain(8))(0, 7).length, 7);
+  assert.equal(pathFinder(9, chain(9))(0, 8), null);
+  assert.equal(pathFinder(9, chain(9), 8)(0, 8).length, 8);
 });

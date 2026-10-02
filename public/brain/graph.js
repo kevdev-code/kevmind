@@ -98,3 +98,33 @@ export function toolIndex(graph) {
   for (const n of graph.nodes) if (n.type === 'tool') map.set(n.name, n.id);
   return (name) => map.get(toolLabel(name));
 }
+
+// How a thought gets from one cell to another: over real links, by the path with the fewest hops (at most maxHops)
+// and, among those, the one over the strongest links. Declared relations (an import, a link between notes, a note
+// citing a file) are the strongest; an index entry, a listing, the weakest; two kinds of link between the same two
+// cells make a stronger tie. pathFinder(n, edges) returns (a, b) => the links' indices in order, [] for the same
+// cell, null when no path is in reach (then nothing is invented: the view glides along the lane instead).
+export const LINK_STRENGTH = { import: 1, link: 1, cites: 1, readfirst: 0.9, cochange: 0.8, index: 0.6 };
+export function pathFinder(n, edges, maxHops = 7) {
+  const adj = Array.from({ length: n }, () => []), pair = new Map(), key = (e) => (e.a < e.b ? e.a * n + e.b : e.b * n + e.a);
+  edges.forEach((e, k) => { adj[e.a].push(k); adj[e.b].push(k); pair.set(key(e), (pair.get(key(e)) || 0) + 1); });
+  const hopCost = edges.map((e) => (2 - LINK_STRENGTH[e.type]) * (pair.get(key(e)) > 1 ? 0.8 : 1));
+  return (a, b) => {
+    const hops = new Int8Array(n).fill(-1), cost = new Float32Array(n), via = new Int32Array(n);
+    hops[a] = 0;
+    let layer = [a];
+    for (let h = 1; h <= maxHops && layer.length && hops[b] < 0; h++) { // layer by layer: the fewest hops come first
+      const next = [];
+      for (const u of layer) for (const k of adj[u]) {
+        const v = edges[k].a === u ? edges[k].b : edges[k].a, c = cost[u] + hopCost[k];
+        if (hops[v] < 0) { hops[v] = h; cost[v] = c; via[v] = k; next.push(v); }
+        else if (hops[v] === h && c < cost[v]) { cost[v] = c; via[v] = k; }
+      }
+      layer = next;
+    }
+    if (hops[b] < 0) return null;
+    const path = [];
+    for (let v = b; v !== a;) { const k = via[v]; path.unshift(k); v = edges[k].a === v ? edges[k].b : edges[k].a; }
+    return path;
+  };
+}
