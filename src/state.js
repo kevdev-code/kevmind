@@ -6,6 +6,7 @@ const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
 const MAX_EVENTS = 300;
+const MAX_USAGE = 20_000; // API calls kept per session for the briefing's token measurement (~100 B each)
 const MAX_HITS = 24; // files a search matched, kept on the event (as paths) for the Brain view...
 const HIT_EVENTS = 3; // ...of the newest searches only, so the session's summary stays small
 export const MAX_ALERTS = 50; // per session, newest kept: a long session with many conflicts must not grow memory
@@ -140,14 +141,20 @@ export class State {
     return Object.values(s.agents).find((a) => a.toolUseId === toolUseId) || null;
   }
 
-  // One API call's usage, counted by the caller exactly once per message id.
-  addUsage(s, actorId, u) {
+  // One API call's usage, counted by the caller exactly once per message id. With its time (ts), it also goes on
+  // the session's timeline [ts, input, output, cacheRead], which the briefing's measurement sums over a stretch.
+  addUsage(s, actorId, u, ts) {
     if (!u) return;
     const n = (v) => Number(v) || 0;
     const t = { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheWrite: n(u.cache_creation_input_tokens) };
     addTokens(s.tokens, t);
     const a = s.agents[actorId];
     if (a) addTokens(a.tokens, t);
+    if (ts) {
+      const q = (s.usage ||= []);
+      q.push([ts, t.input, t.output, t.cacheRead]);
+      if (q.length > MAX_USAGE) q.splice(0, q.length - MAX_USAGE);
+    }
   }
 
   // Keeps events in time order: transcript lines can arrive later than the hook events of the same moment.
@@ -326,7 +333,7 @@ export class State {
   }
 
   summary(s, now = Date.now()) {
-    const { pending, agentSeq, transcript, instructions, hitEvents, asked, ...rest } = s;
+    const { pending, agentSeq, transcript, instructions, hitEvents, asked, usage, ...rest } = s;
     const stale = isStale(s, now);
     // Drop duplicate agent aliases (same object registered under its real id).
     const seen = new Set();

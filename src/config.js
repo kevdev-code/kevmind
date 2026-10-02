@@ -44,6 +44,9 @@ export function experienceTools(dataDir, option) {
   return p === null ? { on: false, source: 'default' } : { on: p, source: 'plugin' };
 }
 
+// The session briefing (src/briefing.js): off unless config.json says on.
+export const briefingOn = (dataDir) => readConfig(dataDir).briefing === true;
+
 // true/false for a set plugin option; null when unset. An empty or unsubstituted "${user_config.experience_tools}"
 // counts as unset.
 export function optionState(option) {

@@ -31,6 +31,8 @@ KevMind · watch Claude Code work in real time
   kevmind uninstall            Remove KevMind's hooks
   kevmind demo                 Start the dashboard and simulate a sample session
   kevmind tools on|off|status  Turn the experience tools for Claude on or off, or show their state and its source
+  kevmind briefing on|off|status  A short note about the project for Claude at each session start, from KevMind's
+                               records and git (off by default; half the starts are measured without it)
   kevmind share [on|off|status|new]  View the dashboard on your phone over your home Wi-Fi: a read-only link and QR
                                code (new: a new link; the old one stops working). Off by default.
 
@@ -117,6 +119,15 @@ switch (cmd) {
     console.log(`\n  Experience tools: ${st.on ? 'on' : 'off'}\n  Source: ${from}`);
     if (st.source === 'config' && optionState(option) !== null) console.log(`  Plugin option: ${optionState(option) ? 'on' : 'off'} (the config file wins)`);
     console.log(`\n  Changes take effect in the next Claude Code session.\n`);
+    break;
+  }
+  case 'briefing': {
+    // The session briefing (src/briefing.js, hooks/brief.js): KevMind's own switch, in config.json. Off by default.
+    const { writeConfig, briefingOn, configFile } = await import('../src/config.js');
+    const sub = args[0] || 'status';
+    if (sub === 'on' || sub === 'off') writeConfig(DATA_DIR, { briefing: sub === 'on' });
+    else if (sub !== 'status') fail('Usage: kevmind briefing on | off | status');
+    console.log(`\n  Session briefing: ${briefingOn(DATA_DIR) ? 'on' : 'off'} (${configFile(DATA_DIR)})\n  It applies from the next session start; what Claude received is in the Memory tab.\n`);
     break;
   }
   case 'share': {

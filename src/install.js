@@ -13,6 +13,9 @@ const HOOK_DST = path.join(DATA_DIR, 'send.mjs');
 // send.mjs imports ./redact.js when it spools, so the redactor must live next to it.
 const REDACT_SRC = path.join(HOOK_DIR, 'redact.js');
 const REDACT_DST = path.join(DATA_DIR, 'redact.js');
+// The session briefing's hook (off unless `kevmind briefing on`): built-ins only, so it runs from its copy.
+const BRIEF_SRC = path.join(HOOK_DIR, 'brief.js');
+const BRIEF_DST = path.join(DATA_DIR, 'brief.mjs');
 // The copied hook has no bin/ next to it; this file tells it where the CLI is, so it can auto-start the server.
 const BIN_POINTER = path.join(DATA_DIR, 'kevmind-bin');
 const BIN = path.join(HOOK_DIR, '..', 'bin', 'kevmind.js');
@@ -72,6 +75,7 @@ export function install({ force = false } = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.copyFileSync(HOOK_SRC, HOOK_DST);
   fs.copyFileSync(REDACT_SRC, REDACT_DST);
+  fs.copyFileSync(BRIEF_SRC, BRIEF_DST);
   fs.writeFileSync(BIN_POINTER, path.resolve(BIN));
   const settings = strip(readSettings());
   settings.hooks ||= {};
@@ -83,6 +87,8 @@ export function install({ force = false } = {}) {
     if (MATCHER_EVENTS.has(ev)) group.matcher = '*';
     (settings.hooks[ev] ||= []).push(group);
   }
+  // Claude waits for this one (its output is the briefing), at most 3 s; it answers in under 1.5 s or says nothing.
+  settings.hooks.SessionStart.push({ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: `node "${BRIEF_DST.replace(/\\/g, '/')}"`, timeout: 3 }] });
   writeSettings(settings);
   return { settings: SETTINGS, hook: HOOK_DST };
 }

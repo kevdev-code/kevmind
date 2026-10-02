@@ -10,7 +10,8 @@ import { Tailer } from './transcript.js';
 import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
 import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
-import { writeConfig, experienceTools, pluginOption } from './config.js';
+import { writeConfig, experienceTools, pluginOption, briefingOn } from './config.js';
+import { BRIEF, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from './briefing.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
@@ -22,6 +23,7 @@ export const SPOOL_FILE = path.join(DATA_DIR, 'spool.jsonl'); // written by hook
 export const PID_FILE = path.join(DATA_DIR, 'server.pid');
 export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
 export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read by mcp/server.js
+export const BRIEFINGS_FILE = path.join(DATA_DIR, 'briefings.jsonl'); // every session start the briefing saw, and its measurement
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
@@ -108,6 +110,8 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     promise.catch(() => { brainHit = null; });
     return promise;
   };
+
+  const briefing = briefingKeeper(state, memory, experience);
 
   // "View on phone": a second, read-only listener on the home network while it is on (src/share.js).
   const share = makeShare({ port, handle, onChange: () => broadcastLocal({ type: 'share', share: share.status() }) });
@@ -201,6 +205,35 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       });
       return;
     }
+    // The session briefing. The hook (hooks/brief.js) asks for it at each session start: the answer is the text
+    // to give Claude, or nothing (off, withheld for the measurement, or too slow). JSON from this PC only.
+    if (req.method === 'POST' && url.pathname === '/api/briefing') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 20_000, async (body) => {
+        let p = {};
+        try { p = JSON.parse(body); } catch { /* handled below */ }
+        json(res, await briefing.serve(p).catch(() => ({ text: '' })));
+      });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/briefing/switch') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 1000, (body) => {
+        let on;
+        try { on = JSON.parse(body).on; } catch { /* handled below */ }
+        if (typeof on !== 'boolean') return json(res, { error: 'expected {"on": true|false}' }, 400);
+        writeConfig(DATA_DIR, { briefing: on });
+        json(res, { on: briefingOn(DATA_DIR) });
+      });
+      return;
+    }
+    // The Memory tab: what Claude received at each start of this project's sessions, and the comparison.
+    if (url.pathname === '/api/briefing') return json(res, briefing.panel(url.searchParams.get('key')));
+    // What a session starting now would receive (nothing is recorded).
+    if (url.pathname === '/api/briefing/preview') {
+      briefing.preview(url.searchParams.get('key')).then((r) => json(res, r), (err) => json(res, { error: String(err?.message || err) }, 500));
+      return;
+    }
     if (url.pathname === '/api/experience') {
       experience.panel(url.searchParams.get('key')).then(
         (r) => json(res, r),
@@ -246,6 +279,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     for (const w of watchers) w.close();
     clearInterval(tailTimer);
     experience.stop();
+    briefing.stop();
     for (const res of clients) res.end();
     log.end();
     try { fs.unlinkSync(PID_FILE); } catch { /* never written */ }
@@ -374,7 +408,75 @@ function experienceKeeper() {
     const now = Date.now();
     return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
   };
-  return { panel, aggregate: async () => { await tick(); return agg; }, stop: () => clearInterval(timer) };
+  // now(): the aggregate as it is (up to 15 s behind the logs), for the briefing, which must answer at once.
+  return { panel, aggregate: async () => { await tick(); return agg; }, now: () => agg, stop: () => clearInterval(timer) };
+}
+
+// The session briefing (src/briefing.js): built when a session starts, recorded in briefings.jsonl whether it was
+// shown or withheld (half and half), and measured once the stretch that followed has settled.
+function briefingKeeper(state, memory, experience) {
+  // ponytail: every record is read at start and kept in memory (about 2 KB a start); rotate the file if it ever grows past a few MB.
+  const records = [];
+  try { for (const l of fs.readFileSync(BRIEFINGS_FILE, 'utf8').split('\n')) if (l) try { records.push(JSON.parse(l)); } catch { /* skip */ } } catch { /* none yet */ }
+  const append = (r) => { records.push(r); fs.mkdirSync(DATA_DIR, { recursive: true }); fs.appendFileSync(BRIEFINGS_FILE, JSON.stringify(r) + '\n'); };
+  const reports = new Map(); // the memory report, when it is at hand (it can take a second to build)
+  const reportOf = (key) => {
+    const p = memory.report(key).then((r) => { reports.set(key, r); return r; }).catch(() => null);
+    return Promise.race([p, new Promise((r) => setTimeout(() => r(reports.get(key) || null), 150))]);
+  };
+  const build = async (root, sid, source) => {
+    const key = keyOf(root);
+    const facts = await gatherFacts({
+      agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions,
+      report: await reportOf(key), toolsOn: experienceTools(DATA_DIR, pluginOption()).on,
+    });
+    return briefingText(facts);
+  };
+  async function serve(p) {
+    const sid = p.session_id, source = p.source || 'startup', root = p.cwd ? projectRoot(p.cwd) : null;
+    if (!briefingOn(DATA_DIR) || !sid || !root || !['startup', 'clear', 'compact'].includes(source)) return { text: '' };
+    const t0 = Date.now(), arm = armOf(sid, records.filter((r) => r.type === 'start' && r.sid === sid).length);
+    const late = Symbol('late');
+    const b = await Promise.race([build(root, sid, source), new Promise((r) => setTimeout(() => r(late), BRIEF.budgetMs))]);
+    if (b === late) { append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: 'late', chars: 0, items: [], text: '', ms: Date.now() - t0 }); return { text: '' }; }
+    append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: b.text ? arm : 'empty', chars: b.text.length, items: b.items, text: b.text, ms: Date.now() - t0 });
+    return { text: b.text && arm === 'shown' ? b.text : '' };
+  }
+  // A start's stretch closes at the session's next start, once the session has been quiet for a while, or after
+  // 8 h; then what followed is measured and recorded.
+  function settle() {
+    const now = Date.now(), agg = experience.now();
+    const done = new Set(records.filter((r) => r.type === 'result').map((r) => `${r.sid}|${r.t0}`));
+    for (const r of records) {
+      if (r.type !== 'start' || (r.arm !== 'shown' && r.arm !== 'withheld') || done.has(`${r.sid}|${r.ts}`)) continue;
+      const next = records.find((x) => x.type === 'start' && x.sid === r.sid && x.ts > r.ts);
+      const projs = projectsUnder(agg, r.root), sessions = sessionsOf(projs), mine = sessions.get(r.sid);
+      const last = Math.max(state.sessions.get(r.sid)?.lastAt || 0, mine?.last || 0);
+      const t1 = next ? next.ts : now - last >= BRIEF.settleMs ? last + 1 : now - r.ts >= BRIEF.maxStretchMs ? r.ts + BRIEF.maxStretchMs : null;
+      if (t1 == null) continue;
+      const before = [...sessions].filter(([id, s]) => id !== r.sid && s.first < r.ts).sort((a, b) => b[1].last - a[1].last);
+      const prevReads = new Set(before[0] ? before[0][1].eps.flatMap((x) => Object.keys(x.ep.r).map((f) => x.pre + x.p.files[+f])) : []);
+      const known = new Set(before.flatMap(([, s]) => s.eps.flatMap((x) => x.ep.runs.filter((q) => !q[2] && q[0] < r.ts).map((q) => `${x.p.fams[q[1]]}|${q[3] >= 0 ? x.p.sigs[q[3]] : ''}`))));
+      const m = measureStretch({ t0: r.ts, t1, eps: mine?.eps || [], prevReads, known, usage: state.sessions.get(r.sid)?.usage || null, items: r.items });
+      append({ type: 'result', sid: r.sid, t0: r.ts, key: r.key, arm: r.arm, chars: r.chars, t1, m });
+    }
+  }
+  const timer = setInterval(() => { try { settle(); } catch (e) { console.error(`  briefing: ${e.message}`); } }, 60_000);
+  timer.unref();
+  return {
+    serve, stop: () => clearInterval(timer),
+    panel(key) {
+      const mine = records.filter((r) => r.key === key);
+      const starts = mine.filter((r) => r.type === 'start').sort((x, y) => y.ts - x.ts).slice(0, 8).map(({ ts, source, arm, chars, text, ms }) => ({ ts, source, arm, chars, text, ms }));
+      return { on: briefingOn(DATA_DIR), starts, compare: compare(mine.filter((r) => r.type === 'result')) };
+    },
+    async preview(key) {
+      const root = memory.projects().find((p) => p.key === key)?.root;
+      if (!root) return { text: '', error: 'unknown project' };
+      const t0 = Date.now(), b = await build(root, 'preview', 'startup');
+      return { text: b.text, chars: b.text.length, ms: Date.now() - t0 };
+    },
+  };
 }
 
 // Events of a project, for `kevmind clear --project`: matched by project folder name or path.
