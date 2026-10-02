@@ -4,7 +4,10 @@
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
 const MAX_EVENTS = 300;
+const MAX_HITS = 24; // files a search matched, kept on the event (as paths) for the Brain view...
+const HIT_EVENTS = 3; // ...of the newest searches only, so the session's summary stays small
 export const MAX_ALERTS = 50; // per session, newest kept: a long session with many conflicts must not grow memory
 const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
@@ -217,8 +220,11 @@ export class State {
         if (READ_TOOLS.has(tool)) this.touchFile(s, file, 'read', actor, ts);
         if (EDIT_TOOLS.has(tool)) this.touchFile(s, file, 'edit', actor, ts);
         // The file of a read or an edit, relative to the session's folder when it is inside it: the Brain view finds
-        // its node by it (the feed shows only the file's name).
-        this.push(s, { ts, kind: kindOf(tool), actor: actor.id, tool, detail: describe(tool, input), ...(file ? { path: relTo(s.cwd, file) } : {}) });
+        // its node by it (the feed shows only the file's name). A search says where it looked (dir).
+        const dir = SEARCH_TOOLS.has(tool) && typeof input.path === 'string' && input.path ? relTo(s.cwd, input.path) : null;
+        const ev = { ts, kind: kindOf(tool), actor: actor.id, tool, detail: describe(tool, input), ...(file ? { path: relTo(s.cwd, file) } : {}), ...(dir ? { dir } : {}) };
+        this.push(s, ev);
+        s.pending[key].ev = ev; // what the call did is written on its event when it ends (PostToolUse)
         break;
       }
 
@@ -234,9 +240,29 @@ export class State {
         const t = (s.tools[tool] ||= { name: tool, count: 0, errors: 0, totalMs: 0, timed: 0 });
         if (pend) { t.totalMs += ts - pend.ts; t.timed++; }
         const failed = name === 'PostToolUseFailure' || isError(p.tool_response);
+        // The call that was waiting for the user's OK has run (or was turned down): the wait is over. Without this the
+        // session kept saying "needs your OK" until its next call, however long this one took.
+        if (s.status === 'waiting' && key && key === s.asked) { s.status = 'working'; s.asked = null; }
         if (failed) {
           t.errors++;
           this.push(s, { ts, kind: 'error', actor: actor.id, tool, detail: '' });
+        }
+        // What the call did, on its own event: lines added and removed, a file created, the files a search matched,
+        // how long a command ran. Measured by the server before the payload is cut (p.outcome); for an event that was
+        // spooled or comes from an old log, from what is left of it.
+        if (pend?.ev && !failed) {
+          const o = p.outcome || outcomeOf(p, true);
+          if (o) {
+            const { hits, ...rest } = o;
+            Object.assign(pend.ev, rest);
+            if (hits) {
+              pend.ev.hits = hits.map((f) => relTo(s.cwd, f));
+              const q = (s.hitEvents ||= []);
+              q.push(pend.ev);
+              while (q.length > HIT_EVENTS) delete q.shift().hits;
+            }
+          }
+          if (tool === 'Bash') pend.ev.ms = Math.max(0, ts - pend.ts);
         }
         if (AGENT_TOOLS.has(tool)) {
           const r = p.tool_response && typeof p.tool_response === 'object' ? p.tool_response : {};
@@ -259,10 +285,15 @@ export class State {
         if (p.agent_id) this.endAgent(s, p.agent_id, ts, 'done');
         break;
 
-      case 'Notification':
+      case 'Notification': {
         s.status = 'waiting';
+        // What it asks about is the call that started last and has not ended: the prompt follows its PreToolUse.
+        let last = null;
+        for (const [k, pd] of Object.entries(s.pending)) if (!last || pd.ts >= s.pending[last].ts) last = k;
+        s.asked = last;
         this.push(s, { ts, kind: 'waiting', actor: 'main', detail: String(p.message || '').slice(0, 140) });
         break;
+      }
 
       case 'PreCompact':
         s.compactions++;
@@ -295,7 +326,7 @@ export class State {
   }
 
   summary(s, now = Date.now()) {
-    const { pending, agentSeq, transcript, instructions, ...rest } = s;
+    const { pending, agentSeq, transcript, instructions, hitEvents, asked, ...rest } = s;
     const stale = isStale(s, now);
     // Drop duplicate agent aliases (same object registered under its real id).
     const seen = new Set();
@@ -372,6 +403,41 @@ export function cleanPrompt(text) {
     .trim()
     .slice(0, 140);
 }
+
+// What a finished tool call did, in numbers and paths only, never content: { add, del } lines added and removed by an
+// edit (from the patch Claude Code reports), created for a new file, { found, hits } the files a search matched.
+// cut: the payload was already redacted and cut (long lists end at 50 entries, long strings at 2,000 characters), so
+// what could have been cut is not counted rather than counted short.
+export function outcomeOf(p, cut = false) {
+  const r = p?.tool_response;
+  if (!r || typeof r !== 'object') return null;
+  const whole = (list) => !cut || list.length < 50;
+  const out = {};
+  if (Array.isArray(r.structuredPatch) && EDIT_TOOLS.has(p.tool_name)) {
+    if (r.type === 'create') {
+      out.created = true;
+      const text = typeof r.content === 'string' ? r.content : p.tool_input?.content;
+      if (typeof text === 'string' && !(cut && text.length >= 2000)) { out.add = lineCount(text); out.del = 0; }
+    } else if (whole(r.structuredPatch) && r.structuredPatch.every((h) => Array.isArray(h?.lines) && whole(h.lines))) {
+      let add = 0, del = 0;
+      for (const h of r.structuredPatch) for (const l of h.lines) { if (l[0] === '+') add++; else if (l[0] === '-') del++; }
+      out.add = add; out.del = del;
+    }
+  }
+  if (SEARCH_TOOLS.has(p.tool_name)) {
+    let files = Array.isArray(r.filenames) ? r.filenames.filter((f) => typeof f === 'string') : [];
+    // Grep showing the matching lines lists no files: they are the paths its lines start with ("src/a.js:12:…").
+    if (!files.length && typeof r.content === 'string' && !(cut && r.content.length >= 2000)) {
+      files = [...new Set([...r.content.matchAll(/^((?:[A-Za-z]:)?[^:\n]+)[:-]\d+[:-]/gm)].map((m) => m[1]))];
+    }
+    if (files.length || typeof r.numFiles === 'number') {
+      out.found = Math.max(Number(r.numFiles) || 0, whole(files) ? files.length : 0);
+      if (files.length) out.hits = files.slice(0, MAX_HITS).filter((f) => f.length <= 300);
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+const lineCount = (t) => (t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0);
 
 function isError(r) {
   if (!r || typeof r !== 'object') return false;

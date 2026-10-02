@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { State, baseName } from './state.js';
+import { State, baseName, outcomeOf } from './state.js';
 import { Tailer } from './transcript.js';
 import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
 import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
@@ -26,6 +26,7 @@ const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
 const BRAIN_CACHE_MS = 20_000;
+const BRAIN_FRESH_MS = 5_000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
@@ -95,8 +96,9 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   // every 20 s (the view asks again when Claude touches a file it doesn't know yet). Read-only, like the Memory tab.
   let brainHit = null;
   const scanImports = importScanner(); // remembers what each file imports until the file changes
-  const brain = () => {
-    if (brainHit && Date.now() - brainHit.at < BRAIN_CACHE_MS) return brainHit.promise;
+  const brain = (after = 0) => {
+    // after: the page needs a graph built after that moment (a file was just created); never more often than every 5 s.
+    if (brainHit && Date.now() - brainHit.at < BRAIN_CACHE_MS && !(after > brainHit.at && Date.now() - brainHit.at > BRAIN_FRESH_MS)) return brainHit.promise;
     const promise = (async () => {
       const projects = memory.projects().filter((p) => p.source === 'session').slice(0, BRAIN_LIMITS.projects);
       const reports = await Promise.all(projects.map((p) => memory.report(p.key).catch(() => null)));
@@ -127,6 +129,9 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
         const ts = Date.now();
         if (isDuplicate(payload, ts)) return;
         const clean = redact(payload);
+        // What the call did (lines added and removed, files matched), measured before the payload is cut: numbers and paths.
+        const outcome = payload.hook_event_name === 'PostToolUse' ? outcomeOf(payload) : null;
+        if (outcome) clean.outcome = outcome;
         log.write(ts, JSON.stringify({ ts, e: clean }));
         const s = state.apply(clean, ts);
         if (s) broadcast({ type: 'session', session: state.summary(s), sessions: state.list() });
@@ -205,7 +210,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     }
 
     if (url.pathname === '/api/brain') {
-      brain().then((g) => json(res, g), (err) => json(res, { error: String(err?.message || err) }, 500));
+      brain(Math.min(Number(url.searchParams.get('after')) || 0, Date.now())).then((g) => json(res, g), (err) => json(res, { error: String(err?.message || err) }, 500));
       return;
     }
 
