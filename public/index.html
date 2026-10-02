@@ -21,6 +21,13 @@
       </div>
     </div>
     <div class="top-right">
+      <!-- View on phone: only on this PC; a shared device gets the read-only badge instead -->
+      <span class="share-on owner-only" id="shareOn" hidden>
+        <button type="button" id="shareOnOpen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2"/><circle cx="12" cy="12" r="2"/></svg><span data-i18n="shareOn"></span></button>
+        <button type="button" class="stop" id="shareOnStop" data-i18n="shareStopShort"></button>
+      </span>
+      <button type="button" class="btn owner-only" id="shareButton"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg><span data-i18n="shareButton"></span></button>
+      <span class="ro-badge" id="readonlyBadge" hidden data-i18n="shareReadonly"></span>
       <span class="conn" id="conn"><span class="dot"></span><span id="connText" data-i18n="connecting"></span></span>
       <div class="seg icons" role="group" id="themeGroup">
         <button type="button" data-theme-set="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
@@ -142,8 +149,17 @@
     </section>
   </main>
 
+  <dialog class="share-panel" id="sharePanel" aria-labelledby="shareTitle">
+    <div class="share-head">
+      <h2 id="shareTitle" data-i18n="shareTitle"></h2>
+      <button type="button" class="icon-btn" id="shareClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="shareBody"></div>
+  </dialog>
+
   <script src="i18n.js"></script>
   <script src="app.js"></script>
   <script src="memory.js"></script>
+  <script type="module" src="share.js"></script>
 </body>
 </html>

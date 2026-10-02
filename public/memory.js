@@ -274,8 +274,9 @@ function renderExperience(x) {
   const el = $('memExperience');
   if (!x) { patchHTML(el, ''); return; }
   const t = x.tools || { on: false, source: 'default' };
+  // On a shared device (read-only) the state shows, without the switch.
   const toggle = `<div class="exp-switch">
-      <button type="button" class="switch" role="switch" id="expToggle" aria-checked="${!!t.on}"><span class="knob"></span>${esc(T.expToggle)}</button>
+      ${document.body.classList.contains('shared') ? `<b>${esc(T.expToggle)}: ${esc(t.on ? T.expOn : T.expOff)}</b>` : `<button type="button" class="switch" role="switch" id="expToggle" aria-checked="${!!t.on}"><span class="knob"></span>${esc(T.expToggle)}</button>`}
       <span class="muted">${esc(T.expSource[t.source] || '')} · ${esc(T.expNextSession)}</span>
       ${expToggleError ? `<span class="err">${esc(T.expToggleError(expToggleError))}</span>` : ''}
     </div>`;

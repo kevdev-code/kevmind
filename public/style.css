@@ -86,6 +86,40 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; font-weight: 350; }
 .conn.on .dot { background: var(--working); }
 .conn.off .dot { background: var(--error); }
 
+/* ---------- view on phone ---------- */
+.btn:disabled { opacity: 0.6; cursor: default; }
+.btn svg { width: 14px; height: 14px; flex: none; vertical-align: -2px; margin-right: 6px; }
+.btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+.btn.primary:hover { color: #fff; background: color-mix(in oklch, var(--accent-fill) 88%, black); }
+body.view-memory #shareButton { display: none; } /* the button lives in the Live tab; the indicator shows everywhere */
+.share-on { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--raised); box-shadow: 0 0 0 1px var(--border-strong); }
+.share-on button { border: 0; background: none; color: var(--text); font-size: var(--fs-xs); font-weight: 600; padding: 2px 8px; border-radius: var(--r-pill); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.share-on button:hover { background: var(--surface); }
+.share-on button.stop { color: var(--text-2); font-weight: 500; }
+.share-on svg { width: 14px; height: 14px; }
+.ro-badge { font-size: var(--fs-xs); color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 1px 8px; white-space: nowrap; }
+body.shared .owner-only { display: none !important; }
+dialog.share-panel { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); color: var(--text); }
+dialog.share-panel::backdrop { background: oklch(0% 0 0 / 0.45); }
+.share-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.share-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.icon-btn { border: 0; background: none; color: var(--text-2); padding: 4px; border-radius: var(--r-sm); cursor: pointer; display: inline-flex; }
+.icon-btn:hover { color: var(--text); background: var(--raised); }
+.icon-btn svg { width: 18px; height: 18px; }
+.share-text { margin: var(--sp-2) 0; color: var(--text-2); font-size: var(--fs-sm); }
+.share-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 var(--sp-2); font-size: var(--fs-sm); }
+.share-status svg { width: 16px; height: 16px; }
+.share-qr { display: block; width: 220px; height: 220px; margin: var(--sp-3) auto; border-radius: var(--r-md); }
+.share-link, .share-cmd { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.share-link code, .share-cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--raised); border-radius: var(--r-sm); padding: 6px 8px; font-size: var(--fs-xs); }
+.share-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.share-note { margin: var(--sp-2) 0 0; }
+.share-err { color: var(--error); font-size: var(--fs-sm); }
+.share-help { margin-top: var(--sp-3); border-top: 1px solid var(--border); padding-top: var(--sp-2); font-size: var(--fs-sm); }
+.share-help summary { cursor: pointer; color: var(--text); font-weight: 500; }
+.share-help ol { margin: var(--sp-2) 0 0; padding-left: 20px; list-style: decimal; display: grid; gap: var(--sp-2); color: var(--text-2); }
+.share-cmd { margin-top: 6px; }
+
 /* ---------- layout: rails flush on the canvas, the center on panels ---------- */
 .layout { display: grid; grid-template-columns: 232px minmax(0, 1fr) 300px; gap: var(--sp-5); padding: var(--sp-4); max-width: 1600px; margin: 0 auto; align-items: start; }
 body.view-memory .layout { display: none; }

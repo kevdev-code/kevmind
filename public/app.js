@@ -90,6 +90,7 @@ function setLang(next) {
   schedule();
   updateAttention();
   if (typeof renderMemoryView === 'function') renderMemoryView();
+  window.renderShare?.();
 }
 
 function applyStatic() {
@@ -152,6 +153,7 @@ function connect() {
   es.onmessage = (m) => {
     const msg = JSON.parse(m.data);
     if (msg.type === 'reload') return location.reload();
+    if (msg.type === 'share') return window.onShare?.(msg.share); // View on phone (share.js); this PC's pages only
     if (msg.type === 'hello') {
       if (bootId && msg.bootId !== bootId) return location.reload();
       bootId = msg.bootId;
