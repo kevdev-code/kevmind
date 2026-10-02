@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
-const files = { experience: '../src/experience.js', mcp: '../mcp/server.js' };
+const files = { experience: '../src/experience.js', mcp: '../mcp/server.js', codemap: '../src/codemap.js' };
 const code = Object.fromEntries(Object.entries(files).map(([k, f]) => [k, strip(fs.readFileSync(new URL(f, import.meta.url), 'utf8'))]));
 
 for (const [name, src] of Object.entries(code)) {
@@ -30,6 +30,13 @@ test('experience.js runs git only as `git log`, through one guarded helper', () 
   assert.match(code.experience, /if \(!GIT_READ\.has\(args\[0\]\)\) throw/);
   for (const m of code.experience.matchAll(/gitRead\([^,]+,\s*\[\s*'([\w-]+)'/g)) assert.equal(m[1], 'log');
   assert.ok(!/execFile/.test(code.mcp), 'the MCP server itself never runs a process');
+});
+
+test('codemap.js runs git only as `git ls-files` and `git log`, through one guarded helper', () => {
+  assert.ok(code.codemap.includes("const GIT_MAP = new Set(['ls-files', 'log']);"));
+  assert.equal(code.codemap.match(/execFile\(/g).length, 1);
+  assert.match(code.codemap, /if \(!GIT_MAP\.has\(args\[0\]\)\) throw/);
+  for (const m of code.codemap.matchAll(/gitRead\([^,]+,\s*\[\s*'([\w-]+)'/g)) assert.ok(['ls-files', 'log'].includes(m[1]), m[1]);
 });
 
 test('the MCP server only reads KevMind\'s config: it imports nothing that writes it', () => {

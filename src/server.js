@@ -16,6 +16,7 @@ import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which
 import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
 import { importScanner } from './imports.js';
+import { codeMapper, staleNames } from './codemap.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -353,6 +354,17 @@ function memoryApi(state) {
     }
   };
   const projects = () => { refresh(); return listProjects({ cwds: usage.cwds }); };
+  // The code map of each project whose report asked for it (one builder each: a builder keeps one project's files),
+  // reused for a minute: reports come every 20 s while the Brain is open, and a warm rebuild costs ~250 ms on 1,000 files.
+  // ponytail: kept for the server's life, about 10 MB for a project of 1,000 files; drop idle ones if that grows.
+  const mappers = new Map(); // key -> { build, map, at }
+  const codeNames = (root) => async (names) => {
+    const k = keyOf(root);
+    if (!mappers.has(k)) mappers.set(k, { build: codeMapper(), map: null, at: 0 });
+    const m = mappers.get(k);
+    if (!m.map || Date.now() - m.at > 60_000) { m.map = await m.build(root); m.at = Date.now(); }
+    return staleNames(m.map, names);
+  };
   const cache = new Map();
   const report = async (key) => {
     const p = projects().find((x) => x.key === key);
@@ -368,6 +380,7 @@ function memoryApi(state) {
       reads: { since: usage.since ?? Date.now(), items: usage.reads },
       loaded: latest ? latest.instructions : [],
       projects: projects(), // so a file shared by several projects reports its problems once, where it lives
+      codeNames: experienceTools(DATA_DIR, pluginOption()).on ? codeNames(p.root) : null, // the code map is off with the tools
     }).then((r) => ({ ...r, key, source: p.source }));
     cache.set(key, { at: Date.now(), promise });
     promise.catch(() => cache.delete(key));

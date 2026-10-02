@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // KevMind experience: a stdio MCP server (JSON-RPC, one message per line) that tells Claude what this project's
-// history shows: past Claude Code sessions recorded by KevMind, and git. History only, no code parsing.
+// history shows (past Claude Code sessions recorded by KevMind, and git) and, through code_map, its approximate
+// structure from import and export statements (src/codemap.js: names, never types; exact references are Serena's).
 // It reads ~/.kevmind/experience.json, kept current by the dashboard, plus any log lines newer than that file,
 // and never writes anything (test/experience-readonly.test.mjs). Off unless ~/.kevmind/config.json or the plugin's
 // "experience_tools" option turns it on (src/config.js). Logs go to stderr; stdout carries protocol messages only.
@@ -9,8 +10,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  emptyAggregate, revive, updateFromLogs, refreshGit, projectAt, repoFor, answerFileContext, answerFileHistory, answerKnownFailures, THRESHOLDS,
+  emptyAggregate, revive, updateFromLogs, refreshGit, projectAt, repoFor, relPath, history, partners, answerFileContext, answerFileHistory, answerKnownFailures, THRESHOLDS,
 } from '../src/experience.js';
+import { codeMapper, answerCodeMap } from '../src/codemap.js';
 import { projectRoot, keyOf } from '../src/memory.js';
 import { experienceTools } from '../src/config.js';
 
@@ -25,7 +27,7 @@ const NAME = path.basename(ROOT);
 const REFRESH_MS = 2000;
 const GIT_STALE_MS = 24 * 60 * 60_000;
 
-const SERENA = 'For code structure (symbols, references, definitions) use Serena or other code tools if available; KevMind only reports history.';
+const SERENA = 'For structure, KevMind\'s code_map is approximate (imports, exports, names); exact references and definitions come from Serena or a language server.';
 const TOOLS = [
   {
     name: 'file_context',
@@ -48,7 +50,46 @@ const TOOLS = [
       path: { type: 'string', description: 'Optional: the folder the command ran in, to answer from a git repo nested in this project (such as "frontend")' },
     } },
   },
+  {
+    name: 'code_map',
+    description: 'This project\'s code from its import and export statements, with its history: where an exported name is used, what a file holds and who imports it, ' +
+      'how one file reaches another, what an area of files holds; with no arguments, the key files and areas. Approximate (names, no type check): ' +
+      'exact references come from Serena or a language server. Answers in under 200 tokens. Not on every task.',
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: 'An exported name (function, class, constant, type): which files use it' },
+      file: { type: 'string', description: 'A code file: what it exports and who uses it, what it imports, its area' },
+      from: { type: 'string', description: 'With to: how this file reaches the other one through imports' },
+      to: { type: 'string', description: 'With from: the other file' },
+      area: { type: 'string', description: 'An area name from the overview, or a folder' },
+    } },
+  },
 ];
+
+// The code map: rebuilt at most every 10 s, and then only the files that changed are read again.
+const mapper = codeMapper();
+let map = null, mapAt = 0;
+async function codeMapNow() {
+  if (!map || Date.now() - mapAt > 10_000) { map = await mapper(ROOT); mapAt = Date.now(); }
+  return map;
+}
+// One line of history for a file, or for two files ("a|b": whether they change together), from the aggregate.
+async function historyOf(key) {
+  const now = Date.now(), [a, b] = key.split('|');
+  const repo = repoFor(ROOT, a), proj = await projectFor(repo);
+  if (!proj) return '';
+  const idOf = (p) => proj._fi.get(relPath(proj.root, path.resolve(ROOT, p)));
+  const f = idOf(a);
+  if (f === undefined) return '';
+  if (b !== undefined) {
+    // Either way round: a pattern can qualify from one file's side only (3 of 3 commits of one, 3 of 14 of the other).
+    const g = idOf(b), x = g === undefined ? null : partners(proj, f, now).find((y) => y.f === g) || partners(proj, g, now).find((y) => y.f === f);
+    return x ? `they usually change together (${[x.s && `${x.s.n} work episodes on ${x.s.days} days`, x.g && `git: ${x.g.n} of ${x.g.of} commits`].filter(Boolean).join('; ')})` : '';
+  }
+  const h = history(proj, f, now), parts = [];
+  if (h.editEpisodes) parts.push(`edited in ${h.editEpisodes} work episode${h.editEpisodes === 1 ? '' : 's'} on ${h.editDays} day${h.editDays === 1 ? '' : 's'} (Claude Code)`);
+  if (h.git.changes) parts.push(`git: ${h.git.changes} commit${h.git.changes === 1 ? '' : 's'}, ${h.git.fixes} labeled as fix${h.git.fixes === 1 ? '' : 'es'}`);
+  return parts.join('; ');
+}
 
 // The aggregate: the dashboard's file if present, brought up to date with newer log lines; built from the logs
 // once when the file is missing. Kept in memory and refreshed at most every 2 s.
@@ -118,6 +159,7 @@ async function call(name, args = {}) {
     const w = where(repo);
     return answerFileHistory(await projectFor(repo), w.name, repo === ROOT ? p : path.resolve(ROOT, p), now, { prefix: w.prefix });
   }
+  if (name === 'code_map') return answerCodeMap(await codeMapNow(), NAME, args || {}, historyOf);
   if (name === 'known_failures') {
     const repo = args.path ? repoFor(ROOT, String(args.path)) : ROOT;
     return answerKnownFailures(await projectFor(repo), where(repo).name, args.command ? String(args.command) : '', now);

@@ -67,11 +67,11 @@ test('initialize, tools/list and tools/call over stdio', async () => {
   c.notify('notifications/initialized');
 
   const list = await c.rpc('tools/list');
-  assert.deepEqual(list.result.tools.map((t) => t.name), ['file_context', 'file_history', 'known_failures']);
+  assert.deepEqual(list.result.tools.map((t) => t.name), ['file_context', 'file_history', 'known_failures', 'code_map']);
   for (const t of list.result.tools) {
     assert.ok(t.description.length < 420, `${t.name} description stays short`);
     assert.match(t.description, /Not on every task/);
-    assert.match(t.description, /use Serena or other code tools if available; KevMind only reports history/);
+    assert.match(t.description, /exact references( and definitions)? come from Serena or a language server/);
   }
 
   const t0 = performance.now();
@@ -85,6 +85,8 @@ test('initialize, tools/list and tools/call over stdio', async () => {
 
   const failures = await c.rpc('tools/call', { name: 'known_failures', arguments: {} });
   assert.ok(failures.result.content[0].text.startsWith('No data:'));
+  const map = await c.rpc('tools/call', { name: 'code_map', arguments: { name: 'notExportedAnywhere' } });
+  assert.ok(map.result.content[0].text.startsWith('No data:'));
 
   assert.equal((await c.rpc('tools/call', { name: 'nope', arguments: {} })).error.code, -32602);
   assert.equal((await c.rpc('resources/list')).error.code, -32601);
@@ -107,10 +109,10 @@ test('config.json decides over the plugin option: off stays off, on turns them o
   fs.writeFileSync(path.join(dir, 'config.json'), '{"experienceTools": false}');
   assert.deepEqual(await tools({ KEVMIND_EXPERIENCE: 'true' }), [], 'the plugin option cannot override "off"');
   fs.writeFileSync(path.join(dir, 'config.json'), '{"experienceTools": true}');
-  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'false' })).length, 3);
-  assert.equal((await tools({ KEVMIND_EXPERIENCE: '' })).length, 3);
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'false' })).length, 4);
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: '' })).length, 4);
   fs.rmSync(path.join(dir, 'config.json'));
-  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'true' })).length, 3, 'without the file, the plugin option decides');
+  assert.equal((await tools({ KEVMIND_EXPERIENCE: 'true' })).length, 4, 'without the file, the plugin option decides');
 });
 
 test('with the option off, the server lists no tools and refuses calls', async () => {

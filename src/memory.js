@@ -122,7 +122,9 @@ export function listProjects({ cwds = new Map(), home = os.homedir() } = {}) {
 // loaded: [{ path, reason, type }] from the latest InstructionsLoaded events of this project's sessions.
 // projects: [{ root, name }] every known project, so a file shared by several (a parent folder's CLAUDE.md)
 // has its problems reported once, under the project it lives in.
-export async function scanProject(root, { home = os.homedir(), now = Date.now(), reads = null, loaded = [], projects = [] } = {}) {
+// codeNames(names): resolves to a Map of the names no code file has anymore but git shows in the code before
+// (name -> { commit, date, subject }); from the code map, so null while the experience tools are off.
+export async function scanProject(root, { home = os.homedir(), now = Date.now(), reads = null, loaded = [], projects = [], codeNames = null } = {}) {
   root = path.resolve(root);
   const problems = [];
   const display = (p) => {
@@ -144,7 +146,7 @@ export async function scanProject(root, { home = os.homedir(), now = Date.now(),
     }
     return best && best.key !== keyOf(root) ? best : null;
   };
-  const ctx = { root, home, display, problems, ownerOf, add: (tier, code, file, params, fix) => problems.push({ tier, code, file, params, fix }) };
+  const ctx = { root, home, display, problems, ownerOf, codeNames, add:(tier, code, file, params, fix) => problems.push({ tier, code, file, params, fix }) };
 
   const instructions = await scanInstructions(ctx, loaded);
   const memory = await scanAutoMemory(ctx);
@@ -160,6 +162,7 @@ export async function scanProject(root, { home = os.homedir(), now = Date.now(),
     ...serena.notes.map((n) => ({ owner: n, text: n.text, base: root, fileDir: root })),
   ];
   const git = await checkCitations(ctx, sources);
+  await checkScripts(ctx, sources);
   lastReads(ctx, memory.notes, reads, now);
   overlaps(ctx, memory.notes);
 
@@ -505,6 +508,11 @@ const ITEM_RE = /^\s*(?:[-*+]|\d+[.)])\s/;
 const FENCE_RE = /^\s*(?:```|~~~)/;
 const TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}/;
 
+// A code name in backticks: camelCase or PascalCase of at least two words (`fetchUser`, `UserCard`); not an ID such
+// as `prod_123`, a constant in capitals or a single word. A trailing "()" is dropped.
+const NAME_RE = /^(?:[a-z]+|[A-Z][a-z0-9]+)(?:[A-Z][a-z0-9]+)+$/;
+const nameOf = (t) => { t = t.trim().replace(/\(\)$/, ''); return NAME_RE.test(t) ? t : null; };
+
 // The path a token names, normalized, or null when it doesn't look like a cited file.
 function acceptPath(t, topDirs, home) {
   t = t.trim().replace(/^[[('"]+/, '').replace(/[\]'"),.;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -527,8 +535,8 @@ function acceptPath(t, topDirs, home) {
 // sentence or table cell, items under a "Don't" heading or label, cells in a "Don't" column, and ❌ items.
 function citations(text, topDirs, home) {
   const found = new Map();
-  const record = (p, line, gitTalk) => {
-    if (!found.has(p)) found.set(p, { path: p, lines: new Set(), gitTalk: false });
+  const record = (p, line, gitTalk, name = null) => {
+    if (!found.has(p)) found.set(p, { path: p, name, lines: new Set(), gitTalk: false });
     found.get(p).lines.add(line);
     if (gitTalk) found.get(p).gitTalk = true;
   };
@@ -550,13 +558,14 @@ function citations(text, topDirs, home) {
       mask = blank(mask, m.index, m[0].length);
     }
     for (const m of mask.matchAll(/`([^`]+)`/g)) {
-      toks.push({ t: m[1], at: m.index + 1 });
+      toks.push({ t: m[1], at: m.index + 1, code: true });
       mask = blank(mask, m.index, m[0].length);
     }
     for (const m of mask.matchAll(/(?:^|[\s(["'])((?:[A-Za-z]:)?[\w.@~-]*[\\/][\w.@[\]\\/-]+)/g)) toks.push({ t: m[1], at: m.index + m[0].length - m[1].length });
     for (const tok of toks) {
       const p = acceptPath(tok.t, topDirs, home);
-      if (!p || negatedAll) continue;
+      const name = !p && tok.code ? nameOf(tok.t) : null;
+      if ((!p && !name) || negatedAll) continue;
       let start = 0;
       let end = text.length;
       for (const m of text.matchAll(/[.!?](?=\s)|\|/g)) {
@@ -570,7 +579,7 @@ function citations(text, topDirs, home) {
       const rel = tok.at - (row ? 0 : start);
       const around = context.slice(0, rel) + ' ' + context.slice(rel + tok.t.length);
       if (NEG_RE.test(around)) continue;
-      record(p, lineAt(tok.at), GIT_TALK_RE.test(around));
+      if (name) record(`\`${name}`, lineAt(tok.at), false, name); else record(p, lineAt(tok.at), GIT_TALK_RE.test(around));
     }
   };
 
@@ -614,7 +623,7 @@ function citations(text, topDirs, home) {
   });
   flush();
   return [...found.values()]
-    .map((c) => ({ path: c.path, lines: [...c.lines].sort((a, b) => a - b), gitTalk: c.gitTalk }))
+    .map((c) => ({ path: c.path, name: c.name, lines: [...c.lines].sort((a, b) => a - b), gitTalk: c.gitTalk }))
     .sort((a, b) => a.lines[0] - b.lines[0] || a.path.localeCompare(b.path));
 }
 
@@ -759,14 +768,18 @@ async function locate(ws, p, fileDir) {
 async function checkCitations(ctx, sources) {
   const { home, add, display } = ctx;
   const cache = new Map();
-  const where = (list) => list.map((c) => `- ${c.path} (line${c.lines.length > 1 ? 's' : ''} ${c.lines.join(', ')})${c.to?.length ? `, maybe now ${c.to.join(' or ')}` : ''}`).join('\n');
+  const lines = (c) => `line${c.lines.length > 1 ? 's' : ''} ${c.lines.join(', ')}`;
+  const where = (list) => list.map((c) => `- ${c.path} (${lines(c)})${c.to?.length ? `, maybe now ${c.to.join(' or ')}` : ''}`).join('\n');
+  const named = []; // { owner, names }: code names each file mentions, checked together below
   for (const { owner, text, base, fileDir } of sources) {
     const ws = await workspace(base, cache);
     const scope = display(base) === '.' ? 'this project' : display(base);
     const missing = [];
     const moved = [];
+    const names = [];
     owner.cites = [];
     for (const c of citations(text, ws.topDirs, home)) {
+      if (c.name) { names.push(c); continue; }
       // A branch name, not a folder: an existing branch, or a branch-namespace name in a sentence about git.
       if (!EXT.test(c.path) && (ws.branches.has(c.path) || (c.gitTalk && ws.namespaces.has(c.path.split('/')[0])))) continue;
       const s = await locate(ws, c.path, fileDir);
@@ -784,9 +797,72 @@ async function checkCitations(ctx, sources) {
         `${owner.display} cites ${moved.length === 1 ? 'a path that is' : `${moved.length} paths that are`} not where it says, but a file with the same name exists elsewhere in ${scope}:\n${where(moved)}\n` +
         'This is a low-confidence guess from file names. Check whether each is the same file and, if so, update the path.');
     }
+    if (names.length) named.push({ owner, names });
+  }
+  // Names no code file has anymore although git shows them in the code before (codeNames comes from the code map,
+  // when the experience tools are on). A name that was never in the code is planned work or not code: left out.
+  if (ctx.codeNames && named.length) {
+    const gone = await ctx.codeNames([...new Set(named.flatMap((x) => x.names.map((c) => c.name)))]);
+    for (const { owner, names } of named) {
+      const stale = names.filter((c) => gone.has(c.name)).map((c) => ({ ...c, ...gone.get(c.name) }));
+      if (!stale.length) continue;
+      // A suggestion, not a warning: notes about a fixed bug name the removed code on purpose.
+      add('suggestion', 'stale_name', owner.display, { count: stale.length, cited: stale.slice(0, 3).map((c) => c.name).join(', '), items: stale.map((c) => ({ path: c.name, lines: c.lines })) },
+        `${owner.display} names ${stale.length === 1 ? 'something' : `${stale.length} things`} no code file in this project has anymore, though git shows ${stale.length === 1 ? 'it' : 'each'} in the code before:\n` +
+        stale.map((c) => `- \`${c.name}\` (${lines(c)}), last changed in ${c.commit} on ${c.date}: "${c.subject}"`).join('\n') + '\n' +
+        'If the passage tells the history on purpose (a fixed bug, a removed feature), leave it. Otherwise find what replaced each one (git show <commit> helps) and update the passage.');
+    }
   }
   const mine = await workspace(ctx.root, cache);
   return mine.repos.map((r) => ({ repo: r.rel || '.', ref: r.listing.ref }));
+}
+
+// ---- package scripts -----------------------------------------------------------------------------------------
+
+const RUN_RE = /\b(npm|bun|pnpm|yarn)\s+run\s+([\w:.-]+)(?=$|[\s`'")|;&,])/g;
+
+// "npm run x" (or bun, pnpm, yarn) in instruction files, notes and READMEs when no package.json of the project has
+// a script x. Code blocks count: that is where commands usually are. bun and yarn also run installed binaries
+// ("bun run tsc") and files ("bun run index.ts"): those are not scripts.
+// ponytail: package.json at the root and in each nested repo; a monorepo with "workspaces" is skipped whole.
+async function checkScripts(ctx, sources) {
+  const ws = await workspace(ctx.root, new Map());
+  const dirs = [ctx.root, ...ws.repos.map((r) => r.dir).filter((d) => keyOf(d) !== keyOf(ctx.root))];
+  const scripts = new Set();
+  let packages = 0;
+  for (const d of dirs) {
+    const text = await readText(path.join(d, 'package.json'));
+    if (text === null) continue;
+    let pkg;
+    try { pkg = JSON.parse(text); } catch { return; }
+    if (pkg.workspaces) return;
+    packages++;
+    for (const k of Object.keys(pkg.scripts || {})) scripts.add(k);
+  }
+  if (!packages) return;
+  const bins = new Set();
+  for (const d of dirs) for (const e of await entries(path.join(d, 'node_modules', '.bin'))) bins.add(e.name.replace(/\.(?:exe|cmd|ps1|bunx)$/i, ''));
+  const readmes = [];
+  for (const d of dirs) {
+    const file = path.join(d, 'README.md'), text = await readText(file);
+    if (text !== null) readmes.push({ owner: { display: ctx.display(file) }, text });
+  }
+  for (const { owner, text } of [...sources, ...readmes]) {
+    const missing = new Map();
+    text.split(/\r?\n/).forEach((l, i) => {
+      for (const [cmd, tool, s] of l.matchAll(RUN_RE)) {
+        if (scripts.has(s) || ((tool === 'bun' || tool === 'yarn') && (s.includes('.') || bins.has(s)))) continue;
+        if (!missing.has(s)) missing.set(s, { path: cmd, lines: [] });
+        if (!missing.get(s).lines.includes(i + 1)) missing.get(s).lines.push(i + 1);
+      }
+    });
+    if (!missing.size) continue;
+    const items = [...missing.values()];
+    ctx.add('warning', 'missing_script', owner.display, { count: items.length, cited: items[0].path, items },
+      `${owner.display} runs ${items.length === 1 ? 'a script' : `${items.length} scripts`} that no package.json in this project has:\n` +
+      items.map((c) => `- ${c.path} (line${c.lines.length > 1 ? 's' : ''} ${c.lines.join(', ')})`).join('\n') + '\n' +
+      'For each one, find the script in package.json that does this now and update the command, or remove it if the script is gone.');
+  }
 }
 
 // ---- reading history and overlaps ----------------------------------------------------------------------------
