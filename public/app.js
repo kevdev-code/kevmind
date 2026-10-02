@@ -176,7 +176,7 @@ function connect() {
     }
     const first = visibleSessions()[0];
     if (!selectedId && first) return select(first.id, false);
-    window.brainFollow?.(); // the Brain tab follows the selected session (brain.js)
+    window.brainFollow?.(msg.type === 'session' ? msg.session : null); // the Brain tab: the selected session, or every live one (brain.js)
     schedule();
   };
 }

@@ -255,3 +255,60 @@ export function makeReplay(graph, { seed = 11 } = {}) {
   const end = events[events.length - 1].at;
   return { project: P, agents, events, length: end + 12000 }; // 12 s of stillness before it loops
 }
+
+// Several sessions at once, in three projects (the Brain's "All live sessions"): the demo-agency replay above, a
+// session in demo-shop (Claude and one subagent; Claude waits for the user's OK for 9 s) and one in demo-kevmind
+// (Claude alone, with a test that fails and then passes), starting a few seconds apart and working at the same time.
+// Each event carries its `session`; agent ids are per session. { sessions, agents: { session: [defs] }, events, length }.
+export function makeSessions(graph, { seed = 23 } = {}) {
+  const r = rng(seed);
+  const base = makeReplay(graph);
+  const MAIN = { id: 'main', label: 'Claude', type: 'main' };
+  const sessions = [
+    { id: 's-agency', project: base.project, title: 'Review booking dates' },
+    { id: 's-shop', project: 'demo-shop', title: 'Fix the cart total' },
+    { id: 's-kevmind', project: 'demo-kevmind', title: 'A project badge on the tags' },
+  ];
+  const agents = {
+    's-agency': base.agents,
+    's-shop': [MAIN, { id: 'a1', label: '#1 Explore', type: 'Explore', task: 'Find where the cart total is computed' }],
+    's-kevmind': [MAIN],
+  };
+  const events = base.events.map((e) => ({ ...e, session: 's-agency' }));
+  const nodesOf = (P) => {
+    const inP = graph.nodes.filter((n) => n.project === P);
+    return {
+      find: (re, type = 'file') => { const hits = inP.filter((n) => n.type === type && re.test(n.path)); return hits.length ? hits[r.int(hits.length)].id : inP.find((n) => n.type === type).id; },
+      tool: (t) => inP.find((n) => n.type === 'tool' && n.name === t).id,
+    };
+  };
+  const script = (session, agent, at, steps) => {
+    for (const [kind, node, gap] of steps) {
+      events.push({ at, session, agent, kind, node, text: node != null ? graph.nodes[node].name : '', tokens: kind === 'think' ? 150 + r.int(1200) : 0 });
+      at += gap ?? 900 + r.int(1500);
+    }
+    return at;
+  };
+  const shop = nodesOf('demo-shop');
+  let t = script('s-shop', 'main', 3500, [
+    ['start', null, 300], ['read', shop.find(/^CLAUDE\.md$/, 'instruction'), 900], ['read', shop.find(/features\/payments/)],
+    ['read', shop.find(/api\/payments/)], ['think', null, 1100], ['command', shop.tool('Agent'), 400],
+  ]);
+  const found = script('s-shop', 'a1', t + 200, [
+    ['start', null, 500], ['read', shop.tool('Grep')], ['read', shop.find(/features\/invoices/)], ['read', shop.find(/api\/invoices/)],
+    ['read', shop.find(/lib\//)], ['read', shop.find(/features\/packages/)], ['stop', null],
+  ]);
+  script('s-shop', 'main', found + 1200, [
+    ['edit', shop.find(/features\/payments/)], ['edit', shop.find(/api\/payments/)], ['wait', null, 9000], ['command', shop.tool('Bash'), 2400],
+    ['web', shop.tool('WebFetch'), 1800], ['edit', shop.find(/features\/payments/)], ['command', shop.tool('Bash'), 2200], ['stop', null],
+  ]);
+  const km = nodesOf('demo-kevmind');
+  script('s-kevmind', 'main', 7000, [
+    ['start', null, 300], ['read', km.find(/^CLAUDE\.md$/, 'instruction'), 800], ['read', km.find(/^src\/server/)], ['read', km.find(/^src\/state/)],
+    ['think', null, 1300], ['read', km.find(/^public\/brain/)], ['edit', km.find(/^public\/brain/)], ['edit', km.find(/^public\/i18n/)],
+    ['command', km.tool('Bash'), 2600], ['error', km.tool('Bash'), 900], ['think', null, 1200], ['edit', km.find(/^public\/brain/)],
+    ['command', km.tool('Bash'), 2400], ['read', km.find(/^test\//)], ['stop', null],
+  ]);
+  events.sort((a, b) => a.at - b.at);
+  return { sessions, agents, events, length: events[events.length - 1].at + 12000 };
+}

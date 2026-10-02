@@ -3,8 +3,9 @@
 // view the dashboard does and plays a replay of one working session in a loop.
 // ?nodes=3000 (the stress case), ?speed=2, ?nointro, ?noreplay, ?light, ?bloom=off|light|full|only, ?skip=layers, ?shell=n.
 // ?actions: instead of the replay, each action's figure in turn (the ten of the legend), to look at them one by one.
+// ?sessions: three sessions in three projects working at once, with the switch between the selected one and all.
 import { mountBrain } from '../../public/brain/view.js';
-import { makeGraph, makeReplay } from './data.js';
+import { makeGraph, makeReplay, makeSessions } from './data.js';
 
 const params = new URLSearchParams(location.search);
 const TARGET = Number(params.get('nodes')) || 0;
@@ -18,14 +19,42 @@ document.documentElement.lang = lang;
 document.getElementById('harnessTag').textContent = W.tag;
 
 const graph = makeGraph({ target: TARGET });
-const replay = makeReplay(graph);
-const defs = new Map(replay.agents.map((a) => [a.id, a]));
+const MULTI = params.has('sessions');
+const replay = MULTI ? makeSessions(graph) : makeReplay(graph);
+// An event's agent definition: per session with ?sessions.
+const defs = MULTI ? new Map(Object.entries(replay.agents).flatMap(([sid, list]) => list.map((a) => [`${sid}/${a.id}`, a])))
+  : new Map(replay.agents.map((a) => [a.id, a]));
+const defOf = (ev) => defs.get(ev.session ? `${ev.session}/${ev.agent}` : ev.agent);
+// "All live sessions" or only the first one, as the dashboard's switch does; another session waiting for the OK is
+// then named under the panel.
+let mode = 'all';
+const waitingElsewhere = new Map();
+function showSessions() {
+  brain.reset();
+  waitingElsewhere.clear();
+  brain.setOthers([]);
+  if (mode === 'all') for (const s of replay.sessions) brain.setSession(s);
+  else brain.setSession({ project: replay.sessions[0].project });
+  brain.setMode(mode);
+}
+function play(ev) {
+  if (!MULTI) return brain.onEvent({ ...ev, def: defOf(ev) });
+  if (mode === 'all') return brain.onEvent({ ...ev, def: defOf(ev) });
+  if (ev.session === replay.sessions[0].id) return brain.onEvent({ ...ev, session: undefined, def: defOf(ev) });
+  if (ev.agent !== 'main') return;
+  const s = replay.sessions.find((x) => x.id === ev.session);
+  if (ev.kind === 'wait') waitingElsewhere.set(s.id, { id: s.id, project: s.project, title: s.title });
+  else waitingElsewhere.delete(s.id);
+  brain.setOthers([...waitingElsewhere.values()]);
+}
 const brain = mountBrain(document.getElementById('brainView'), {
-  graph, strings: () => window.I18N[lang].brain, lang: () => lang, project: replay.project,
+  graph, strings: () => window.I18N[lang].brain, lang: () => lang, project: MULTI ? replay.sessions[0].project : replay.project,
+  onMode: MULTI ? (m) => { mode = m; restartReplay(); } : undefined,
   options: { skip: (params.get('skip') || '').split(',').filter(Boolean), shell: params.get('shell'), light: params.has('light'), bloom: params.get('bloom'), intro: params.has('nointro') ? false : undefined },
   onReady: () => setTimeout(params.has('actions') ? startActions : startReplay, 0), // once the intro is over (or skipped)
 });
-window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show, event: brain.onEvent, seed: brain.seed, reset: brain.reset, born: brain.born, setWaiting: brain.setWaiting });
+window.__brain = Object.assign(brain.debug, { hide: brain.hide, show: brain.show, event: brain.onEvent, seed: brain.seed, reset: brain.reset, born: brain.born, setWaiting: brain.setWaiting,
+  setSession: brain.setSession, dropSession: brain.dropSession, setOthers: brain.setOthers, setMode: brain.setMode });
 window.__graph = graph; // for scripted moves in screenshots
 
 // The harness's own controls, at the end of the rail.
@@ -51,9 +80,10 @@ function nextEvent() {
   const elapsed = (performance.now() - rp.t0) * SPEED;
   const ev = replay.events[rp.idx];
   if (!ev) { rp.timer = setTimeout(restartReplay, Math.max(0, (replay.length - elapsed) / SPEED)); return; }
-  rp.timer = setTimeout(() => { brain.onEvent({ ...ev, def: defs.get(ev.agent) }); rp.idx++; renderReplay(); nextEvent(); }, Math.max(0, (ev.at - elapsed) / SPEED));
+  rp.timer = setTimeout(() => { play(ev); rp.idx++; renderReplay(); nextEvent(); }, Math.max(0, (ev.at - elapsed) / SPEED));
 }
 function startReplay() {
+  if (MULTI) showSessions();
   if (params.has('noreplay')) return;
   rp.t0 = performance.now(); rp.idx = 0;
   nextEvent();
@@ -92,7 +122,7 @@ function startActions() {
   setTimeout(next, 600);
 }
 function restartReplay() {
-  brain.reset();
+  if (MULTI) showSessions(); else brain.reset();
   rp.t0 = performance.now(); rp.idx = 0;
   renderReplay();
   nextEvent();

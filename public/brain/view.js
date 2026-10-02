@@ -25,6 +25,12 @@ const FX_ICONS = {
   error: '<path d="M13 3L6 13.500h5l-1 7.5 7-10.500h-5z"/>',
   done: '<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="8" opacity=".4"/>',
 };
+// An agent's name on its tag: "Claude", or a subagent's number ("#2", with its type when there is room). With several
+// sessions on screen its project follows as a badge ("Claude · OdonMind", "#2 · OdonMind": the type gives way).
+function tagOf(main, label, type, project, compact) {
+  const who = main || project || compact || !type ? label : `${label} ${type}`;
+  return [who, project ? `· ${project}` : ''];
+}
 const TEMPLATE = `
 <aside class="rail" id="rail">
   <details class="filters" id="filters" open>
@@ -45,6 +51,10 @@ const TEMPLATE = `
   <div class="overlay tl">
     <div class="titlerow"><h2 class="title" id="wellTitle" data-bi18n="viewBrain"></h2><span class="muted" id="counts"></span><span class="filtered" id="filtered" hidden><span data-bi18n="filtersOn"></span> · <button type="button" id="filtersReset" data-bi18n="filtersReset"></button></span></div>
     <p class="hint" id="hint" data-bi18n="hint"></p>
+    <div class="seg sessmode" role="group" id="sessMode" data-bi18n-label="sessMode" hidden>
+      <button type="button" data-mode="one" aria-pressed="true" data-bi18n="sessOne"></button>
+      <button type="button" data-mode="all" aria-pressed="false" data-bi18n="sessAll"></button>
+    </div>
   </div>
   <div class="overlay tr">
     <div class="animrow"><div class="fxhelp" id="fxHelp">
@@ -74,8 +84,8 @@ const TEMPLATE = `
     </div>
   </div>
   <div class="overlay br now" id="brainNow">
-    <div class="now-top"><span class="status" id="brainStatus"><span class="dot"></span><span id="brainStatusText"></span></span><span class="nowproj" id="brainProject"></span></div>
-    <ul class="agents" id="agentList"></ul>
+    <ul class="sessions" id="sessList"></ul>
+    <ul class="others" id="othersList" hidden></ul>
   </div>
   <div class="tip" id="tip" hidden></div>
   <p class="nogl" id="noGl" hidden data-bi18n="noWebgl"></p>
@@ -92,7 +102,11 @@ const shells = new Map();
 //     brain, bloom: 'off' | 'light' | 'full' | 'only', intro: false for none, camera: { yaw, pitch, zoom } to start
 //     from, shown: false to start hidden };
 //   onReady(): the intro is over (or was skipped): events may flow.
-// Returns { onEvent, seed, reset, setSession, setLang, show, hide, camera, destroy, debug }.
+//   Several sessions at once (optional): events then carry `session` (its id); setSession({ id, project, title })
+//   names each one's project, dropSession(id) lets one go. onMode(mode) ('one' | 'all') shows the header's switch
+//   between the selected session and every live one; onPick(id): a session was clicked in the panel.
+// Returns { onEvent, seed, reset, setSession, dropSession, setWaiting, setOthers, setMode, setLang, show, hide, camera,
+//   destroy, debug }.
 export function mountBrain(host, env) {
   const opt = env.options || {};
   const SKIP = new Set(opt.skip || []); // benchmark only: draw without some layers
@@ -780,29 +794,50 @@ export function mountBrain(host, env) {
     if (moving) camDirty = true;
     return moving;
   }
-  // Follow: the camera eases toward where agents are working, and back to the whole brain when the session is idle.
+  // Follow: the camera eases toward where agents are working (only the session picked in the panel, when one is), and
+  // back to the whole brain when nothing works.
   function followGoal() {
     if (!follow) return;
-    const pts = [...agents.values()].filter((a) => a.pos && a.status !== 'done' && !(a.hideAt && performance.now() > a.hideAt)).map((a) => a.node != null ? at(a.node) : a.pos);
-    if (pts.length && session.status === 'working') {
-      goal.target = [0, 1, 2].map((i) => pts.reduce((s, p) => s + p[i], 0) / pts.length);
-      goal.zoom = 0.62;
+    const pick = sessions.has(followSid) ? followSid : null, now = performance.now();
+    const pts = [...agents.values()].filter((a) => (pick == null || a.sid === pick) && a.pos && a.status !== 'done' && !(a.hideAt && now > a.hideAt)).map((a) => a.node != null ? at(a.node) : a.pos);
+    if (pts.length && [...sessions.values()].some((s) => s.status === 'working' && (pick == null || s.id === pick))) {
+      const c = [0, 1, 2].map((i) => pts.reduce((s, p) => s + p[i], 0) / pts.length);
+      if (pick == null && sessions.size > 1) {
+        // Several sessions, none picked: the camera frames them all, wider the farther apart they work, and lets small
+        // shifts pass, so busy sessions don't keep it (and every cached layer) moving: on a software renderer at
+        // 3,000 nodes that held 17 frames a second instead of 25.
+        const zoom = clamp(0.62 + 0.45 * Math.max(...pts.map((p) => dist3(p, c))), 0.62, 1);
+        if (dist3(c, goal.target) < 0.16 && Math.abs(zoom - goal.zoom) < 0.1) { request(); return; }
+        goal.target = c; goal.zoom = zoom;
+      } else { goal.target = c; goal.zoom = 0.62; }
     } else { goal.target = [...HOME.target]; goal.zoom = 1; }
     request();
   }
 
   // ---- agents, beams, embers ---------------------------------------------------------------------------------------
+  // Sessions: one (id ''), or several at once when the host sends each event with its session's id. Each has its own
+  // Claude (agent key "<session>/main") and subagents, all in the same colors (coral, silver): with several on screen,
+  // a tag says its project. The projects of the sessions at work are lit.
   const agents = new Map();
-  const session = { status: 'idle', project: env.project ?? null };
-  const defs = new Map(); // agent id -> { label, type, task }, from the events
+  const sessions = new Map(); // id -> { id, status: 'idle' | 'working', project, title, order, li }
+  let sessOrder = 0, followSid = null, hoverProject = null;
+  function sess(id = '') {
+    let s = sessions.get(id);
+    if (!s) { s = { id, status: 'idle', project: id === '' ? env.project ?? null : null, title: '', order: sessOrder++, li: null }; sessions.set(id, s); }
+    return s;
+  }
+  sess('');
+  const agentKey = (sid, local) => (sid ? `${sid}/${local}` : local);
+  const workingProjects = () => { const lit = new Set(); for (const s of sessions.values()) if (s.status === 'working' && s.project != null) lit.add(s.project); return lit; };
+  const defs = new Map(); // agent key -> { label, type, task }, from the events
   let silent = false; // applying what already happened: no animation
-  function agentOf(id) {
-    let a = agents.get(id);
+  function agentOf(key, sid = '', local = key) {
+    let a = agents.get(key);
     if (!a) {
-      const def = defs.get(id) || { id, label: id === 'main' ? 'Claude' : id, type: id === 'main' ? 'main' : '', task: '' };
-      const main = id === 'main', hue = main ? AGENT_MAIN : AGENT_SUB;
-      a = { id, def, css: main ? `oklch(${hue[0]}% ${hue[1]} ${hue[2]})` : AGENT_SUB_CSS, rgb: C(...hue), status: 'idle', node: null, pos: null, comet: null, after: null, kind: '', text: '', chip: null, li: null, hideAt: 0 };
-      agents.set(id, a);
+      const main = local === 'main', hue = main ? AGENT_MAIN : AGENT_SUB;
+      const def = defs.get(key) || { label: main ? 'Claude' : local, type: main ? 'main' : '', task: '' };
+      a = { id: key, sid, local, main, def, css: main ? `oklch(${hue[0]}% ${hue[1]} ${hue[2]})` : AGENT_SUB_CSS, rgb: C(...hue), status: 'idle', node: null, pos: null, comet: null, after: null, kind: '', text: '', chip: null, li: null, hideAt: 0 };
+      agents.set(key, a);
     }
     return a;
   }
@@ -1053,12 +1088,12 @@ export function mountBrain(host, env) {
   }
   // The cells a search looks through: the files under the folder it names, or its whole project.
   const rootKey = new Map(graph.projects.map((p) => [p.id, pathKey(p.root || '')]));
-  function scopeOf(dir) {
+  function scopeOf(dir, project) {
     const key = dir ? pathKey(dir).replace(/\/+$/, '') : null, under = [], all = [];
     for (let i = 0; i < N; i++) {
       const n = nodes[i];
       if (n.type === 'tool' || n.project == null) continue;
-      if (n.project === session.project) all.push(i);
+      if (n.project === project) all.push(i);
       if (key) { const f = pathKey(`${rootKey.get(n.project)}/${n.path}`); if (f === key || f.startsWith(key + '/')) under.push(i); }
     }
     return under.length ? under : all;
@@ -1139,10 +1174,10 @@ export function mountBrain(host, env) {
     }
   }
   // What a call did, known a moment after it started: the lines an edit added and removed, the files a search
-  // matched, a command that ended. { agent, node, add, del } | { hits: [nodes] } | { done: true }.
+  // matched, a command that ended. { agent, session, node, add, del } | { hits: [nodes] } | { done: true }.
   function outcome(ev) {
     if (silent || !animating()) return;
-    const a = agents.get(ev.agent);
+    const a = agents.get(agentKey(ev.session || '', ev.agent));
     if (ev.hits) fxHits(ev.hits);
     if (ev.done) fxStem(false);
     if (ev.add != null && ev.node != null && a) {
@@ -1153,27 +1188,29 @@ export function mountBrain(host, env) {
 
   // ev: { agent, kind: start | stop | read | edit | create | search | command | web | tool | error | think | wait |
   // outcome, node, text, tokens, dir (a search's folder), add, del (an edit's lines, when known), def: the agent's
-  // { label, type, task }, ts: when it happened (only for what is applied from the past, see seed) }.
+  // { label, type, task }, ts: when it happened (only for what is applied from the past, see seed), session: its
+  // session's id when several are shown }.
   function onEvent(ev) {
     if (ev.kind === 'outcome') { outcome(ev); return; }
     const now = performance.now(), age = ev.ts ? Math.max(0, Date.now() - ev.ts) : 0;
     if (!silent) lastEvent = now;
     trace.add(ev, now - age);
-    if (ev.def) defs.set(ev.agent, ev.def);
-    const a = agentOf(ev.agent);
+    const sid = ev.session || '', S = sess(sid), key = agentKey(sid, ev.agent);
+    if (ev.def) defs.set(key, ev.def);
+    const a = agentOf(key, sid, ev.agent);
     if (ev.def) a.def = ev.def;
-    const main = agentOf('main');
+    const main = agentOf(agentKey(sid, 'main'), sid, 'main');
     if (ev.kind === 'wait') { setWaiting(a, true); return; }
     a.waiting = 0; // whatever it does next, the wait is over
     if (ev.kind === 'start') {
-      a.status = ev.agent === 'main' ? 'working' : 'running';
+      a.status = a.main ? 'working' : 'running';
       a.hideAt = 0;
-      if (ev.agent === 'main') {
-        session.status = 'working';
-        setProjectActive(session.project);
+      if (a.main) {
+        S.status = 'working';
+        lightProjects();
         if (a.node == null) { // where Claude starts: its project's instructions
-          let start = nodes.findIndex((n) => n.project === session.project && n.type === 'instruction');
-          if (start < 0) start = nodes.findIndex((n) => n.project === session.project);
+          let start = nodes.findIndex((n) => n.project === S.project && n.type === 'instruction');
+          if (start < 0) start = nodes.findIndex((n) => n.project === S.project);
           if (start >= 0) { a.node = start; a.pos = at(start); }
         }
       } else {
@@ -1195,7 +1232,7 @@ export function mountBrain(host, env) {
       a.status = 'done'; a.kind = 'done'; a.text = T.done;
       a.hideAt = silent ? 1 : now + 2600;
       if (!silent) setTimeout(() => { labelsDirty = true; followGoal(); request(); }, 2700);
-      if (ev.agent === 'main') { session.status = 'idle'; setProjectActive(null); }
+      if (a.main) { S.status = 'idle'; lightProjects(); }
       // A subagent that is done leaves the panel a little later (at once when it ended before the view opened): a
       // long session launches dozens, and the panel lists who is at work. Claude's row stays.
       else if (silent) dismiss(a);
@@ -1207,11 +1244,11 @@ export function mountBrain(host, env) {
       a.kind = ev.kind;
       a.text = ev.text;
       // An action from an agent that was never seen starting (or was seen ending): it is at work.
-      if (a.status === 'idle' || a.status === 'done') { a.status = ev.agent === 'main' ? 'working' : 'running'; a.hideAt = 0; }
-      if (ev.agent === 'main' && session.status !== 'working') { session.status = 'working'; setProjectActive(session.project); }
+      if (a.status === 'idle' || a.status === 'done') { a.status = a.main ? 'working' : 'running'; a.hideAt = 0; }
+      if (a.main && S.status !== 'working') { S.status = 'working'; lightProjects(); }
       if (a.comet) arrive(a, false); // a new action before the last beam landed: land it now
       const target = ev.node ?? a.node; // an action with no node of its own (a failure) shows where the agent is
-      if (ev.kind === 'search') fxSearch(scopeOf(ev.dir)); // the wave starts at once, wherever the agent is
+      if (ev.kind === 'search') fxSearch(scopeOf(ev.dir, S.project)); // the wave starts at once, wherever the agent is
       const known = ev.add != null ? { add: ev.add, del: ev.del } : null; // what an edit changed, when the event already says
       if (target == null) { /* nowhere to show it yet: the tag and the panel still say what it does */ }
       else if (!animating() || a.node == null || !fine) { a.comet = { node: target, kind: ev.kind, ts: ev.ts, past: silent }; arrive(a, false); }
@@ -1285,9 +1322,12 @@ export function mountBrain(host, env) {
     }, 15000);
   }
 
-  function setProjectActive(id) {
-    projTarget.fill(0.8); // idle: calm and a little dim
-    if (id != null && projIndex.has(id)) { projTarget.fill(0.5); projTarget[projIndex.get(id)] = 1.15; }
+  // Lit: the projects of the sessions at work (several at once), the others a little dimmer; nothing at work, all calm
+  // and a little dim. Hovering a session in the panel lights its project alone while the pointer is there.
+  function lightProjects() {
+    const lit = hoverProject != null ? new Set([hoverProject]) : workingProjects();
+    projTarget.fill(!lit.size ? 0.8 : hoverProject != null ? 0.35 : 0.5);
+    for (const id of lit) if (projIndex.has(id)) projTarget[projIndex.get(id)] = 1.15;
     if (!animating()) projCur.set(projTarget);
     busy(performance.now() + 900);
     renderProjects();
@@ -1617,11 +1657,11 @@ export function mountBrain(host, env) {
     const wc = project(BRAIN_CENTER)[2];
     // The hemisphere facing the camera (0, both, from the front, the back or above); cut open, the one that is left.
     const ez = basis.eye[2] - BRAIN_CENTER[2], near = cutSide ? -cutSide : Math.abs(ez) > 0.2 * basis.dist ? Math.sign(ez) : 0;
-    const byLobe = new Map();
+    const byLobe = new Map(), lit = workingProjects();
     for (const g of regions) {
       if (!L.count[g.id] || (g.project != null && !filter.projects.has(g.project))) continue;
       let pr = L.count[g.id];
-      if (g.project === session.project && session.status === 'working') pr += 200;
+      if (lit.has(g.project)) pr += 200;
       if (live.has(g.id)) pr += 1000;
       if (focus != null && nodes[focus].region === g.id) pr += 2000;
       if (!byLobe.has(g.lobe)) byLobe.set(g.lobe, []);
@@ -1717,20 +1757,23 @@ export function mountBrain(host, env) {
         if (!show) continue;
         a.chip = document.createElement('span');
         a.chip.className = 'chip';
-        a.chip.innerHTML = `<span class="dot" style="--agent:${a.css}"></span><span class="who"></span><span class="k"></span><code></code>`;
+        a.chip.innerHTML = `<span class="dot" style="--agent:${a.css}"></span><span class="who"></span><span class="pj"></span><span class="k"></span><code></code>`;
         chipBox.append(a.chip);
       }
       a.chip.hidden = !show;
       if (!show) continue;
       a.chip.classList.toggle('gone', !!(a.hideAt && now > a.hideAt));
       const p = project(a.comet && a.comet.route ? cometHead(a.comet, now) : a.pos);
-      const [, who, k, code] = a.chip.children;
+      const [, who, pj, k, code] = a.chip.children;
       const { verb, text, cls } = saying(a);
-      const label = a.id === 'main' ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
-      const key = `${label}|${verb}|${a.kind}|${text}|${compact}|${a.def.type}`;
+      const label = a.main ? a.def.label : a.def.label.split(' ')[0]; // "#1": the number that ties chip, beam and panel
+      const S = sessions.get(a.sid), badge = sessions.size > 1 && S && S.project != null ? pname(S.project) : '';
+      const key = `${label}|${badge}|${verb}|${a.kind}|${text}|${compact}|${a.def.type}`;
       if (a.chipKey !== key) {
         a.chipKey = key;
-        setText(who, compact || a.id === 'main' ? label : `${label} ${a.def.type}`);
+        const [name, tag] = tagOf(a.main, label, a.def.type, badge, compact);
+        setText(who, name);
+        setText(pj, tag);
         setText(k, compact ? '' : verb);
         k.className = `k ${cls}`;
         setText(code, compact ? '' : text);
@@ -1787,31 +1830,82 @@ export function mountBrain(host, env) {
     }
   }
 
-  // ---- the agents panel ------------------------------------------------------------------------------------------
-  // The focus card stops above the agents panel, whatever its height, so live status stays visible.
+  // ---- the sessions panel ----------------------------------------------------------------------------------------
+  // The focus card stops above the panel, whatever its height, so live status stays visible. One block per session
+  // (the one followed, or every live one, grouped by project): its status, its project and its agents. With several,
+  // clicking a block follows that session (Follow then follows it) and hovering one lights its project. A session
+  // waiting for the user's OK says so in amber; so do other sessions waiting while only one is shown (setOthers).
   const observe = (el, fn) => { const o = new ResizeObserver(fn); o.observe(el); observers.push(o); };
   observe($('brainNow'), ([e]) => $('brainNow').parentElement.style.setProperty('--now-h', `${Math.ceil(e.borderBoxSize[0].blockSize)}px`));
+  const sessList = $('sessList');
+  let sessKey = null; // the blocks' order as last written (null: write it)
+  function sessionBlock(s) {
+    if (!s.li) {
+      s.li = document.createElement('li');
+      s.li.className = 'sess';
+      s.li.innerHTML = '<button type="button" class="now-top"><span class="status"><span class="dot"></span><span></span></span><span class="nowproj"></span><span class="ttl"></span></button><ul class="agents"></ul>';
+      s.li.firstElementChild.addEventListener('click', () => pickSession(s.id));
+      s.li.addEventListener('mouseenter', () => hoverSession(s.id));
+      s.li.addEventListener('mouseleave', () => hoverSession(null));
+    }
+    return s.li;
+  }
+  const waitingIn = (s) => { const lead = agents.get(agentKey(s.id, 'main')); return !!lead && isWaiting(lead); };
   function renderNow() {
-    const st = $('brainStatus');
-    st.className = `status ${session.status}`;
-    setText($('brainStatusText'), session.status === 'working' ? T.working : T.idle);
-    setText($('brainProject'), session.project == null ? '' : pname(session.project));
-    const ul = $('agentList');
+    const multi = sessions.size > 1;
+    // A session waiting for the user's OK comes first, so it never scrolls out of sight; then by project.
+    const list = [...sessions.values()].sort((x, y) => waitingIn(y) - waitingIn(x) || pname(x.project).localeCompare(pname(y.project), lang) || x.order - y.order);
+    const key = list.map((s) => `#${s.id}`).join(); // "#" so a lone unnamed session ('') differs from no session
+    if (key !== sessKey) { sessKey = key; for (const s of list) sessList.append(sessionBlock(s)); } // moves blocks only when the order changes
+    for (const s of list) {
+      const li = sessionBlock(s), [btn] = li.children, [st, pj, ttl] = btn.children, wait = waitingIn(s);
+      st.className = `status ${wait ? 'waiting' : s.status}`;
+      setText(st.lastChild, wait ? T.v_wait : s.status === 'working' ? T.working : T.idle);
+      setText(pj, s.project == null ? '' : pname(s.project));
+      setText(ttl, multi ? s.title || '' : '');
+      btn.disabled = !multi;
+      setClass(li, 'sel', multi && follow && followSid === s.id);
+      setClass(li, 'wait', wait);
+    }
     for (const a of agents.values()) {
+      const S = sessions.get(a.sid);
+      if (!S) continue;
       if (!a.li) {
         a.li = document.createElement('li');
         a.li.innerHTML = `<span class="sw" style="--agent:${a.css}"></span><span class="lb"></span><span class="st"></span><span class="act"></span>`;
-        ul.append(a.li);
       }
+      if (a.li.parentElement !== S.li.lastElementChild) S.li.lastElementChild.append(a.li);
       const [, lb, stt, act] = a.li.children;
       setText(lb, a.def.label);
-      const main = a.id === 'main'; // Claude between prompts is idle, not "done"
+      const main = a.main; // Claude between prompts is idle, not "done"
       setText(stt, a.status === 'done' ? (main ? T.idle : T.done) : a.status === 'idle' ? T.idle : main ? T.working : T.running);
       const { verb, text } = saying(a);
       setText(act, text ? `${verb} ${text}`.trim() : a.kind === 'done' ? (main ? '' : a.def.task || T.done) : verb || a.def.task || '');
       a.li.className = a.status === 'done' ? 'done' : '';
     }
   }
+  function pickSession(id) {
+    if (sessions.size < 2) return;
+    followSid = id;
+    if (!follow) { follow = true; $('followBtn').setAttribute('aria-pressed', 'true'); }
+    followGoal();
+    renderNow();
+    env.onPick?.(id);
+  }
+  function hoverSession(id) {
+    const p = id == null || sessions.size < 2 ? null : sessions.get(id)?.project ?? null;
+    if (p === hoverProject) return;
+    hoverProject = p;
+    lightProjects();
+    request();
+  }
+  // Other sessions waiting for the user's OK while only one is shown: [{ id, project (a name), title }].
+  function setOthers(list) {
+    const ul = $('othersList'), html = list.map((o) => `<li><button type="button" data-sid="${esc(o.id)}"><span class="status waiting"><span class="dot"></span>${esc(T.v_wait)}</span><span class="nowproj">${esc(o.project || o.title || '')}</span></button></li>`).join('');
+    if (ul._h !== html) { ul._h = html; ul.innerHTML = html; }
+    ul.hidden = !list.length;
+  }
+  $('othersList').addEventListener('click', (e) => { const b = e.target.closest('button[data-sid]'); if (b) env.onPick?.(b.dataset.sid); });
 
   // ---- the activity trace: events and thinking tokens over the last 5 minutes (real data only) --------------------
   const trace = {
@@ -1884,8 +1978,9 @@ export function mountBrain(host, env) {
   }
   function renderProjects() {
     const count = Object.fromEntries(graph.projects.map((p) => [p.id, nodes.filter((n) => n.project === p.id).length]));
+    const lit = workingProjects();
     const html = graph.projects.map((p) => {
-      const working = session.status === 'working' && session.project === p.id;
+      const working = lit.has(p.id);
       return `<li><label><input type="checkbox" data-project="${esc(p.id)}" ${filter.projects.has(p.id) ? 'checked' : ''}><span class="dot" style="background:${working ? 'var(--working)' : 'var(--done)'}" title="${working ? T.working : T.idle}"></span><span class="nm">${esc(p.name)}${working ? ` <span class="n">· ${esc(T.working)}</span>` : ''}</span><span class="n">${count[p.id]}</span></label></li>`;
     }).join('');
     if ($('projectList').innerHTML !== html) $('projectList').innerHTML = html;
@@ -2124,7 +2219,9 @@ export function mountBrain(host, env) {
     follow = !follow;
     e.currentTarget.setAttribute('aria-pressed', String(follow));
     if (follow) followGoal(); else { goal.target = [...HOME.target]; goal.zoom = 1; request(); }
+    renderNow(); // the followed session's block is marked while Follow is on
   });
+  $('sessMode').addEventListener('click', (e) => { const b = e.target.closest('button[data-mode]'); if (b && b.getAttribute('aria-pressed') !== 'true') env.onMode?.(b.dataset.mode); });
   $('rotateBtn').addEventListener('click', (e) => {
     autoRotate = !autoRotate;
     e.currentTarget.setAttribute('aria-pressed', String(autoRotate));
@@ -2315,7 +2412,10 @@ export function mountBrain(host, env) {
     labels: () => [...lobeEls].filter(([, el]) => el._shown).map(([l, el]) => ({ lobe: l, box: el._box.map(Math.round), under: !!el._under, dense: el.classList.contains('dense') })),
     // How many cells are drawn as outlines in this view (the shader's rule, without the hot and focused ones).
     outlines: () => { let n = 0; const room = (PX / basis.dist / OVERVIEW_PX) ** 2; screenPositions(); for (let i = 0; i < N; i++) if (visible[i] && minor[i] * (1 + clamp((scr[i * 3 + 2] - depth[0]) / (depth[1] - depth[0]), 0, 1)) < room) n++; return n; },
-    agents: () => [...agents.values()].map((a) => ({ id: a.id, label: a.def.label, status: a.status, kind: a.kind, node: a.node == null ? null : nodes[a.node].path })),
+    agents: () => [...agents.values()].map((a) => ({ id: a.id, session: a.sid, label: a.def.label, status: a.status, kind: a.kind, waiting: isWaiting(a), node: a.node == null ? null : nodes[a.node].path })),
+    sessions: () => [...sessions.values()].map((s) => ({ id: s.id, project: s.project, status: s.status, title: s.title, followed: follow && followSid === s.id })),
+    lit: () => graph.projects.map((p) => [p.id, +projTarget[projIndex.get(p.id)].toFixed(2)]),
+    pick: (id) => pickSession(id), hover: (id) => hoverSession(id),
     embers: () => [...embers].map(([i, e]) => ({ path: nodes[i].path, kind: e.kind, level: state[i * 4 + 1] })),
     get bloom() { return bloomLevel; }, software: R ? R.software : null };
   const _draw = R ? R.draw.bind(R) : null;
@@ -2345,10 +2445,12 @@ export function mountBrain(host, env) {
     labelsDirty = true;
     request();
   }
-  // Another session to follow: no agents, no embers, an empty trace.
+  // Another session (or set of sessions) to follow: no sessions, no agents, no embers, an empty trace.
   function reset() {
     for (const a of agents.values()) { a.chip?.remove(); a.li?.remove(); }
     agents.clear();
+    for (const s of sessions.values()) s.li?.remove();
+    sessions.clear(); sessKey = null; followSid = null; hoverProject = null;
     embers.clear();
     trails.length = 0; heats.length = 0; sparks.length = 0; rings.length = 0; flashes.length = 0; signals.length = 0; pulses.length = 0; ripples = [];
     effects.length = 0;
@@ -2356,8 +2458,7 @@ export function mountBrain(host, env) {
     for (let i = 0; i < N; i++) { state[i * 4] = nodeBright(i); state[i * 4 + 1] = 0; state[i * 4 + 2] = -100; state[i * 4 + 3] = 0; }
     if (R) R.updateState(state);
     trace.items = [];
-    session.status = 'idle';
-    setProjectActive(null);
+    lightProjects();
     activeNeurons();
     edgeLights();
     trace.draw();
@@ -2379,10 +2480,32 @@ export function mountBrain(host, env) {
     onEvent, seed, reset, destroy, debug,
     // Cells of files that were just created: each is born (it fades in, its branches grow, its links reach out).
     born(ids) { for (const i of ids) if (i != null && i >= 0 && i < N) birth(i); },
-    // Claude is waiting for the user's OK (or no longer is).
-    setWaiting(on) { setWaiting(agentOf('main'), !!on); },
-    // The project being worked on (lit while its session works).
-    setSession({ project }) { if (project !== undefined && project !== session.project) { session.project = project; if (session.status === 'working') setProjectActive(project); renderNow(); } },
+    // A session's Claude is waiting for the user's OK (or no longer is).
+    setWaiting(on, id = '') { setWaiting(agentOf(agentKey(id, 'main'), id, 'main'), !!on); },
+    // A session's project (lit while it works) and its title (said in the panel when several are shown).
+    setSession({ id = '', project, title } = {}) {
+      const s = sess(id);
+      if (project === s.project && (title === undefined || title === s.title)) return;
+      if (project !== undefined) s.project = project;
+      if (title !== undefined) s.title = title;
+      lightProjects(); renderNow(); labelsDirty = true; request();
+    },
+    // A session leaves (it went quiet): its agents fade out, its block goes.
+    dropSession(id) {
+      const s = sessions.get(id);
+      if (!s) return;
+      const now = performance.now();
+      for (const a of [...agents.values()]) if (a.sid === id) { if (a.comet) arrive(a, false); a.after = null; a.hideAt = now; setTimeout(() => { if (agents.get(a.id) === a) dismiss(a); }, 600); }
+      sessions.delete(id);
+      if (followSid === id) followSid = null;
+      if (s.li) { s.li.classList.add('gone'); setTimeout(() => s.li.remove(), 400); }
+      sessKey = null;
+      lightProjects(); renderNow(); followGoal(); labelsDirty = true; request();
+    },
+    setOthers,
+    // Which sessions the host shows: 'one' (the selected one) or 'all' (every live one). The switch shows when the
+    // host gave onMode.
+    setMode(mode) { $('sessMode').hidden = !env.onMode; for (const b of $('sessMode').children) b.setAttribute('aria-pressed', String(b.dataset.mode === mode)); },
     setLang: applyLang,
     show() { setShown(true); },
     hide() { setShown(false); },

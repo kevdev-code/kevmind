@@ -164,6 +164,30 @@ body.view-brain .memory-view { display: none; }
 .brain-view .agents .st { color: var(--text-3); }
 .brain-view .agents .act { grid-column: 2 / 4; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brain-view .agents li.done .lb, .brain-view .agents li.done .act { color: var(--text-3); }
+/* The sessions shown (the selected one, or every live one): a switch under the title. */
+.brain-view .sessmode { margin-top: var(--sp-2); pointer-events: auto; background: var(--veil); box-shadow: 0 0 0 1px var(--border); }
+.brain-view .sessmode[hidden] { display: none; }
+/* One block per session; with several, a block's header follows that session and says which one is followed. */
+.brain-view .sessions { display: flex; flex-direction: column; gap: var(--sp-2); max-height: 46vh; overflow-y: auto; scrollbar-width: thin; }
+.brain-view .sess { display: flex; flex-direction: column; gap: 4px; transition: opacity var(--dur-2) var(--ease-out); }
+.brain-view .sess.gone { opacity: 0; }
+.brain-view .sess + .sess { border-top: 1px solid var(--border); padding-top: var(--sp-2); }
+.brain-view .sess > .now-top { flex-wrap: wrap; row-gap: 2px; font: inherit; color: inherit; background: none; border: 0; padding: 2px; margin: -2px; width: calc(100% + 4px); border-radius: var(--r-sm); text-align: left; cursor: pointer; }
+.brain-view .sessions:has(.sess + .sess) .agents li + li .act { display: none; } /* several sessions: a subagent in one line */
+.brain-view .sess > .now-top:disabled { cursor: default; }
+.brain-view .sess > .now-top:not(:disabled):hover .nowproj { text-decoration: underline; text-underline-offset: 2px; }
+.brain-view .sess.sel > .now-top { box-shadow: 0 0 0 1.5px var(--accent); }
+.brain-view .ttl { flex-basis: 100%; font-size: var(--fs-xs); color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-view .ttl:empty { display: none; }
+.brain-view .status.waiting { background: var(--waiting-soft); color: var(--waiting); }
+.brain-view .status.waiting .dot { background: var(--waiting); }
+/* Other sessions waiting for the user's OK while one is shown: one line each, a click shows it. */
+.brain-view .others { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border); padding-top: var(--sp-2); }
+.brain-view .others[hidden] { display: none; }
+.brain-view .others button { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; width: 100%; font: inherit; color: inherit; background: none; border: 0; padding: 2px; border-radius: var(--r-sm); text-align: left; cursor: pointer; }
+.brain-view .others button:hover .nowproj { text-decoration: underline; text-underline-offset: 2px; }
+.brain-view .chip .pj { color: var(--text-2); font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.brain-view .chip .pj:empty { display: none; }
 
 .brain-view .card { position: absolute; z-index: 3; background: var(--veil); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3); color: var(--text); }
 .brain-view .fcard { top: 56px; right: var(--sp-4); width: 300px; max-height: calc(100% - 56px - var(--now-h, 0px) - var(--sp-4) - var(--sp-3)); overflow-y: auto; scrollbar-width: thin; }
@@ -201,12 +225,19 @@ body.view-brain .memory-view { display: none; }
   #eeg { height: 22px; margin-top: 2px; }
   .brain-view .overlay.bl { bottom: auto; top: 64px; left: var(--sp-3); right: var(--sp-3); } /* bounded, so the camera buttons wrap inside */
   .brain-view .seg.camera { flex-wrap: wrap; }
+  .brain-view .well:has(.sessmode:not([hidden])) .overlay.bl { top: 104px; } /* under the sessions switch */
+  .brain-view .sessmode button { padding: 4px 8px; font-size: var(--fs-xs); }
+  /* Several sessions on a phone: one line each (Claude's), the panel no taller than a third of the screen. */
+  .brain-view .sessions { max-height: 34vh; }
+  .brain-view .sessions:has(.sess + .sess) .agents li + li, .brain-view .ttl { display: none; }
 }
 @media (max-width: 520px) {
   .brain-view .overlay.tl { left: var(--sp-3); }
   .brain-view .overlay.tr { right: var(--sp-3); gap: var(--sp-2); flex-direction: column; align-items: flex-end; }
   .brain-view .titlerow { flex-direction: column; gap: 0; } /* the counts under the title, clear of the switch */
   .brain-view .overlay.bl { top: 76px; }
+  .brain-view .well:has(.sessmode:not([hidden])) .overlay.bl { top: 112px; }
+  .brain-view .chip .pj { max-width: 96px; }
   .brain-view .seg.camera { gap: 0; } .brain-view .seg.camera button { padding: 6px 6px; font-size: var(--fs-xs); } /* one row: the brain stays clear */
   .brain-view .agents .act { display: none; }
 }
