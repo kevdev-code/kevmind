@@ -105,7 +105,7 @@ const DENDRITE_ALPHA = P.edgeAlpha[EDGE.dendrite];
 // Regions in a lobe shift a little around its hue so neighbors stay apart.
 // A tight palette: blue and cyan, violet, pink; the cerebellum and brainstem nearly white.
 const LOBE_COLOR = { prefrontal: [80, 0.12, 268], frontal: [74, 0.13, 236], parietal: [71, 0.15, 306], occipital: [77, 0.11, 200],
-  temporal: [74, 0.15, 352], cerebellum: [86, 0.05, 212], stem: [88, 0.045, 250] };
+  temporal: [74, 0.15, 352], cerebellum: [80, 0.09, 205], stem: [82, 0.08, 255] };
 // Agents: colored beams with a white core and a numbered label, so they never pass for a region (user's choice).
 // Claude itself is coral, its warm color, the one warm hue on screen; subagents are cyan, orchid and ice blue.
 const AGENT_HUES = [[74, 0.14, 38], [84, 0.11, 195], [79, 0.13, 322], [88, 0.07, 250]];
@@ -142,16 +142,22 @@ const activityOf = (i) => {
   if (n.type === 'file') return stats[i].reads + 2 * stats[i].edits;
   return (n.tokens || 300) / 100 + stats[i].reads + adj[i].length;
 };
-// Additive light saturates where a lobe is crowded: crowded lobes get dimmer, smaller stars.
+// Density-adaptive light. Lobes hold very different numbers of nodes per volume (the occipital lobe packs about ten
+// times the average, the frontal lobes a sixth of it), and additive light piles up where they crowd. Each lobe gets a
+// gain from its density against the average: a dense lobe's cells are dimmer and smaller, a sparse lobe's brighter
+// and a little larger, so no area turns into a solid stain and the front reads as evenly as the back. The same nodes,
+// lit differently: nothing is added.
 const lobeLoad = {};
 for (const n of nodes) { const l = regions[n.region].lobe; lobeLoad[l] = (lobeLoad[l] || 0) + 1; }
-const crowd = Object.fromEntries(Object.entries(LOBES).map(([l, s]) => [l, clamp(Math.sqrt(900 / ((lobeLoad[l] || 1) / s.vol)), 0.45, 1)]));
-const crowdOf = (i) => crowd[lobeOf(i)];
+const avgDensity = N / Object.values(LOBES).reduce((t, s) => t + s.vol, 0);
+const gain = Object.fromEntries(Object.entries(LOBES).map(([l, s]) => [l, clamp((avgDensity / ((lobeLoad[l] || 1) / s.vol)) ** 0.6, 0.22, 1.6)]));
+const crowdOf = (i) => gain[lobeOf(i)];
 // The same for links: where thousands cross, each draws fainter (the six link types; the midline and beams keep theirs).
 const linkScale = clamp(Math.sqrt(900 / Math.max(1, edges.length)), 0.5, 1);
 P.edgeAlpha = P.edgeAlpha.map((v, k) => (k < 6 ? v * linkScale : v));
-const sizeOf = (i) => 0.82 * (nodes[i].type === 'instruction' ? 0.085 : (0.042 + 0.008 * Math.sqrt(Math.min(activityOf(i), 140))) * Math.sqrt(crowdOf(i)));
-const brightOf = (i) => 0.85 * (nodes[i].type === 'instruction' ? 1 : (0.5 + 0.5 * Math.min(1, Math.sqrt(activityOf(i) / 70))) * crowdOf(i));
+// Size grows a little with activity (under 2x from the quietest to the busiest), so no cell dominates.
+const sizeOf = (i) => 0.58 * (nodes[i].type === 'instruction' ? 0.08 : 0.05 + 0.0035 * Math.sqrt(Math.min(activityOf(i), 120))) * clamp(crowdOf(i) ** 0.4, 0.65, 1.2);
+const brightOf = (i) => 0.8 * (nodes[i].type === 'instruction' ? 1 : 0.55 + 0.45 * Math.min(1, Math.sqrt(activityOf(i) / 70))) * crowdOf(i);
 
 const size = new Float32Array(N), bright = new Float32Array(N);
 for (let i = 0; i < N; i++) { size[i] = sizeOf(i); bright[i] = brightOf(i); }
@@ -270,7 +276,7 @@ function neuronData() {
     const around = (a) => v3.add(v3.add([0, 0, 0], e1, Math.cos(a)), e2, Math.sin(a));
     const jitter = (d, k) => v3.unit(v3.add(d, around(r() * 6.283), k * r()));
     const neg = (d) => d.map((c) => -c);
-    const len = size[i] * 1.5 * (0.65 + 0.35 * crowdOf(i)), soma = size[i] * 0.12;
+    const len = size[i] * 2.3 * Math.min(1.2, 0.65 + 0.35 * crowdOf(i)), soma = size[i] * 0.2;
     // A branch stays inside the brain: one that would leave its volume is shortened, or dropped.
     const inside = (a, d, l) => { for (let t = 0; t < 3; t++, l /= 2) if (lobeAt(v3.add(a, d, l))) return l; return 0; };
     const limb = (from, dir, l, w, forks) => {
@@ -476,7 +482,7 @@ function nodeBright(i) {
   let b = bright[i];
   if (focusSet) b *= focusSet.has(i) ? 1.4 : 0.14;
   else if (matchSet) b *= matchSet.has(i) ? 1.4 : 0.16;
-  if (cutAway(i)) b *= 0.08;
+  if (cutAway(i)) return 0; // the cut-away half: gone, so nothing shows outside the half that stays
   return Math.max(b, 0.002);
 }
 // Link brightness: hidden, dimmed (focus or search elsewhere), normal, lit where work just happened (embers), focus.
@@ -488,7 +494,7 @@ function edgeLights() {
     if (v && focusSet) v = e.a === focus || e.b === focus ? 3 : 0.12;
     else if (v && matchSet) v = matchSet.has(e.a) && matchSet.has(e.b) ? 1.2 : 0.12;
     else if (v) v = 1 + 1.4 * Math.max(state[e.a * 4 + 1], state[e.b * 4 + 1]);
-    if (v && (cutAway(e.a) || cutAway(e.b))) v *= 0.1;
+    if (v && (cutAway(e.a) || cutAway(e.b))) v = 0;
     edgeHl[k] = v;
   });
   lod.forEach((l, k) => {
@@ -507,7 +513,7 @@ function deepLights() {
     let v = visible[i] ? (0.35 + 0.6 * bright[i]) * crowdOf(i) : 0; // crowded lobes: dimmer, like their nodes
     if (v && focusSet) v = focusSet.has(i) ? (i === focus ? 2.6 : 1.7) : 0.12;
     else if (v && matchSet) v = matchSet.has(i) ? 1.7 : 0.12;
-    if (v && cutAway(i)) v *= 0.1;
+    if (cutAway(i)) v = 0;
     neuron.hl[s] = v;
   }
   for (let k = 0; k < tractHl.length; k++) tractShown[k] = tractHl[k] * (focusSet || matchSet ? 0.35 : 1);
@@ -786,11 +792,11 @@ function endIntro() {
   startReplay();
   request();
 }
-// The shaders' intro clock and the two closing waves' radii.
+// The shaders' intro clock and the closing wave's radius.
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 function introView(clock) {
-  const w = INTRO.waves.map((t0) => { const u = (clock - t0) / INTRO.wave; return u >= 0 && u <= 1 ? u * BRAIN_RADIUS * 1.25 : -9; });
-  return [clock, w[0], w[1], 0];
+  const u = (clock - INTRO.wave[0]) / INTRO.wave[1];
+  return [clock, u >= 0 && u <= 1 ? u * BRAIN_RADIUS * 1.25 : -9, -9, 0];
 }
 function frame(now) {
   raf = 0;
@@ -823,7 +829,7 @@ function frame(now) {
   // Neurons: faint dendrites at overview, full ones zoomed in (active neurons are always full, through their hl).
   P.edgeAlpha[EDGE.dendrite] = DENDRITE_ALPHA * (0.3 + 0.7 * smooth(1, 0.5, cam.zoom));
   const mid = project(BRAIN_CENTER); // the brain's center and radius on screen, for the intro's closing waves
-  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye, intro: introView(clock), yr: partY, center: BRAIN_CENTER, cut: cutSide,
+  R.draw({ vp: VP, px: PX, time, ripples, proj: projCur, depth, eye: basis.eye, intro: introView(clock), yr: partY, center: BRAIN_CENTER, cut: cutSide, life: anim ? 1 : 0,
     mid, radiusPx: (BRAIN_RADIUS * PX) / mid[2], waveR: BRAIN_RADIUS },
   { haze, deepKey, mainKey: staticKey, skip: SKIP, lod: moving && !intro.on ? 1 : 0, glow: glowLayer(now, dt), introOn: intro.on });
   if (intro.on && intro.t0 == null && ++intro.warm >= 2) intro.t0 = performance.now();
@@ -834,16 +840,18 @@ function frame(now) {
 
 // Haze per region and the lit lobes (cached layer), then agent heads, markers and rings.
 let spriteData = new Float32Array(0), heatSig = '', heatShown = {}, heatAt = -1e9, heatTimer = 0;
-const PK_RGB = C(92, 0.04, 212), STEM_RGB = C(90, 0.05, 245);
+const PK_RGB = C(88, 0.07, 205), STEM_RGB = C(90, 0.05, 245), CBL_GLOW = C(78, 0.07, 208);
 function buildSprites(now, clock = 99) {
   const list = [];
   for (const g of regions) {
     const n = L.count[g.id];
     if (n < 3 || (g.project != null && !filter.projects.has(g.project))) continue;
     const pf = g.project == null ? 1 : projCur[projIndex.get(g.project)];
-    list.push(...L.centroid[g.id], clamp(L.spread[g.id] * 3.6, 0.12, 0.45), ...regionColor[g.id], 0.035 * pf * pf * (focusSet || matchSet ? 0.35 : 1), SPRITE.glow);
+    list.push(...L.centroid[g.id], clamp(L.spread[g.id] * 3.6, 0.12, 0.45), ...regionColor[g.id], 0.035 * pf * pf * Math.min(1, gain[g.lobe]) * (focusSet || matchSet ? 0.35 : 1), SPRITE.glow);
   }
-  for (const p of purkinje.somas) list.push(...p, 0.035, ...PK_RGB, 0.55, SPRITE.glow, ...p, 0.012, ...PK_RGB, 0.9, SPRITE.head);
+  for (const p of purkinje.somas) list.push(...p, 0.025, ...PK_RGB, 0.35, SPRITE.glow, ...p, 0.009, ...PK_RGB, 0.6, SPRITE.head);
+  // The cerebellum's soft glow: its folia read as a solid structure, not a wire frame.
+  for (const sd of [1, -1]) { const c = lobeShape('cerebellum', sd).c; list.push(c[0], c[1], c[2] * 0.8, 0.62, ...CBL_GLOW, 0.05, SPRITE.glow); }
   // The lit lobe: where agents are, or recently were, the lobe glows in its color and cools with the embers. It is
   // in the cached layer, so it follows the work at most every 2 s (and links lit by embers update with it).
   const heat = {};
@@ -1668,6 +1676,8 @@ window.__brain = { light: LIGHT, nodes: N, edges: edges.length, frames: () => fr
     request();
   },
   cut(on) { if (on !== cutOn) cutBtn.click(); },
+  // The position of the k-th node of a type, for close-ups.
+  nodeOf(type, k = 0) { const list = nodes.map((n, i) => [n, i]).filter(([n]) => n.type === type); return list.length ? at(list[k % list.length][1]) : null; },
   // A fixed view, framed like Fit (top uses pitch 1.55, past the orbit's limit), and the outline measured from it.
   view(yaw, pitch) {
     const f = fitFor(yaw, pitch);

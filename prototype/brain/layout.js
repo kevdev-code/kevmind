@@ -13,7 +13,8 @@ import { SHAPE, CORONAL, TOP, CEREBELLUM } from './shape.js';
 // Proportions of a real brain: length 1 : width 0.83 : cerebrum height 0.62 (here the length is 2).
 const HALF_WIDTH = 0.83; // the widest half-width (the top view's widest point)
 const GAP = 0.02; // half the fissure between the hemispheres: about 2.5% of the width
-const CBL_HALF = 0.5, CBL_LIFT = 0.15; // the cerebellum's half-width; how far its top reaches up under the occipital lobes
+const CBL_HALF = 0.56, CBL_LIFT = 0.15; // the cerebellum's half-width; how far its top reaches up under the occipital lobes
+const CBL_SCALE = [1.06, 1.12], CBL_DROP = 0.04; // its side view scaled about its middle (length, height), and lowered
 const STEM_R = 0.075;
 
 // The region map, decoded: one code per cell, 0 outside.
@@ -26,12 +27,31 @@ SHAPE.rows.forEach((row, gy) => {
   for (const m of row.matchAll(/(\d+)(.)/g)) { cls.fill(CODES.indexOf(m[2]), gy * G + gx, gy * G + gx + Number(m[1])); gx += Number(m[1]); }
 });
 const isCer = (c) => c >= 1 && c <= T_;
+// A fuller, rounder lower front: the frontal lobe's underside and the lower part of its pole filled out by up to three
+// cells, most at the lower-front corner, never next to the temporal lobe (the notch above its pole stays).
+for (let pass = 1; pass <= 3; pass++) {
+  const add = [];
+  for (let y = 60; y < 94; y++) for (let x = 1; x < 52; x++) {
+    if (cls[y * G + x] || Math.exp(-(((y - 82) / 12) ** 2 + ((x - 14) / 16) ** 2)) * 3.2 < pass) continue;
+    let code = 0, nearT = false;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const c = cls[(y + dy) * G + x + dx]; if (c === 1 || c === 2) code = c; if (c === T_) nearT = true; }
+    if (code && !nearT) add.push([y * G + x, code]);
+  }
+  for (const [i, c] of add) cls[i] = c;
+}
 // Grid ↔ world: the cerebrum is 2 long, centered on x = 0, its top at y = 0.7; the map's front (left) is +x.
 let gx0 = G, gx1 = 0, gyTop = G;
 for (let i = 0; i < G * G; i++) if (isCer(cls[i])) { const x = i % G, y = (i / G) | 0; gx0 = Math.min(gx0, x); gx1 = Math.max(gx1, x); gyTop = Math.min(gyTop, y); }
 const CELL = 2 / (gx1 - gx0 + 1), UMID = (gx0 + gx1 + 1) / 2, TOP_Y = 0.7;
-const toU = (x) => UMID - x / CELL, toV = (y) => gyTop + (TOP_Y - y) / CELL;
-const cellX = (gx) => (UMID - gx - 0.5) * CELL, cellY = (gy) => TOP_Y - (gy + 0.5 - gyTop) * CELL;
+// The length is warped smoothly: the frontal lobe about 7% longer and the rest a little shorter, both ends where they
+// were, so the proportions hold. s runs from the front (0) to the back (1).
+const WARP = 0.15;
+const warp = (s) => (s < 0 ? s * (1 + WARP) : s > 1 ? s : s + WARP * s * (1 - s) ** 2);
+const UNWARP = new Float32Array(4097);
+for (let k = 0, s = 0; k <= 4096; k++) { while (s < 1 && warp(s) < k / 4096) s += 1 / 65536; UNWARP[k] = s; }
+const unwarp = (t) => { if (t < 0) return t / (1 + WARP); if (t >= 1) return t; const f = t * 4096, i = Math.floor(f); return UNWARP[i] + (UNWARP[i + 1] - UNWARP[i]) * (f - i); };
+const toU = (x) => UMID - (1 - 2 * unwarp((1 - x) / 2)) / CELL, toV = (y) => gyTop + (TOP_Y - y) / CELL;
+const cellX = (gx) => 1 - 2 * warp((1 - (UMID - gx - 0.5) * CELL) / 2), cellY = (gy) => TOP_Y - (gy + 0.5 - gyTop) * CELL;
 const cellAt = (x, y) => { const u = Math.floor(toU(x)), v = Math.floor(toV(y)); return u < 0 || v < 0 || u >= G || v >= G ? 0 : cls[v * G + u]; };
 
 // Each part's column in the side view: its bottom and top at every x, interpolated between cell centers.
@@ -53,7 +73,15 @@ function columns(test, lift = 0) {
   };
   return { at, x0, x1 };
 }
-const colCer = columns(isCer), colCbl = columns((c) => c === C_, CBL_LIFT);
+const colCer = columns(isCer);
+// The cerebellum a little bigger (12% taller and wider, 6% longer: a real one is about a third of the brain's length)
+// and hanging a little lower under the occipital lobes, so more of it shows.
+const colCbl = (() => {
+  const raw = columns((c) => c === C_, CBL_LIFT), xc = (raw.x0 + raw.x1) / 2, m = raw.at(xc), yc = m ? (m[0] + m[1]) / 2 : -0.4;
+  const [sx, sy] = CBL_SCALE;
+  const at = (x) => { const r = raw.at(xc + (x - xc) / sx); return r && [yc + (r[0] - yc) * sy - CBL_DROP, yc + (r[1] - yc) * sy - CBL_DROP]; };
+  return { at, x0: xc + (raw.x0 - xc) * sx, x1: xc + (raw.x1 - xc) * sx };
+})();
 
 // A traced profile as a function: lookup with linear interpolation, and a rounded cap where its top and bottom have
 // not met at an end, so every surface closes smoothly (no flat wall, no bright rim).
@@ -99,8 +127,11 @@ function cblSpan(x, z) {
   return pr && pr[1] > pr[0] ? [col[0] + pr[0] * (col[1] - col[0]), col[0] + pr[1] * (col[1] - col[0])] : null;
 }
 const within = (s, y, m = 0) => !!s && y > s[0] + m && y < s[1] - m;
-const inCerebrum = (p, m = 0) => within(cerSpan(p[0], p[2]), p[1], m);
-const inCerebellum = (p, m = 0) => within(cblSpan(p[0], p[2]), p[1], m);
+// Inside a part, at least m from its surface in every direction (up, down, front, back and sideways), so a node and
+// its halo never poke out of the shell, at the poles included.
+const inside = (span) => (p, m = 0) => within(span(p[0], p[2]), p[1], m) && (!m || [[m, 0], [-m, 0], [0, m], [0, -m]].every(([dx, dz]) => within(span(p[0] + dx, p[2] + dz), p[1])));
+const inCerebrum = inside(cerSpan);
+const inCerebellum = inside(cblSpan);
 
 // The brainstem: a round tube around the side map's stem, from its distance to the stem's outline.
 function distance(inside) { // per cell: distance (world units) to the nearest cell where inside() is false
@@ -146,7 +177,7 @@ const dCent = (() => { const a = nearTo((c) => c === 2, (c) => c === 3), b = nea
 // volumes nodes use (a little inside the shell, off the fissure).
 function classify(p) {
   const c = cellAt(p[0], p[1]), z = Math.abs(p[2]), side = p[2] > 0 ? 1 : -1;
-  if (c === S_) return z < 0.85 * zStem(p[0], p[1]) && sample(sdStem, p[0], p[1], -1) > 0 ? ['stem', 0] : null;
+  if (c === S_ && z < 0.85 * zStem(p[0], p[1]) && sample(sdStem, p[0], p[1], -1) > 0) return ['stem', 0];
   if (inCerebrum(p)) {
     if (z < GAP * 2 || !isCer(c) || !inCerebrum(p, 0.04) || Math.abs(p[2]) > 0.94 * cerW(p[0])) return null;
     return [LOBE_OF[c], side];
@@ -458,9 +489,9 @@ export const FIL_FLOATS = 15; // p0(3) p1(3) control(3) normal(3) alpha part tin
 
 // Filaments from the shell's points (shellPoints' output): each point joins its nearest neighbors ahead and behind
 // along its gyrus (the level line of the gyri field; the brainstem's axis on the brainstem), and now and then one in
-// any direction, so the ridges read as strands and the whole as a web. The cerebellum gets contour rings (folia) and
-// is not joined here. Grouped like the points ("lobe|side" → [start, count]), shuffled in each group.
-export function shellFilaments(sh, { seed = 11, rings = 12 } = {}) {
+// any direction, so the ridges read as strands and the whole as a web. The cerebellum gets folia instead and is not
+// joined here. Grouped like the points ("lobe|side" → [start, count]), shuffled in each group.
+export function shellFilaments(sh, { seed = 11, folia = 20 } = {}) {
   const r = rng(seed), P = sh.pos, Nm = sh.nrm, n = sh.part.length, RAD = 0.055;
   const cellOf = (x, y, z) => ((Math.floor(x / RAD) + 64) * 128 + (Math.floor(y / RAD) + 64)) * 128 + (Math.floor(z / RAD) + 64);
   const grid = new Map();
@@ -488,7 +519,7 @@ export function shellFilaments(sh, { seed = 11, rings = 12 } = {}) {
   };
   for (let i = 0; i < n; i++) {
     const part = sh.part[i];
-    if (part === 1) continue; // the cerebellum: rings instead
+    if (part === 1) continue; // the cerebellum: folia instead
     const p = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], nv = [Nm[i * 3], Nm[i * 3 + 1], Nm[i * 3 + 2]];
     let along;
     if (part === 2) along = STEM_AXIS.dir;
@@ -520,29 +551,45 @@ export function shellFilaments(sh, { seed = 11, rings = 12 } = {}) {
     if (back >= 0) add(i, back, k * (0.6 + 0.4 * r()));
     if (any.length && r() < 0.3) add(i, any[Math.floor(r() * any.length)], 0.25 + 0.25 * r());
   }
-  // The cerebellum's folia: contour rings, the surface sliced at even steps across its width (concentric from the
-  // side), broken where the cerebrum hides it.
-  const cx0 = colCbl.x0, cx1 = colCbl.x1, STEPS = 72, step = (cx1 - cx0) / STEPS;
-  for (let k = 1; k <= rings; k++) for (const s of [1, -1]) {
-    const z = s * CBL_HALF * (k / (rings + 1)) * 0.98, key = `cerebellum|${s}`;
+  // The cerebellum's folia: stacked leaf lines across its dome. They are the level lines, on its upper and lower
+  // surfaces, of the distance from its hilum (the middle of its front, where the brainstem joins): from the side,
+  // arcs that follow the dome; on the surface, folds that run across it and never cross. Closer together toward the
+  // rim; dimmer where the occipital lobes cover them, so it still reads whole through the cerebrum's web.
+  const cx0 = colCbl.x0, cx1 = colCbl.x1, hx = cx1 - (cx1 - cx0) * 0.12, hc = colCbl.at(hx), hy = hc ? (hc[0] + hc[1]) / 2 : -0.5;
+  const NX = 96, NZ = 72, dx = (cx1 - cx0) / NX, dz = (2 * CBL_HALF) / NZ;
+  const fold = (p0, p1, top) => {
+    const m = [0, 1, 2].map((c) => (p0[c] + p1[c]) / 2), e = 0.01;
+    const f = (x, z) => { const s = cblSpan(x, z); return s ? s[top ? 1 : 0] : m[1]; };
+    const gx = (f(m[0] + e, m[2]) - f(m[0] - e, m[2])) / (2 * e), gz = (f(m[0], m[2] + e) - f(m[0], m[2] - e)) / (2 * e);
+    const key = `cerebellum|${m[2] > 0 ? 1 : -1}`;
     if (!out.has(key)) out.set(key, []);
-    // The slice's upper and lower edges, each a polyline broken wherever the slice has a gap; the short ends close it.
-    const top = [], bot = [];
-    for (let t = 0; t <= STEPS; t++) {
-      const x = cx0 + step * t, sp = cblSpan(x, z);
-      top.push(sp ? [x, sp[1], z] : null); bot.push(sp ? [x, sp[0], z] : null);
+    out.get(key).push([...p0, ...p1, ...m, ...unit(top ? [-gx, 1, -gz] : [gx, -1, gz]), inCerebrum(m) ? 0.5 : 1.5, 1, r()]);
+  };
+  for (const top of [true, false]) {
+    const ys = new Float32Array((NX + 1) * (NZ + 1)).fill(NaN), g = new Float32Array(ys.length).fill(NaN);
+    let gmax = 0;
+    for (let i = 0; i <= NX; i++) for (let j = 0; j <= NZ; j++) {
+      const x = cx0 + i * dx, z = -CBL_HALF + j * dz, sp = cblSpan(x, z);
+      if (!sp) continue;
+      const k = i * (NZ + 1) + j;
+      ys[k] = sp[top ? 1 : 0]; g[k] = Math.hypot(x - hx, ys[k] - hy); gmax = Math.max(gmax, g[k]);
     }
-    const yc = [...top, ...bot].filter(Boolean).reduce((a, p, _, l) => a + p[1] / l.length, 0), xc = (cx0 + cx1) / 2;
-    const edge = (p0, p1) => {
-      const m = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, z];
-      if (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) > 0.06) return;
-      // Facing out of its side, so the rings read as concentric contours from the side; dimmer where the occipital
-      // lobes cover them, so the cerebellum still reads whole through the cerebrum's web.
-      const nv = unit([(m[0] - xc) * 0.3, (m[1] - yc) * 0.3, s]);
-      out.get(key).push([...p0, ...p1, ...m, ...nv, inCerebrum(m) ? 0.6 : 1.8, 1, r()]);
-    };
-    for (const line of [top, bot]) for (let t = 0; t < STEPS; t++) if (line[t] && line[t + 1]) edge(line[t], line[t + 1]);
-    for (let t = 0; t <= STEPS; t++) if (top[t] && (!top[t - 1] || !top[t + 1])) edge(top[t], bot[t]); // the ends
+    const pt = (i, j) => [cx0 + i * dx, ys[i * (NZ + 1) + j], -CBL_HALF + j * dz];
+    for (let L = 1; L <= folia; L++) {
+      const lv = gmax * (0.22 + 0.78 * (1 - (1 - L / (folia + 1)) ** 1.6)); // closer together toward the rim
+      for (let i = 0; i < NX; i++) for (let j = 0; j < NZ; j++) { // marching squares
+        const c = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]], v = c.map(([a, b]) => g[a * (NZ + 1) + b]);
+        if (v.some(Number.isNaN)) continue;
+        const cuts = [];
+        for (let k = 0; k < 4; k++) {
+          const a = v[k], b = v[(k + 1) % 4];
+          if ((a < lv) === (b < lv)) continue;
+          const t = (lv - a) / (b - a), pa = pt(...c[k]), pb = pt(...c[(k + 1) % 4]);
+          cuts.push([0, 1, 2].map((q) => pa[q] + (pb[q] - pa[q]) * t));
+        }
+        for (let k = 0; k + 1 < cuts.length; k += 2) fold(cuts[k], cuts[k + 1], top);
+      }
+    }
   }
   let total = 0;
   for (const list of out.values()) total += list.length;

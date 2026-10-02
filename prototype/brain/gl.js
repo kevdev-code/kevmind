@@ -38,14 +38,14 @@ export const NODE_FLOATS = 11; // x y z size shape project r g b seed part
 export const FIBER_FLOATS = 20; // p0(3) p1(3) t0 t1 c0(3) c1(3) type width core alpha project level+2·part
 export const SPRITE_FLOATS = 9; // x y z size r g b a mode
 export const FIL_FLOATS = 15; // p0(3) p1(3) control(3) normal(3) alpha part tint
-// The intro's timeline (s): each part's wave (start, length), the tracts, the closing waves, the end.
-export const INTRO = { stem: [0.25, 0.4], cerebellum: [0.6, 0.4], cerebrum: [0.9, 1.0], tracts: [1.85, 0.45], waves: [2.25, 2.55], wave: 0.5, end: 2.95 };
+// The intro's timeline (s): each part's wave (start, length), the tracts, the one closing wave (start, length), the end.
+export const INTRO = { stem: [0.25, 0.4], cerebellum: [0.6, 0.4], cerebrum: [0.9, 1.0], tracts: [1.85, 0.45], wave: [2.3, 0.55], end: 2.95 };
 const STILL = [99, -9, -9, 0]; // the intro's clock once it's over: everything shown, no waves
 
 const F = (v) => Number(v).toFixed(3); // a GLSL float literal
 const DEPTH = `float farOf(float w) { return clamp((w - u_depth.x) / (u_depth.y - u_depth.x), 0.0, 1.0); }`;
 const REVEAL = `
-uniform vec4 u_intro; // x: intro clock (s; 99 once over), y, z: the closing waves' radii (negative: none)
+uniform vec4 u_intro; // x: intro clock (s; 99 once over), y: the closing wave's radius (negative: none)
 uniform vec2 u_yr[3]; // the parts' heights: cerebrum, cerebellum, brainstem
 uniform vec3 u_center;
 float revealAt(float y, float part) { // when the rising wave reaches a point: brainstem, then cerebellum, then cerebrum
@@ -55,7 +55,7 @@ float revealAt(float y, float part) { // when the rising wave reaches a point: b
 }
 float shown(float T) { return smoothstep(T, T + 0.16, u_intro.x); }
 float front(float T) { float d = (u_intro.x - T - 0.05) / 0.07; return exp(-d * d); }
-float wave(vec3 p) { float d = distance(p, u_center), a = (d - u_intro.y) / 0.14, b = (d - u_intro.z) / 0.14; return exp(-a * a) + exp(-b * b); }
+float wave(vec3 p) { float a = (distance(p, u_center) - u_intro.y) / 0.16; return exp(-a * a); }
 `;
 // In the reveal pass (u_mode 1) every cached program writes, instead of light, when the intro reaches the fragment.
 const MODE_OUT = `if (u_mode > 0.5) { o = vec4(v_T / 3.0, 0.0, 0.0, 1.0); return; }`;
@@ -87,11 +87,11 @@ in vec2 v_uv;
 out vec4 o;
 ${GROUND}
 void main() { o = vec4(ground(v_uv), 1.0); }`;
-// The intro's frame: the ground, the cached brain where the wave has passed, a glow at its front, two closing waves.
+// The intro's frame: the ground, the cached brain where the wave has passed, a glow at its front, the closing wave.
 export const COMP_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
-uniform sampler2D u_cache, u_reveal; uniform float u_clock; uniform vec4 u_waves; // radius 1, radius 2, band (px), unused
+uniform sampler2D u_cache, u_reveal; uniform float u_clock; uniform vec2 u_wave; // the closing wave: radius, band (px)
 uniform vec2 u_mid; // the brain's center on screen (px)
 out vec4 o;
 ${GROUND}
@@ -100,17 +100,16 @@ void main() {
   vec3 b = texelFetch(u_cache, ip, 0).rgb;
   float T = texelFetch(u_reveal, ip, 0).r * 3.0;
   float on = smoothstep(T, T + 0.16, u_clock), d = (u_clock - T - 0.05) / 0.07, fr = exp(-d * d);
-  float r = distance(gl_FragCoord.xy, u_mid), w1 = (r - u_waves.x) / u_waves.z, w2 = (r - u_waves.y) / u_waves.z;
-  float wave = exp(-w1 * w1) + exp(-w2 * w2);
+  float w = (distance(gl_FragCoord.xy, u_mid) - u_wave.x) / u_wave.y, wave = exp(-w * w);
   float lit = max(b.r, max(b.g, b.b));
   o = vec4(ground(v_uv) + b * (on * (1.0 + 0.9 * wave) + fr * 2.2) + vec3(0.35) * fr * min(1.0, lit * 2.0), 1.0);
 }`;
 
 export const NODE_VS = `#version 300 es
 in vec3 a_pos; in float a_size, a_shape, a_proj; in vec3 a_color; in float a_seed, a_part; in vec4 a_state;
-uniform mat4 u_vp; uniform float u_time, u_px; uniform vec2 u_depth; uniform float u_proj[32];
+uniform mat4 u_vp; uniform float u_time, u_px, u_life; uniform vec2 u_depth; uniform float u_proj[32];
 uniform vec4 u_rip[4]; uniform vec3 u_ripColor[4]; uniform vec3 u_kind[6];
-out vec3 v_color, v_flash; out float v_alpha, v_shape, v_white;
+out vec3 v_color, v_flash; out float v_alpha, v_shape, v_white, v_far, v_ember;
 ${DEPTH}
 ${REVEAL}
 void main() {
@@ -131,42 +130,78 @@ void main() {
   }
   float vis = step(0.001, a_state.x);
   float pf = a_proj < 0.0 ? 1.0 : u_proj[int(a_proj)];
-  float lift = front(T) * 1.2 + wave(a_pos) * 0.9; // the intro's growth front and closing waves
-  vec3 col = a_color * a_state.x * pf * (1.0 + lift);
+  float lift = front(T) * 1.2 + wave(a_pos) * 0.9; // the intro's growth front and closing wave
+  // Life: a slow, soft breathing of each cell's light, out of step with its neighbors (5 to 9 s a cycle).
+  float breath = 1.0 + u_life * 0.12 * sin(u_time * (0.7 + 0.55 * a_seed) + a_seed * 47.0);
+  vec3 col = a_color * a_state.x * pf * (1.0 + lift) * breath;
   col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), far * 0.55); // far: desaturated...
   v_color = col * (1.0 - far * 0.5) + rip;                           // ...and dimmer
   v_flash = u_kind[int(a_state.w)] * flash;
-  v_white = clamp(a_state.y * 0.75 + flash + lift * 0.5, 0.0, 1.0);
+  v_white = clamp(a_state.y * 0.5 + flash + lift * 0.5, 0.0, 1.0);
   v_alpha = vis * on * (1.0 - far * 0.45);
   v_shape = a_shape;
-  float px = vis * min(a_size * (1.0 + 1.0 * flash + 0.3 * a_state.y) * u_px / p.w, 220.0);
+  v_far = far;
+  v_ember = clamp(a_state.y + flash, 0.0, 1.0);
+  // Nearer cells a little bigger, farther ones a little smaller, beyond perspective.
+  float px = vis * min(a_size * (1.0 + 0.8 * flash + 0.25 * a_state.y) * (1.12 - 0.3 * far) * u_px / p.w, 220.0);
   gl_PointSize = px;
 }`;
-// The soma: a pyramid (memory notes), a round cell (code files), a diamond (instructions), a square (Serena), a ring
-// (tools), with a soft halo. Dendrites and the axon are geometry (fibers).
+// A glowing cell, shaded as a small 3D body lit from the upper left: a soft gradient body, a bright nucleus, a rim
+// light (brighter where the surface turns away), and a halo that grows when the cell is active. Per type: a sphere
+// with its nucleus (code files), a faceted octahedron (instructions), a pyramid, the soma of a pyramidal cell (memory
+// notes), a small cube (Serena notes), a torus (tools). Farther cells have softer edges.
 export const NODE_FS = `#version 300 es
 precision mediump float;
-in vec3 v_color, v_flash; in float v_alpha, v_shape, v_white;
+in vec3 v_color, v_flash; in float v_alpha, v_shape, v_white, v_far, v_ember;
 out vec4 o;
-float sdf(vec2 q, float s) {
-  q /= 0.27;
-  if (s < 0.5) return length(q) - 1.0;
-  if (s < 1.5) return (abs(q.x) + abs(q.y)) * 0.8 - 1.0;
-  if (s < 2.5) { q.y = -q.y - 0.25; return max(abs(q.x) * 0.866 + q.y * 0.5, -q.y) - 0.62; }
-  if (s < 3.5) return max(abs(q.x), abs(q.y)) - 0.85;
-  return abs(length(q) - 0.82) - 0.26;
-}
+const vec3 LIGHT = vec3(-0.45, 0.55, 0.70);
 void main() {
   vec2 q = gl_PointCoord * 2.0 - 1.0;
-  float r2 = dot(q, q);
-  if (r2 > 1.0) discard;
-  float d = sdf(q, v_shape);
-  float w = max(fwidth(d), 0.02);
-  float core = 1.0 - smoothstep(-w, w, d);
-  float halo = exp(-r2 * 5.5) * 0.34;
-  vec3 coreCol = mix(v_color * 1.45, vec3(1.0), v_white * 0.9 + 0.06) + v_flash;
-  vec3 col = coreCol * core + v_color * halo + v_flash * halo * 1.4;
-  float a = (core + halo) * v_alpha;
+  q.y = -q.y;
+  if (dot(q, q) > 1.0) discard;
+  vec2 p = q / 0.46; // the body fills 46% of the sprite; the rest is halo
+  float d, nucleus = 0.0, ridge = 0.0;
+  vec3 n;
+  if (v_shape < 0.5) { // sphere with a nucleus
+    float r = length(p);
+    d = r - 1.0;
+    n = vec3(p, sqrt(max(0.0, 1.0 - r * r)));
+    vec2 c = p - vec2(-0.2, 0.22);
+    nucleus = exp(-dot(c, c) * 7.0);
+  } else if (v_shape < 1.5) { // octahedron: four facets toward the viewer, ridges between them
+    d = (abs(p.x) * 0.9 + abs(p.y) * 0.75) - 1.0;
+    n = normalize(vec3(sign(p.x) * 0.55, sign(p.y) * 0.5, 0.68));
+    ridge = exp(-pow(min(abs(p.x), abs(p.y)) / 0.06, 2.0));
+    nucleus = exp(-dot(p, p) * 10.0) * 0.6;
+  } else if (v_shape < 2.5) { // pyramid: a left and a right face, a ridge from the apex
+    vec2 t = vec2(abs(p.x), p.y + 0.6); // apex at the top (y 1), base at y -0.6, 1.8 wide
+    d = max(t.x * 0.872 + t.y * 0.49 - 0.785, -t.y);
+    n = normalize(vec3(p.x < 0.0 ? -0.55 : 0.5, 0.3, 0.75));
+    ridge = exp(-pow(p.x / 0.06, 2.0)) * step(-0.6, p.y);
+    vec2 c = p - vec2(0.0, -0.05);
+    nucleus = exp(-dot(c, c) * 12.0) * 0.8;
+  } else if (v_shape < 3.5) { // cube, a corner toward the viewer: top, left and right faces
+    vec2 a = abs(p);
+    d = max(a.x, a.x * 0.5 + a.y * 0.866) - 0.86; // a pointy-top hexagon
+    bool top = p.y > a.x * 0.577;
+    n = top ? normalize(vec3(0.0, 0.85, 0.5)) : normalize(vec3(p.x < 0.0 ? -0.75 : 0.75, -0.25, 0.6));
+    float e1 = abs(p.x) * step(p.y, 0.0), e2 = abs(p.y - abs(p.x) * 0.577) * step(0.0, p.y + 0.01);
+    ridge = exp(-pow(min(e1, e2) / 0.06, 2.0)) * 0.8;
+  } else { // torus: a glowing ring, a tube shaded across its width
+    float r = length(p), k = (r - 0.64) / 0.34;
+    d = abs(r - 0.64) - 0.34;
+    vec2 dir = r > 0.001 ? p / r : vec2(0.0);
+    n = vec3(dir * clamp(k, -1.0, 1.0), sqrt(max(0.0, 1.0 - k * k)));
+    nucleus = exp(-pow((r - 0.64) / 0.12, 2.0)) * 0.5; // a bright line along the top of the tube
+  }
+  float w = max(fwidth(d), 0.02) * (1.0 + v_far * 3.0);
+  float body = 1.0 - smoothstep(-w, w, d);
+  float diff = max(dot(n, normalize(LIGHT)), 0.0), rim = pow(1.0 - clamp(n.z, 0.0, 1.0), 2.0);
+  vec3 lit = v_color * (0.45 + 0.8 * diff) + v_color * rim * 1.3 + mix(v_color, vec3(1.0), 0.55) * (nucleus * 1.1 + ridge * 0.45);
+  lit = mix(lit, vec3(1.0), v_white * 0.55) + v_flash;
+  float halo = exp(-max(d, 0.0) * 3.4) * (0.16 + 0.4 * v_ember) * (1.0 - body);
+  vec3 col = lit * body + (v_color + v_flash) * halo;
+  float a = (body + halo) * v_alpha;
   if (a < 0.004) discard;
   o = vec4(col * v_alpha, 0.0);
 }`;
@@ -698,8 +733,8 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.targets.reveal.tex);
       gl.uniform1i(L.u_cache, 0); gl.uniform1i(L.u_reveal, 1);
       gl.uniform1f(L.u_clock, view.intro[0]);
-      const k = this.dpr * view.radiusPx / view.waveR; // world → device px, for the closing waves
-      gl.uniform4f(L.u_waves, view.intro[1] * k, view.intro[2] * k, Math.max(8, 0.14 * k), 0);
+      const k = this.dpr * view.radiusPx / view.waveR; // world → device px, for the closing wave
+      gl.uniform2f(L.u_wave, view.intro[1] * k, Math.max(8, 0.16 * k));
       gl.uniform2f(L.u_mid, view.mid[0] * this.dpr, H - view.mid[1] * this.dpr);
       this._ground(this.comp);
       gl.activeTexture(gl.TEXTURE0);
@@ -716,6 +751,7 @@ export class Renderer {
     this._common(this.node, view);
     const L = this.node.loc;
     gl.uniform1f(L.u_time, view.time);
+    gl.uniform1f(L.u_life, view.life || 0);
     gl.uniform3fv(L.u_kind, this.palette.kinds);
     const rip = new Float32Array(16).fill(-99), ripC = new Float32Array(12);
     (view.ripples || []).slice(-4).forEach((r, i) => { rip.set([...r.p, r.t], i * 4); ripC.set(r.c, i * 3); });

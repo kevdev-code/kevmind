@@ -84,7 +84,7 @@ test('the shell has a brain\'s proportions (length 1 : width 0.83 : cerebrum hei
   assert.ok(stem.mx[1] < cer.mn[1] + 0.25 && stemX(stem.mn[1], mid) < stemX(mid, stem.mx[1]), 'brainstem below the base, tilted back');
 });
 
-test('the shell is a web of short strands along its own points; the cerebellum has contour rings', () => {
+test('the shell is a web of short strands along its own points; the cerebellum has folia', () => {
   const sh = shellPoints(12000), f = shellFilaments(sh), d = f.data, n = d.length / FIL_FLOATS;
   assert.equal(FIL_FLOATS, GL_FIL_FLOATS, 'layout and renderer agree on the layout of a strand');
   assert.ok(n > sh.part.length * 0.9, `about one strand or more per point (${n} for ${sh.part.length})`);
@@ -94,19 +94,26 @@ test('the shell is a web of short strands along its own points; the cerebellum h
   assert.equal(covered, n);
   const points = new Set();
   for (let i = 0; i < sh.part.length; i++) points.add([0, 1, 2].map((a) => sh.pos[i * 3 + a].toFixed(5)).join());
-  let rings = 0, total = 0;
+  let folia = 0, total = 0;
+  const cbl = [[9, 9, 9], [-9, -9, -9]];
+  for (let i = 0; i < sh.part.length; i++) if (sh.part[i] === 1) for (let a = 0; a < 3; a++) { cbl[0][a] = Math.min(cbl[0][a], sh.pos[i * 3 + a]); cbl[1][a] = Math.max(cbl[1][a], sh.pos[i * 3 + a]); }
   for (let i = 0; i < n; i++) {
     const o = i * FIL_FLOATS, p0 = [d[o], d[o + 1], d[o + 2]], p1 = [d[o + 3], d[o + 4], d[o + 5]], c = [d[o + 6], d[o + 7], d[o + 8]], part = d[o + 13];
     const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]), mid = [0, 1, 2].map((a) => (p0[a] + p1[a]) / 2);
     assert.ok(Math.hypot(c[0] - mid[0], c[1] - mid[1], c[2] - mid[2]) <= 0.21 * len + 1e-6, 'slightly curved, never a loop');
-    if (part === 1) { rings++; assert.equal(p0[2], p1[2], 'a ring lies in one slice'); continue; }
+    if (part === 1) { // folia: short pieces of level lines on the cerebellum's surface, among its own points
+      folia++;
+      assert.ok(len <= 0.05, `a short piece of a folium (${len.toFixed(3)})`);
+      for (const p of [p0, p1]) assert.ok(p.every((v, a) => v >= cbl[0][a] - 0.03 && v <= cbl[1][a] + 0.03), 'on the cerebellum');
+      continue;
+    }
     total += len;
     assert.ok(len <= 0.055 + 1e-6, `a short strand (${len.toFixed(3)})`);
     assert.ok(points.has(p0.map((v) => v.toFixed(5)).join()) && points.has(p1.map((v) => v.toFixed(5)).join()), 'joins two shell points');
     if (part === 0) assert.ok(p0[2] * p1[2] >= 0, 'never across the fissure');
   }
-  assert.ok(rings > 300, `the cerebellum's rings (${rings} segments)`);
-  assert.ok(total / (n - rings) < 0.03, 'mostly short ridge strands');
+  assert.ok(folia > 1000, `the cerebellum's folia (${folia} pieces)`);
+  assert.ok(total / (n - folia) < 0.03, 'mostly short ridge strands');
 });
 
 test('the fixed structures sit where they belong', () => {
