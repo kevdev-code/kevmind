@@ -6,6 +6,15 @@ What changed in each version of KevMind. Dates are local. Versions before 0.5.0 
 
 Changes since 0.5.0, for 0.5.1.
 
+### Added
+
+- **All live sessions in the Brain.** A switch under the Brain's title shows either the session selected in Live or every live session at once (remembered; until you choose, all of them whenever more than one is live). Each session gets its own Claude, subagents, trails and animations; every Claude stays coral and every subagent silver, and each tag says its project ("Claude · OdonMind", "#2 · OdonMind"). The panel lists the sessions grouped by project with their agents and status: click one to follow it, hover it to light its project. A session waiting for your OK comes first in amber, and while only one session is shown, the others waiting are named under the panel. Live means working, waiting, or active in the last 10 minutes after a prompt; at most 6, the most recent first; a session that goes quiet fades out. A session in a project the brain doesn't have yet is added within seconds. On a phone the panel shows one line per session.
+- The benchmark harness plays three sessions in three projects at once (`?sessions`), and the benchmark measures it.
+
+### Fixed
+
+- The Brain: a session that was waiting for your OK when the view caught up with it lost its amber marker.
+
 ### Docs
 
 - A 33-second recording of the Brain tab on demo data (`docs/media/brain-demo.mp4`; the README plays it inline on GitHub, with the file in the repo as a fallback), in place of the prototype's recording; `prototype/brain/bench/record.mjs` records it.

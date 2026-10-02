@@ -35,7 +35,7 @@ Status as of 2026-10-02. Version **0.5.0**, on npm: the Brain tab, View on your 
 
 ## Phase 4: Brain tab (0.5.0)
 
-A third tab next to Live and Memory: what KevMind knows about your projects as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells in lobes (one hue per kind of knowledge); their real links are fibers; the session selected in Live plays on it (Claude in coral, subagents in silver). How it looks and why is in [DESIGN.md, section 7](../DESIGN.md); how it was built, measured and integrated is in [BRAIN.md](BRAIN.md).
+A third tab next to Live and Memory: what KevMind knows about your projects as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells in lobes (one hue per kind of knowledge); their real links are fibers; the session selected in Live, or every live session at once, plays on it (Claude in coral, subagents in silver). How it looks and why is in [DESIGN.md, section 7](../DESIGN.md); how it was built, measured and integrated is in [BRAIN.md](BRAIN.md).
 
 What the requirements became:
 
@@ -45,10 +45,10 @@ What the requirements became:
 - Nothing renders while the tab is hidden or another view is shown.
 - Raw WebGL2, zero dependencies; 30 fps on the RTX at ~600 and ~3,000 nodes; on SwiftShader (the stand-in for a machine without a GPU) 28.8 fps in normal use and about 25 with the camera moving at 3,000 nodes.
 - Works on a phone through "View on phone" (read-only), with a lighter brain.
+- The session selected in Live, or every live session at once ("All live sessions", at most 6), each Claude tagged with its project.
 
 Known limits:
 
-- It follows one session at a time (the one selected in Live), not every live session at once.
 - A file Claude touches for the first time appears after the next graph refresh (about 6 to 30 s; a file it creates, 2.5 to 8 s, and its cell is born then): the view is rebuilt in place, which shows as a short blink.
 - The dots of an edit (lines added and removed) and the files a search matched come from what Claude Code reports when the call ends; a tool that reports neither shows its figure without them.
 - At most 1,200 code files per project and 4,000 nodes in all (the most active are kept); tools are shared by all projects.
@@ -57,6 +57,5 @@ Known limits:
 
 ## Next
 
-- An option for the Brain tab to show every live session at once (all their agents on the same brain) instead of only the session selected in Live.
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.

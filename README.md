@@ -21,7 +21,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 - **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
-- **Brain tab**: everything above as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells grouped in lobes, one color per kind of knowledge (instructions, docs, logic, interface, memory, tools and tests, infrastructure); their real links are fibers (notes that link or cite code, files that import each other or change together). While a session works, Claude (coral) and its subagents (silver, numbered) travel from file to file along the links between them, leaving a trail, and what they touch glows and cools. Each kind of action (read, edit, new file, search, command, web, subagent, waiting for your OK, error) has its own short animation, so you can tell what Claude is doing at a glance. Orbit, zoom, search, filter, click a cell for its details, or turn on Auto-rotate. Only real data, read-only, and it rests completely when nothing happens.
+- **Brain tab**: everything above as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells grouped in lobes, one color per kind of knowledge (instructions, docs, logic, interface, memory, tools and tests, infrastructure); their real links are fibers (notes that link or cite code, files that import each other or change together). While a session works, Claude (coral) and its subagents (silver, numbered) travel from file to file along the links between them, leaving a trail, and what they touch glows and cools. When Claude works in several projects at once, "All live sessions" shows them all on the same brain, each tag with its project, and a session waiting for your OK comes first. Each kind of action (read, edit, new file, search, command, web, subagent, waiting for your OK, error) has its own short animation, so you can tell what Claude is doing at a glance. Orbit, zoom, search, filter, click a cell for its details, or turn on Auto-rotate. Only real data, read-only, and it rests completely when nothing happens.
 
 The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width. On wide screens the page stays still and each column (sessions, center, right rail) scrolls on its own; the activity feed scrolls inside its panel.
 
@@ -206,7 +206,7 @@ Restarts the server whenever something under `src/` or `bin/` changes, and the o
 
 - To know which subagent performed each action, KevMind uses the hook's `agent_id` field when Claude Code sends it. If your version doesn't, subagent actions are attributed to "Claude", although the timeline of when each subagent starts and ends still works.
 - Each hook starts a Node process (~50 ms). Not noticeable in normal use.
-- The Brain tab follows one session at a time (the one selected in Live), and reads imports only for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML.
+- The Brain tab shows at most 6 live sessions at once, and reads imports only for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML.
 
 ## Adding a language
 
@@ -218,7 +218,7 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 - [x] Memory tab: `CLAUDE.md` files, auto memory and Serena notes, flagging stale, duplicate or broken-link notes.
 - [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
 - [x] Brain tab: memory, files, tools and live agents as a 3D brain.
-- [ ] Brain tab: every live session at once.
+- [x] Brain tab: every live session at once.
 - [ ] Replay a past session step by step.
 - [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
 
