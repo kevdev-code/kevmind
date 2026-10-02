@@ -117,6 +117,9 @@ test('sharing: off by default, a token to get in, a new link revokes the old, re
     assert.equal(JSON.parse((await post('/api/share', { on: false })).body).on, false);
     await assert.rejects(req(`${shared}/api/health`), /ECONNREFUSED/);
   } finally {
+    const exited = new Promise((resolve) => child.once('exit', resolve));
     child.kill();
+    await exited;
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
