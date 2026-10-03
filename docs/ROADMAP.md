@@ -87,9 +87,30 @@ Known limits:
 - At a start the map gets 400 ms; a cold build (a project's first start after the dashboard starts) goes on in the background and that v2 start has no map lines.
 - Past 1,500 characters the lowest-ranked lines go (stale names, stale paths, key files, notes, in that order); the tools line always stays.
 
+## Project map (unreleased)
+
+`src/tree.js`, built by the dashboard for every project with sessions the first time it appears (even with the experience tools off), refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files → exported names, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; gap checks in the Memory tab; `code_map` and briefing v2 use it.
+
+Decisions (2026-10-02): areas by folder rather than import clusters (on the owner's largest app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); the map is built even with the tools off, and what reaches Claude stays behind the switch; 12 months of git by default, `--all` on demand; area summaries written by a model are left for later, and only if the controlled benchmark shows they help.
+
+Measured on the owner's machine (map warm means the code map's per-file cache is filled):
+
+| Project | Repos | Code files | Commits (12 months) | Full build | Incremental | On disk |
+|---|---|---|---|---|---|---|
+| The largest app | 3 | 957 | 1,051 | 1.2 s (memory report 0.3, code map 0.4, tree 0.5) | 0.23 to 0.46 s | 0.5 MB |
+| KevMind | 1 | 70 | 115 | 0.2 s | 0.03 to 0.07 s | 25 KB |
+
+Known limits:
+
+- Folder words link a note to an area by name ("billing"); a word the project uses everywhere ("shop" in a shop app) is ignored, but a common word below that (in under a fifth of the notes) can still link loosely. The "many notes" check counts only notes that cite a file or exported name in the area.
+- The experience tools keep their own `git log` for "changes together" (365 days or 2,000 commits); the map reads its own window. Merging the two readers was planned but bought little (about 0.4 s every 10 minutes).
+- Areas in the Brain view come in a later step.
+
 ## Next
 
-- Open: after enough starts, keep whichever arm saves tokens (or neither) and drop the others.
+- The controlled benchmark (`prototype/briefing-bench/`): four past KevMind fixes, three runs with the briefing and three without, on Opus 5.5. The pilot (task 1, one run per arm) used 1.31 M tokens with the briefing and 1.13 M without, both successful. The full run waits for the owner's go-ahead.
+- The Brain's areas from the project map.
+- After enough live starts, keep whichever arm saves tokens (or neither).
 
 - Replay a past session step by step (the Brain tab would be a good stage for it).
 - `CLAUDE.md` suggestions based on what Claude keeps re-reading.

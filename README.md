@@ -20,6 +20,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **Conflict alerts**: when two agents edit the same file less than 5 minutes apart, grouped by file and pair of agents; the latest three are shown, with "show all".
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
+- **Project map**: each project from day one, without any session history: its areas (folders), how busy each one is and how many of its commits were fixes (git), what Claude did there, and which memory notes and `CLAUDE.md` sections talk about it. Built in the background, read-only.
 - **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, `npm run` scripts that `package.json` no longer has, code names the code has dropped (with the experience tools on), worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
 - **Brain tab**: everything above as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells grouped in lobes, one color per kind of knowledge (instructions, docs, logic, interface, memory, tools and tests, infrastructure); their real links are fibers (notes that link or cite code, files that import each other or change together). While a session works, Claude (coral) and its subagents (silver, numbered) travel from file to file along the links between them, leaving a trail, and what they touch glows and cools. When Claude works in several projects at once, "All live sessions" shows them all on the same brain, each tag with its project, and a session waiting for your OK comes first. Each kind of action (read, edit, new file, search, command, web, subagent, waiting for your OK, error) has its own short animation, so you can tell what Claude is doing at a glance. Orbit, zoom, search, filter, click a cell for its details, or turn on Auto-rotate. Only real data, read-only, and it rests completely when nothing happens.
 
@@ -119,7 +120,7 @@ As an alternative, the plugin has an "Experience tools for Claude" option (`expe
 - `file_context(paths)`: files that usually change or get read together with the given ones.
 - `file_history(path)`: how many work episodes read and edited a file, by which agent types, and how often git changed or fixed it.
 - `known_failures(command)`: failures this project has seen before, and what came before the next success.
-- `code_map(name | file | from, to | area)`: the code from its import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another, and, with no arguments, the key files and the areas of files that work together. Answers about a file add its history, in under 200 tokens.
+- `code_map(name | file | from, to | area)`: the code from its import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another, and, with no arguments, the key files and the areas (folders) with their git activity and the notes about them. Answers about a file add its history, in under 200 tokens.
 
 The evidence comes from two places: KevMind's own record of past Claude Code work, counted in work episodes, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
 
@@ -161,6 +162,16 @@ or the switch in the Memory tab's **Session briefing** panel. It takes effect at
 
 **v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the half that gets the briefing gets v2: the same note plus lines from the code map (the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has). The comparison is then v2 against no briefing.
 
+## Project map
+
+KevMind shouldn't need weeks of sessions to know a project. The first time a project has a Claude Code session, the dashboard builds its map in the background (about a second for a thousand files); `npx kevmind init [path]` or the **Rebuild** button in the Memory tab builds it now.
+
+- **Areas are folders.** A folder with more than 40 code files is split into its subfolders. For each area: its core files and which areas it uses (from imports), commits in the last 90 days and in the last 12 months, how many were labeled fix, reverts, when it last changed (git), what Claude read and edited there and which known failures were fixed there (KevMind's record), and the notes that talk about it.
+- **Your memory, organized.** Auto-memory notes, Serena notes and each `CLAUDE.md` section are linked to the areas they cite or name. KevMind never writes or edits a note. The Memory tab flags busy areas no note talks about, and areas many notes cite, with a prompt to copy.
+- **Every fact says where it comes from**: code, git, Claude sessions or notes. With the experience tools on, `code_map` and the session briefing use the map too.
+- **History window:** 12 months by default; `npx kevmind init --all` (or `--months=N`) reads more.
+- The map lives in `~/.kevmind/tree/` (25 KB for a 70-file project, about 0.5 MB for one with 950 files and 1,000 commits). Nothing is written to the project.
+
 ## View on your phone
 
 Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** in the Live tab (or run `npx kevmind share`) and scan the QR code.
@@ -184,6 +195,7 @@ Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** i
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
 - The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`, plus, with the experience tools on, `git ls-files` and `git log -S` to tell code names that were removed from ones that never existed.
 - The session briefing (off by default) uses the same records plus read-only `git log` and `git status`. Each start's text is kept in `~/.kevmind/briefings.jsonl` so you can see exactly what Claude received; it reaches Claude like any other context.
+- The project map keeps paths, exported names, counts, commit hashes and the subject of revert commits (at most 80 characters); never file contents.
 - The experience tools collect nothing new: they read the already-masked event log, `git log` and, for `code_map`, the import and export statements of the project's code files (listed with `git ls-files`), only for the project Claude is working in, and never write. `npx kevmind clear --project <name>` removes one project's history.
 
 ## Configuration
@@ -209,7 +221,7 @@ Combine them to record a single project: `http://localhost:4777/?project=KevMind
 
 ```bash
 npx kevmind clear                     # removes demo sessions from the event logs
-npx kevmind clear --project my-app  # removes one project's history (by folder name or path)
+npx kevmind clear --project my-app  # removes one project's history and map (by folder name or path)
 npx kevmind clear --all               # wipes everything (asks first; --yes skips the question)
 ```
 

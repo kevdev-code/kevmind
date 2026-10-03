@@ -20,6 +20,7 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 - **Alertas de conflicto**: cuando dos agentes editan el mismo archivo con menos de 5 minutos de diferencia, agrupadas por archivo y par de agentes; se ven las tres más recientes, con "ver todas".
 - **Qué dice y qué piensa Claude**: extractos cortos de sus respuestas y de sus resúmenes de razonamiento legibles, leídos de la transcripción de la sesión, con un botón para ocultar los pensamientos. Si razonó pero no devolvió nada legible, el panel lo dice con la cantidad de tokens.
 - **Tokens**: entrada, salida y caché (lectura/escritura) por sesión y por agente, contados una vez por llamada. Sin estimaciones de costo: los precios cambian.
+- **Mapa del proyecto**: cada proyecto desde el primer día, sin historial de sesiones: sus áreas (carpetas), cuánta actividad tiene cada una y cuántos de sus commits fueron arreglos (git), qué hizo Claude ahí, y qué notas de memoria y secciones de `CLAUDE.md` hablan de ella. Se hace en segundo plano, solo lectura.
 - **Pestaña Memoria**: lo que Claude Code y Serena recuerdan de cada proyecto, con los problemas primero. Cubre los `CLAUDE.md` y sus importaciones, la memoria automática de Claude y las notas de Serena. Muestra cuánto contexto se carga al inicio de cada sesión, y marca enlaces e importaciones rotos, notas que faltan en `MEMORY.md`, un `MEMORY.md` que pasa el límite de 200 líneas / 25 KB, archivos de instrucciones demasiado largos, rutas desactualizadas, scripts de `npm run` que `package.json` ya no tiene, nombres que el código ya no tiene (con las herramientas de experiencia activas), copias en worktrees, notas grandes, posibles duplicados y notas que ninguna sesión lee. Cada problema tiene un botón "Copiar prompt de arreglo" para pegar en Claude Code. KevMind nunca edita esos archivos.
 - **Pestaña Cerebro**: todo lo anterior como un cerebro 3D vivo. Las instrucciones, las notas de memoria, las notas de Serena, los archivos de código que Claude tocó y las herramientas que usó son células agrupadas en lóbulos, con un color por tipo de conocimiento (instrucciones, documentos, lógica, interfaz, memoria, herramientas y tests, infraestructura); sus relaciones reales son fibras (notas que se enlazan o citan código, archivos que se importan o cambian juntos). Mientras una sesión trabaja, Claude (coral) y sus subagentes (plateados, numerados) viajan de archivo en archivo por las conexiones que los unen, dejando un rastro, y lo que tocan brilla y se enfría. Cuando Claude trabaja en varios proyectos a la vez, "Todas las sesiones activas" las muestra todas en el mismo cerebro, cada etiqueta con su proyecto, y una sesión que espera tu OK va primero. Cada tipo de acción (lectura, edición, archivo nuevo, búsqueda, comando, web, subagente, espera de tu OK, error) tiene su propia animación breve, para saber de un vistazo qué hace Claude. Orbita, acerca, busca, filtra, haz clic en una célula para ver sus detalles, o activa el giro automático. Solo datos reales, solo lectura, y queda totalmente quieto cuando no pasa nada.
 
@@ -84,7 +85,7 @@ No necesitas mantenerlo abierto tú: cuando empieza una sesión de Claude Code y
 
 `npx kevmind start --background` lo abre separado de la terminal, así sigue corriendo cuando la cierras (salida en `~/.kevmind/server.log`). `npx kevmind stop` cierra el panel en ejecución; `npx kevmind restart` lo cierra si está corriendo y lo vuelve a abrir tal como estaba.
 
-`npx kevmind clear` borra las sesiones de demo de los datos guardados; `npx kevmind clear --project <nombre>` borra el historial de un proyecto (por nombre de carpeta o ruta); `npx kevmind clear --all` borra todo (pregunta antes; `--yes` omite la pregunta). Los eventos se guardan en un archivo por mes (`events-AAAA-MM.jsonl`, meses en UTC); el `events.jsonl` único de versiones anteriores se divide por meses la primera vez que arranca el panel.
+`npx kevmind clear` borra las sesiones de demo de los datos guardados; `npx kevmind clear --project <nombre>` borra el historial y el mapa de un proyecto (por nombre de carpeta o ruta); `npx kevmind clear --all` borra todo (pregunta antes; `--yes` omite la pregunta). Los eventos se guardan en un archivo por mes (`events-AAAA-MM.jsonl`, meses en UTC); el `events.jsonl` único de versiones anteriores se divide por meses la primera vez que arranca el panel.
 
 ### Probar sin Claude Code
 
@@ -118,7 +119,7 @@ Como alternativa, el plugin tiene la opción "Experience tools for Claude" (`exp
 - `file_context(paths)`: archivos que suelen cambiar o leerse junto con los indicados.
 - `file_history(path)`: en cuántos episodios de trabajo se leyó y editó un archivo, con qué tipos de agente, y cuántas veces git lo cambió o lo corrigió.
 - `known_failures(command)`: fallos que el proyecto ya vio y qué pasó antes del siguiente éxito.
-- `code_map(name | file | from, to | area)`: el código según sus sentencias de importación y exportación: qué archivos usan un nombre exportado, qué exporta un archivo y quién lo importa, cómo llega un archivo a otro y, sin argumentos, los archivos clave y las áreas de archivos que trabajan juntos. Las respuestas sobre un archivo añaden su historia, en menos de 200 tokens.
+- `code_map(name | file | from, to | area)`: el código según sus sentencias de importación y exportación: qué archivos usan un nombre exportado, qué exporta un archivo y quién lo importa, cómo llega un archivo a otro y, sin argumentos, los archivos clave y las áreas (carpetas) con su actividad en git y las notas que hablan de ellas. Las respuestas sobre un archivo añaden su historia, en menos de 200 tokens.
 
 La evidencia viene de dos fuentes: el registro de KevMind del trabajo pasado de Claude Code, contado en episodios de trabajo, y el historial de git del proyecto (`git log` de solo lectura, últimos 365 días o 2,000 commits). Git solo basta para empezar, así que sirven desde el primer día en cualquier repositorio.
 
@@ -148,7 +149,17 @@ Son 1.500 caracteres como máximo (unos 350 tokens), escritos como hechos, nunca
 
 **v2, con el mapa de código.** Mientras las [herramientas de experiencia](#herramientas-de-experiencia-para-claude-opcional) están activas, la mitad que recibe el resumen recibe la v2: la misma nota más líneas del mapa de código (el área donde caen las últimas ediciones con sus archivos centrales y sus áreas vecinas, los archivos de los que más depende el código y las notas que nombran código que ya no existe). La comparación es entonces la v2 frente a ningún resumen.
 
-## Ver en tu teléfono
+## Mapa del proyecto
+
+KevMind no debería necesitar semanas de sesiones para conocer un proyecto. La primera vez que un proyecto tiene una sesión de Claude Code, el panel hace su mapa en segundo plano (alrededor de un segundo para mil archivos); `npx kevmind init [ruta]` o el botón **Rehacer** de la pestaña Memoria lo hacen en el momento.
+
+- **Las áreas son carpetas.** Una carpeta con más de 40 archivos de código se divide en sus subcarpetas. Para cada área: sus archivos centrales y qué áreas usa (de los imports), commits de los últimos 90 días y de los últimos 12 meses, cuántos se marcaron como arreglo, reverts, cuándo cambió por última vez (git), qué leyó y editó Claude ahí y qué fallos conocidos se arreglaron ahí (el registro de KevMind), y las notas que hablan de ella.
+- **Tu memoria, ordenada.** Las notas de la memoria automática, las de Serena y cada sección de `CLAUDE.md` se enlazan con las áreas que citan o nombran. KevMind nunca escribe ni edita una nota. La pestaña Memoria señala las áreas con mucha actividad de las que no habla ninguna nota y las áreas que citan muchas notas, con un prompt para copiar.
+- **Cada dato dice de dónde viene**: código, git, sesiones de Claude o notas. Con las herramientas de experiencia activas, `code_map` y el resumen de inicio de sesión también usan el mapa.
+- **Ventana de historia:** 12 meses por defecto; `npx kevmind init --all` (o `--months=N`) lee más.
+- El mapa vive en `~/.kevmind/tree/` (25 KB para un proyecto de 70 archivos, alrededor de 0,5 MB para uno de 950 archivos y 1.000 commits). No se escribe nada en el proyecto.
+
+## Ver en el teléfono
 
 Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el teléfono** en la pestaña En vivo (o ejecuta `npx kevmind share`) y escanea el código QR.
 
@@ -171,6 +182,7 @@ Mira el panel desde tu teléfono en la misma red Wi-Fi. Haz clic en **Ver en el 
 - La pestaña Memoria solo lee. Muestra metadatos, descripciones y encabezados, nunca el cuerpo completo de las notas. De la configuración global de Serena solo lee la lista de proyectos, nunca el `auth_secret`. Git se usa solo con `git ls-tree`, de solo lectura, y, con las herramientas de experiencia activas, con `git ls-files` y `git log -S` para distinguir los nombres de código que se quitaron de los que nunca existieron.
 - De las transcripciones solo se guardan extractos de hasta 200 caracteres, enmascarados como todo lo demás. Las firmas del razonamiento nunca se leen y la transcripción nunca se copia.
 - El resumen de inicio (apagado por defecto) usa los mismos registros más `git log` y `git status` de solo lectura. El texto de cada inicio se guarda en `~/.kevmind/briefings.jsonl` para que veas exactamente lo que recibió Claude; le llega como cualquier otro contexto.
+- El mapa del proyecto guarda rutas, nombres exportados, cuentas, hashes de commits y el asunto de los commits de revert (80 caracteres como máximo); nunca el contenido de los archivos.
 - Las herramientas de experiencia no recolectan nada nuevo: leen el registro de eventos ya enmascarado, `git log` y, para `code_map`, las sentencias de importación y exportación de los archivos de código del proyecto (listados con `git ls-files`), solo del proyecto en el que trabaja Claude, y nunca escriben. `npx kevmind clear --project <nombre>` borra el historial de un proyecto.
 
 Para cómo funciona, configuración, limitaciones y hoja de ruta, ver el [README en inglés](README.md).

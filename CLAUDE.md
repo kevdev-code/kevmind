@@ -1,6 +1,6 @@
 # KevMind
 
-Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history and an approximate code map (`src/codemap.js`); the Brain tab (`src/brain.js`, `public/brain/`) draws all of it as a living 3D brain.
+Local dashboard that watches Claude Code work in real time. Hooks (`hooks/send.js`) POST events to a Node server (`src/server.js`, state in `src/state.js`), which streams them to a plain HTML/CSS/JS page (`public/`) over SSE. The server also tails each recent session's transcript (`src/transcript.js`) for what Claude says and thinks, token usage, session titles and the exact identity of subagents; hook payloads are the fallback. The Memory tab (`src/memory.js`) reports what Claude Code and Serena remember; the project map (`src/tree.js`) is each project's baseline from its code, git and memory; the opt-in experience tools (`src/experience.js`, `mcp/server.js`) give Claude a project's history and an approximate code map (`src/codemap.js`); the Brain tab (`src/brain.js`, `public/brain/`) draws all of it as a living 3D brain.
 
 Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Design system: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
 
@@ -16,7 +16,7 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 
 ## Data and dates
 
-- Data lives in `~/.kevmind` (or `KEVMIND_HOME`): monthly event logs `events-YYYY-MM.jsonl` (`src/logs.js`, months in UTC), `spool.jsonl` (events sent while the server was down), `experience.json`, `config.json`, `server.log`, `server.pid`.
+- Data lives in `~/.kevmind` (or `KEVMIND_HOME`): monthly event logs `events-YYYY-MM.jsonl` (`src/logs.js`, months in UTC), `spool.jsonl` (events sent while the server was down), `experience.json`, `config.json`, `tree/<project>.json` (each project's map), `server.log`, `server.pid`.
 - Timestamps are stored as epoch ms. Every date shown to the user or to Claude, and every count of "distinct days", uses the machine's local time zone, never UTC.
 - Per session the server keeps the newest 300 events and 50 alerts; every event gets an increasing `seq`, which the page uses to key feed rows.
 
@@ -38,7 +38,13 @@ Status, decisions and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md). Desig
 
 Read-only by design: it never edits, moves or deletes memory or instruction files, runs git only through `ls-tree`/`show`, and reads only the project list from Serena's config (never its secrets). `test/memory-readonly.test.mjs` enforces this. Its fixes are prompts the user copies, not actions.
 
-Docs ↔ code checks: `npm run x` (or bun, pnpm, yarn) that no package.json of the project has, always; and, with the experience tools on, code names in backticks that no code file has anymore, flagged only when `git log -S` (through `codemap.js`, never `memory.js`) shows they were in the code before, never in a negated sentence. Names never in the code are planned work or not code: not flagged. `test/codemap.test.mjs` holds the cases.
+Docs ↔ code checks: `npm run <script>` (or bun, pnpm, yarn) that no package.json of the project has, always; and, with the experience tools on, code names in backticks that no code file has anymore, flagged only when `git log -S` (through `codemap.js`, never `memory.js`) shows they were in the code before, never in a negated sentence. Names never in the code are planned work or not code: not flagged. `test/codemap.test.mjs` holds the cases.
+
+## Project map (knowledge tree)
+
+- `src/tree.js` builds each project's baseline so KevMind is useful before any session: project → areas → files → exported names. Areas are folders (`areas()` in `src/codemap.js`: a folder with more than `MAP.areaMax` code files splits into its subfolders; smaller subfolders stay with their parent); imports only say which areas use which. Every fact carries its source: code, git (12 months by default, `--all` on demand), Claude sessions (the experience aggregate), notes.
+- Memory is linked, never written: auto-memory notes, Serena notes and `CLAUDE.md` sections (nested repos' too) link to the areas they cite (paths, exported names) or name (folder words, unless the project uses the word everywhere). Gap checks in the Memory tab: busy or fragile areas no note talks about, areas cited by many notes (prompts that describe; they never ask Claude to write or judge a note on its own). Thresholds in `TREE`.
+- Read-only on the project; git only `log` through one guarded helper (`test/tree.test.mjs`). The dashboard server owns `~/.kevmind/tree/<project>.json` (atomic writes); the MCP server reads it. Built for every project with sessions the first time it appears (even with the experience tools off), refreshed incrementally when its Memory tab is open or a session starts (at most every `TREE.refreshMs`), and on demand (`kevmind init`, the Memory tab's button). What reaches Claude (`code_map`, briefing v2) stays behind the tools switch.
 
 ## Brain tab (Phase 4)
 
