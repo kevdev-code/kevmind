@@ -248,17 +248,20 @@ async function briefing(task) {
 // ---- run: one headless Claude Code run ----------------------------------------------------------------------------
 // PROJECT.mode 'tools': the arms are KevMind's MCP tools on ("with") or off ("without"), with no briefing in either;
 // otherwise the briefing ("with") or nothing.
+// Arm "hint" (tools mode only): the tools on, plus one line naming them as session context.
+const HINT = "KevMind's code_map lists who uses a file or name; file_history and known_failures give past history.";
 async function run(task, arm, n, model, series = null) {
   const tools = PROJECT.mode === 'tools';
-  const ctxFile = path.join(OUT, 'briefings', `${task.id}.txt`);
+  let ctxFile = path.join(OUT, 'briefings', `${task.id}.txt`);
+  if (tools && arm === 'hint') { ctxFile = path.join(OUT, 'briefings', 'hint.txt'); fs.mkdirSync(path.dirname(ctxFile), { recursive: true }); fs.writeFileSync(ctxFile, HINT); }
   if (!tools && arm === 'with' && !fs.existsSync(ctxFile)) throw new Error(`no briefing for task ${task.id}: run "briefing --task ${task.id}" first`);
   const day = new Date().toLocaleDateString('en-CA'), dir = path.join(OUT, 'results', day);
   fs.mkdirSync(dir, { recursive: true });
   const bin = claudeBin(), version = checkBinary(bin, model);
   const ws = workspace(task, `run-${task.id}-${arm}-${n}`);
-  const home = tools && arm === 'with' ? await toolsHome(ws).catch((e) => { ws.remove(); throw e; }) : null;
+  const home = tools && arm !== 'without' ? await toolsHome(ws).catch((e) => { ws.remove(); throw e; }) : null;
   const streamFile = path.join(dir, `${task.id}-${arm}-${n}-${Date.now()}.jsonl`);
-  const env = { ...process.env, BENCH_CONTEXT_FILE: !tools && arm === 'with' ? ctxFile : '', KEVMIND_AUTOSTART: '0', KEVMIND_PORT: '47999' };
+  const env = { ...process.env, BENCH_CONTEXT_FILE: (!tools && arm === 'with') || (tools && arm === 'hint') ? ctxFile : '', KEVMIND_AUTOSTART: '0', KEVMIND_PORT: '47999' };
   for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k]; // a fresh session, not a child of this one
   const mcp = JSON.stringify({ mcpServers: home ? { kevmind: mcpServer(ws.dir, home.dir) } : {} });
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--model', model,
@@ -354,7 +357,7 @@ function report(tag) {
   const toolsMode = PROJECT.mode === 'tools', armWord = toolsMode ? 'the tools on' : 'the briefing';
   // What a run got right: a question's precision and recall, a change's hidden tests and coverage.
   const correct = (r) => (r.precision != null ? `P ${r.precision} · R ${r.recall} (${r.answered} items)` : ok(r) ? `yes${r.coverOf ? `, coverage ${r.covered}/${r.coverOf}` : ''}` : `no (hidden ${r.hidden ? 'pass' : 'fail'}, suite ${r.suite ? 'pass' : `${r.suiteFail} fail`}${r.coverOf ? `, coverage ${r.covered}/${r.coverOf}` : ''})`);
-  const usage = (r) => (r.arm !== 'with' || !toolsMode ? '—' : r.kevmindCalls ? `${r.kevmindCalls} (${Object.entries(r.kevmind).map(([k, v]) => `${k} ${v}`).join(', ')}${r.listCalls ? `; list ${r.listCalls}` : ''}; first at turn ${r.firstKevmind})` : 'none');
+  const usage = (r) => (r.arm === 'without' || !toolsMode ? '—' : r.kevmindCalls ? `${r.kevmindCalls} (${Object.entries(r.kevmind).map(([k, v]) => `${k} ${v}`).join(', ')}${r.listCalls ? `; list ${r.listCalls}` : ''}; first at turn ${r.firstKevmind})` : 'none');
   const out = [`# ${toolsMode ? 'Tools' : 'Briefing'} benchmark: ${PROJECT.name}${tag ? ` (${tag})` : ''}`, '', `Model: ${[...new Set(runs.map((r) => r.model))].join(', ')}. Claude Code: ${[...new Set(runs.map((r) => r.version))].join(', ')}. Runs: ${runs.length}. "with" = ${armWord}.`, '', '## Every run', '',
     `| Task | Arm | # | Correct | Tokens | Cache reads | Cache writes | Output | Wall time | Turns | Tool calls | Files read | Re-reads |${toolsMode ? ' KevMind tool calls |' : ''} Diff |`, `|---|---|---|---|---|---|---|---|---|---|---|---|---|${toolsMode ? '---|' : ''}---|`];
   for (const r of [...runs].sort((a, b) => String(a.task).localeCompare(String(b.task)) || a.at - b.at)) {
