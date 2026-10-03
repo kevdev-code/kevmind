@@ -66,27 +66,32 @@ function checkBinary(bin, model) {
 // before that moment, nested where it lives. Files as committed (LF), as the tests expect. Linked folders are junctions
 // to the real ones, and they are removed BEFORE the worktrees: `git worktree remove --force` would follow a junction and
 // delete what it points to (tried: it does).
+// A question task pins every repo instead (task.pin: { '': rev, frontend: rev, … }); its moment is the newest of them.
 function workspace(task, label, at = 'parent') {
   fs.mkdirSync(TMP, { recursive: true });
   const dir = path.join(TMP, `${label}-${Date.now()}`);
-  const rev = at === 'fix' ? task.fix : `${task.fix}^`, own = task.repo || '';
-  const time = Number(git(['log', '-1', '--format=%ct', rev], repoDir(own)));
-  const revOf = (r) => (r === own ? rev : git(['rev-list', '-1', `--before=${time}`, 'HEAD'], repoDir(r)));
-  const made = [], links = [];
+  const own = task.repo || '';
+  const rev = task.pin ? task.pin[own] : at === 'fix' ? task.fix : `${task.fix}^`;
+  const time = task.pin ? Math.max(...Object.entries(task.pin).map(([r, v]) => Number(git(['log', '-1', '--format=%ct', v], repoDir(r))))) : Number(git(['log', '-1', '--format=%ct', rev], repoDir(own)));
+  const revOf = (r) => (task.pin ? task.pin[r] : r === own ? rev : git(['rev-list', '-1', `--before=${time}`, 'HEAD'], repoDir(r)));
+  // Each repo is a shared clone (objects borrowed from the real repo, nothing copied), not a worktree: KevMind traces a
+  // worktree back to its main checkout, which here is today's code. The root folder is named after the project, as in
+  // a real checkout.
+  const base = path.dirname(dir), root = path.join(dir, path.basename(PROJECT.root)), links = [];
   const remove = () => {
     for (const l of links) { try { fs.rmSync(l); } catch { /* not there */ } }
-    if (links.some((l) => { try { fs.lstatSync(l); return true; } catch { return false; } })) throw new Error(`a linked folder is still in ${dir}: not removing the worktrees (it would delete the real folder)`);
-    for (const [repo, d] of made.reverse()) { try { git(['worktree', 'remove', '--force', d], repo); } catch { /* already gone */ } }
+    if (links.some((l) => { try { fs.lstatSync(l); return true; } catch { return false; } })) throw new Error(`a linked folder is still in ${dir}: not removing the workspace (it would delete the real folder)`);
+    fs.rmSync(dir, { recursive: true, force: true });
   };
   try {
     for (const r of ['', ...PROJECT.nested]) {
-      const d = path.join(dir, r);
-      git(['-c', 'core.autocrlf=false', 'worktree', 'add', '--detach', d, revOf(r)], repoDir(r));
-      made.push([repoDir(r), d]);
+      const d = path.join(root, r);
+      git(['clone', '--quiet', '--shared', '--no-checkout', repoDir(r), d], base);
+      git(['-c', 'core.autocrlf=false', 'checkout', '--quiet', '--detach', revOf(r)], d);
     }
-    for (const l of PROJECT.links) { const link = path.join(dir, l); fs.symlinkSync(path.join(PROJECT.root, l), link, 'junction'); links.push(link); }
+    for (const l of PROJECT.links) { const link = path.join(root, l); fs.symlinkSync(path.join(PROJECT.root, l), link, 'junction'); links.push(link); }
   } catch (e) { remove(); throw e; }
-  return { dir, own: path.join(dir, own), time: time * 1000, remove };
+  return { dir: root, own: path.join(root, own), time: time * 1000, remove };
 }
 
 // ---- verify: the fix commit's tests, copied over the workspace's, then run ------------------------------------------
@@ -113,46 +118,125 @@ function verify(ws, task) {
   };
 }
 
-// ---- check: each hidden test fails at the parent and passes at the fix ---------------------------------------------
-function check() {
+// A change task can also check coverage (task.coverage: { pattern, files }): how many of the files where the real fix
+// used its new helper use it after the run. A question task (task.kind 'question') is graded on its answer instead.
+function coverage(ws, task) {
+  if (!task.coverage) return {};
+  const hit = task.coverage.files.filter((f) => { try { return fs.readFileSync(path.join(ws.own, f), 'utf8').includes(task.coverage.pattern); } catch { return false; } }).length;
+  return { covered: hit, coverOf: task.coverage.files.length, coverage: +(hit / task.coverage.files.length).toFixed(2) };
+}
+// A question's answer: answer.txt at the workspace root, one item per line, against task.truth. Paths are taken from
+// the workspace root ("frontend/src/…"; "src/…" is read as the task's repo); bullets, backticks and notes after the
+// path are ignored.
+function gradeAnswer(text, task) {
+  const items = new Set();
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    let x = raw.replace(/^[\s*>#-]*(?:\d+[.)]\s*)?/, '').replace(/`/g, '').trim().split(/\s+(?:[-—(:]|\s)/)[0].replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!x) continue;
+    if (task.repo && !x.startsWith(`${task.repo}/`) && x.startsWith('src/')) x = `${task.repo}/${x}`;
+    items.add(x);
+  }
+  const truth = new Set(task.truth), hits = [...items].filter((x) => truth.has(x)).length;
+  const precision = items.size ? hits / items.size : 0, recall = hits / truth.size;
+  return { answered: items.size, precision: +precision.toFixed(2), recall: +recall.toFixed(2), f1: precision + recall ? +((2 * precision * recall) / (precision + recall)).toFixed(2) : 0, hidden: hits === truth.size && items.size === truth.size, suite: true };
+}
+function grade(ws, task) {
+  if (task.kind === 'question') { let text = ''; try { text = fs.readFileSync(path.join(ws.dir, 'answer.txt'), 'utf8'); } catch { /* no answer */ } return gradeAnswer(text, task); }
+  return { ...verify(ws, task), ...coverage(ws, task) };
+}
+
+// ---- check: each hidden test fails at the parent and passes at the fix (no tokens) ---------------------------------
+async function check() {
   for (const t of TASKS) {
+    if (t.kind === 'question') {
+      const sample = t.truth.join('\n') + '\n';
+      console.log(`task ${t.id} (question, ${t.truth.length} items): the true list grades ${JSON.stringify(gradeAnswer(sample, t))}; half of it ${JSON.stringify(gradeAnswer(t.truth.slice(0, Math.ceil(t.truth.length / 2)).join('\n'), t))}`);
+      continue;
+    }
     const parent = workspace(t, `check-${t.id}-parent`), fixed = workspace(t, `check-${t.id}-fix`, 'fix');
     try {
-      const a = verify(parent, t), b = verify(fixed, t);
-      console.log(`task ${t.id} (${t.repo || '.'} ${t.fix}): at the parent hidden ${a.hidden ? 'PASSES (bad)' : `fails (good: ${a.hiddenPass} of ${t.hidden.count ?? t.hidden.tests.length} pass)`}, at the fix hidden ${b.hidden ? `passes (good: ${b.hiddenPass})` : `FAILS (bad: ${b.hiddenPass} pass)`}, suite at the fix ${b.suite ? `passes (${b.suitePass})` : `fails ${b.suiteFail}`}`);
+      const a = { ...verify(parent, t), ...coverage(parent, t) }, b = { ...verify(fixed, t), ...coverage(fixed, t) };
+      console.log(`task ${t.id} (${t.repo || '.'} ${t.fix}): at the parent hidden ${a.hidden ? 'PASSES (bad)' : `fails (good: ${a.hiddenPass} of ${t.hidden.count ?? t.hidden.tests.length} pass)`}, at the fix hidden ${b.hidden ? `passes (good: ${b.hiddenPass})` : `FAILS (bad: ${b.hiddenPass} pass)`}, suite at the fix ${b.suite ? `passes (${b.suitePass})` : `fails ${b.suiteFail}`}${t.coverage ? `; coverage at the parent ${a.covered}/${a.coverOf}, at the fix ${b.covered}/${b.coverOf}` : ''}`);
     } finally { parent.remove(); fixed.remove(); }
+  }
+  // The tools as a tools-on run gets them, asked over JSON-RPC (no model involved).
+  if (PROJECT.mode === 'tools' && arg('ask')) {
+    const t = taskOf(arg('task', TASKS[0].id)), ws = workspace(t, `check-${t.id}-tools`);
+    let home;
+    try {
+      home = await toolsHome(ws);
+      console.log(await askTools(ws.dir, home.dir, JSON.parse(arg('ask'))));
+    } finally { home?.remove(); ws.remove(); }
   }
 }
 
-// ---- briefing: what a session starting at the parent would have received -------------------------------------------
-// KevMind's records of the project cut at that moment (later episodes dropped), git and the code of the workspace as it
-// was, its CLAUDE.md files, and the project map built from them. Auto-memory notes are left out (they have no history,
-// and later notes could give the fix away), and so is the line naming the tools, which are off in both arms.
-async function briefing(task) {
+// ---- what KevMind knew at the pinned moment: its records, git, the code map and the project map ---------------------
+// KevMind's records of the project cut at that moment (later episodes dropped) and moved into the workspace, git and
+// the code of the workspace as it was, its CLAUDE.md files, and the project map built from them: nothing from later.
+async function knowledgeAt(ws) {
   const src = (f) => import(pathToFileURL(path.join(REPO, 'src', f)).href);
-  const [{ revive, refreshGit }, { gatherFacts, briefingText }, { scanProject }, { codeMapper }, { buildTree }] = await Promise.all(['experience.js', 'briefing.js', 'memory.js', 'codemap.js', 'tree.js'].map(src));
-  const ws = workspace(task, `brief-${task.id}`), cutoff = ws.time;
-  try {
-    const agg = revive(JSON.parse(fs.readFileSync(path.join(process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind'), 'experience.json'), 'utf8')));
-    // The project's repos in the records, moved into the workspace.
-    const kept = {};
-    for (const r of ['', ...PROJECT.nested]) {
-      const key = Object.keys(agg.projects).find((k) => path.resolve(agg.projects[k].root).toLowerCase() === repoDir(r).toLowerCase());
-      if (!key) continue;
-      const proj = agg.projects[key];
-      for (const [sid, s] of Object.entries(proj.sessions)) {
-        s.eps = s.eps.filter((ep) => ep.last < cutoff);
-        if (!s.eps.length) { delete proj.sessions[sid]; continue; }
-        s.first = Math.min(...s.eps.map((ep) => ep.start)); s.last = Math.max(...s.eps.map((ep) => ep.last));
-      }
-      proj.root = path.join(ws.dir, r); proj.git = null; proj._ctx = null;
-      await refreshGit(proj, cutoff);
-      kept[key] = proj;
+  const [{ revive, refreshGit }, { scanProject }, { codeMapper }, { buildTree }] = await Promise.all(['experience.js', 'memory.js', 'codemap.js', 'tree.js'].map(src));
+  const cutoff = ws.time;
+  const agg = revive(JSON.parse(fs.readFileSync(path.join(process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind'), 'experience.json'), 'utf8')));
+  const kept = {};
+  for (const r of ['', ...PROJECT.nested]) {
+    const key = Object.keys(agg.projects).find((k) => path.resolve(agg.projects[k].root).toLowerCase() === repoDir(r).toLowerCase());
+    if (!key) continue;
+    const proj = agg.projects[key];
+    for (const [sid, s] of Object.entries(proj.sessions)) {
+      s.eps = s.eps.filter((ep) => ep.last < cutoff);
+      if (!s.eps.length) { delete proj.sessions[sid]; continue; }
+      s.first = Math.min(...s.eps.map((ep) => ep.start)); s.last = Math.max(...s.eps.map((ep) => ep.last));
     }
-    agg.projects = kept;
-    const report = await scanProject(ws.dir, { now: cutoff });
-    const map = await codeMapper()(ws.dir);
-    const tree = await buildTree({ root: ws.dir, map, report, agg, now: cutoff }); // the project map as it was then
+    proj.root = path.join(ws.dir, r); proj.git = null; proj._ctx = null;
+    await refreshGit(proj, cutoff);
+    kept[path.join(ws.dir, r).toLowerCase()] = proj; // keyed as the MCP server will look it up (keyOf: the folder, lower case on Windows)
+  }
+  agg.projects = kept;
+  agg.logs = {}; // these records have no log files behind them in a run's home
+  const report = await scanProject(ws.dir, { now: cutoff });
+  const map = await codeMapper()(ws.dir);
+  const tree = await buildTree({ root: ws.dir, map, report, agg, now: cutoff });
+  return { agg, report, map, tree, cutoff };
+}
+
+// A tools-on run's KevMind home: those records, that project map, the tools switched on. Removed after the run.
+async function toolsHome(ws) {
+  const { keyOf, slugOf } = await import(pathToFileURL(path.join(REPO, 'src', 'memory.js')).href);
+  const { agg, tree } = await knowledgeAt(ws);
+  const dir = path.join(TMP, `home-${path.basename(path.dirname(ws.dir))}`); // named after its workspace, one per run
+  fs.mkdirSync(path.join(dir, 'tree'), { recursive: true });
+  for (const k of Object.keys(agg.projects)) if (k !== keyOf(agg.projects[k].root)) { agg.projects[keyOf(agg.projects[k].root)] = agg.projects[k]; delete agg.projects[k]; }
+  fs.writeFileSync(path.join(dir, 'experience.json'), JSON.stringify(agg));
+  fs.writeFileSync(path.join(dir, 'tree', `${slugOf(keyOf(ws.dir))}.json`), JSON.stringify(tree));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ experienceTools: true }));
+  return { dir, remove: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+const mcpServer = (wsDir, home) => ({ type: 'stdio', command: process.execPath, args: [path.join(REPO, 'mcp', 'server.js')], env: { KEVMIND_HOME: home, CLAUDE_PROJECT_DIR: wsDir, KEVMIND_EXPERIENCE: 'true', KEVMIND_AUTOSTART: '0' } });
+const KEVMIND_TOOLS = ['mcp__kevmind__code_map', 'mcp__kevmind__file_context', 'mcp__kevmind__file_history', 'mcp__kevmind__known_failures'];
+// The tools over JSON-RPC, as Claude would call them: [[tool, args], …] → their answers.
+async function askTools(wsDir, home, calls) {
+  const s = mcpServer(wsDir, home);
+  const child = spawn(s.command, s.args, { env: { ...process.env, ...s.env }, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
+  let buf = '', id = 0;
+  const waiting = new Map();
+  child.stdout.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { const m = JSON.parse(line); waiting.get(m.id)?.(m); } catch { /* not ours */ } } });
+  const rpc = (method, params) => new Promise((resolve) => { const n = ++id; waiting.set(n, resolve); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: n, method, params }) + '\n'); });
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'bench', version: '1' } });
+  const out = [`tools: ${(await rpc('tools/list')).result.tools.map((t) => t.name).join(', ')}`];
+  for (const [name, args] of calls) out.push(`--- ${name} ${JSON.stringify(args)}\n${(await rpc('tools/call', { name, arguments: args })).result?.content?.[0]?.text}`);
+  child.kill();
+  return out.join('\n');
+}
+
+// ---- briefing: what a session starting at the parent would have received -------------------------------------------
+// Auto-memory notes are left out (they have no history, and later notes could give the fix away), and so is the line
+// naming the tools, which are off in both arms.
+async function briefing(task) {
+  const { gatherFacts, briefingText } = await import(pathToFileURL(path.join(REPO, 'src', 'briefing.js')).href);
+  const ws = workspace(task, `brief-${task.id}`);
+  try {
+    const { agg, report, map, tree, cutoff } = await knowledgeAt(ws);
     const facts = await gatherFacts({ agg, root: ws.dir, name: PROJECT.name, sid: 'bench', source: 'startup', now: cutoff, report, toolsOn: false, map, tree });
     const { text } = briefingText(facts);
     fs.mkdirSync(path.join(OUT, 'briefings'), { recursive: true });
@@ -162,19 +246,24 @@ async function briefing(task) {
 }
 
 // ---- run: one headless Claude Code run ----------------------------------------------------------------------------
+// PROJECT.mode 'tools': the arms are KevMind's MCP tools on ("with") or off ("without"), with no briefing in either;
+// otherwise the briefing ("with") or nothing.
 async function run(task, arm, n, model, series = null) {
+  const tools = PROJECT.mode === 'tools';
   const ctxFile = path.join(OUT, 'briefings', `${task.id}.txt`);
-  if (arm === 'with' && !fs.existsSync(ctxFile)) throw new Error(`no briefing for task ${task.id}: run "briefing --task ${task.id}" first`);
+  if (!tools && arm === 'with' && !fs.existsSync(ctxFile)) throw new Error(`no briefing for task ${task.id}: run "briefing --task ${task.id}" first`);
   const day = new Date().toLocaleDateString('en-CA'), dir = path.join(OUT, 'results', day);
   fs.mkdirSync(dir, { recursive: true });
   const bin = claudeBin(), version = checkBinary(bin, model);
   const ws = workspace(task, `run-${task.id}-${arm}-${n}`);
+  const home = tools && arm === 'with' ? await toolsHome(ws).catch((e) => { ws.remove(); throw e; }) : null;
   const streamFile = path.join(dir, `${task.id}-${arm}-${n}-${Date.now()}.jsonl`);
-  const env = { ...process.env, BENCH_CONTEXT_FILE: arm === 'with' ? ctxFile : '', KEVMIND_AUTOSTART: '0', KEVMIND_PORT: '47999' };
+  const env = { ...process.env, BENCH_CONTEXT_FILE: !tools && arm === 'with' ? ctxFile : '', KEVMIND_AUTOSTART: '0', KEVMIND_PORT: '47999' };
   for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k]; // a fresh session, not a child of this one
+  const mcp = JSON.stringify({ mcpServers: home ? { kevmind: mcpServer(ws.dir, home.dir) } : {} });
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--model', model,
-    '--setting-sources', 'project,local', '--plugin-dir', PLUGIN, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-    '--no-session-persistence', '--permission-mode', 'dontAsk', '--max-turns', String(PROJECT.maxTurns), '--allowedTools', ...PROJECT.tools];
+    '--setting-sources', 'project,local', '--plugin-dir', PLUGIN, '--strict-mcp-config', '--mcp-config', mcp,
+    '--no-session-persistence', '--permission-mode', 'dontAsk', '--max-turns', String(task.maxTurns || PROJECT.maxTurns), '--allowedTools', ...PROJECT.tools, ...(home ? KEVMIND_TOOLS : [])];
   const t0 = Date.now();
   try {
     const out = fs.createWriteStream(streamFile);
@@ -190,12 +279,12 @@ async function run(task, arm, n, model, series = null) {
     const m = measure(fs.readFileSync(streamFile, 'utf8'), ws.dir);
     const diff = git(['diff', '--shortstat'], ws.own);
     const untracked = git(['status', '--porcelain'], ws.own).split('\n').filter((l) => l.startsWith('??')).length;
-    const v = verify(ws, task);
-    const rec = { task: task.id, arm, n, model, version, series, at: t0, wallMs: Date.now() - t0, exit: code, ...m, diff, untracked, ...v, stream: path.relative(REPO, streamFile) };
+    const v = grade(ws, task);
+    const rec = { task: task.id, arm, n, model, version, series, mode: tools ? 'tools' : 'briefing', at: t0, wallMs: Date.now() - t0, exit: code, ...m, diff, untracked, ...v, stream: path.relative(REPO, streamFile) };
     fs.appendFileSync(path.join(dir, 'runs.jsonl'), JSON.stringify(rec) + '\n');
     if (m.unsupported) throw new Error(`${bin} (${version}) can't run ${model}: ${m.unsupported}`); // stops a series
     return rec;
-  } finally { ws.remove(); }
+  } finally { home?.remove(); ws.remove(); }
 }
 
 // What a run's stream says: tokens, turns, tool calls, files read and read again, whether the hook gave context.
@@ -203,13 +292,17 @@ function measure(stream, cwd) {
   const lines = stream.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const result = lines.findLast((o) => o.type === 'result') || {};
   const init = lines.find((o) => o.type === 'system' && o.subtype === 'init') || {};
-  const tools = {}, reads = [];
+  const tools = {}, reads = [], kevmind = {};
+  let turn = 0, firstKevmind = null, listCalls = 0;
   for (const o of lines) {
     if (o.type !== 'assistant' || !Array.isArray(o.message?.content)) continue;
+    turn++;
     for (const b of o.message.content) {
       if (b.type !== 'tool_use') continue;
       tools[b.name] = (tools[b.name] || 0) + 1;
       if (b.name === 'Read' && b.input?.file_path) reads.push(path.relative(cwd, path.resolve(cwd, b.input.file_path)).split(path.sep).join('/'));
+      const k = /^mcp__kevmind__(\w+)$/.exec(b.name);
+      if (k) { kevmind[k[1]] = (kevmind[k[1]] || 0) + 1; firstKevmind ??= turn; if (b.input?.list) listCalls++; }
     }
   }
   const u = result.usage || {};
@@ -224,6 +317,8 @@ function measure(stream, cwd) {
     tokens: { ...tok, total: tok.input + tok.output + tok.cacheRead + tok.cacheWrite, measured: tok.input + tok.output + tok.cacheRead },
     modelUsage: result.modelUsage || null,
     toolCalls: Object.values(tools).reduce((a, b) => a + b, 0), tools, filesRead: new Set(reads).size, reads: reads.length, rereads: reads.length - new Set(reads).size,
+    // KevMind's tools in a tools-on run: calls per tool, the first assistant turn that used one, calls with list: true.
+    kevmind, kevmindCalls: Object.values(kevmind).reduce((a, b) => a + b, 0), firstKevmind, listCalls,
   };
 }
 
@@ -256,10 +351,14 @@ function report(tag) {
   const pct = (a, b) => (a == null || !b ? '—' : `${a >= b ? '+' : ''}${Math.round(((a - b) / b) * 100)}%`);
   const ok = (r) => r.hidden && r.suite;
   const control = new Set(TASKS.filter((t) => t.control).map((t) => String(t.id)));
-  const out = [`# Briefing benchmark: ${PROJECT.name}${tag ? ` (${tag})` : ''}`, '', `Model: ${[...new Set(runs.map((r) => r.model))].join(', ')}. Claude Code: ${[...new Set(runs.map((r) => r.version))].join(', ')}. Runs: ${runs.length}.`, '', '## Every run', '',
-    '| Task | Arm | # | Success | Tokens | Cache reads | Cache writes | Output | Wall time | Turns | Tool calls | Files read | Re-reads | Diff |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+  const toolsMode = PROJECT.mode === 'tools', armWord = toolsMode ? 'the tools on' : 'the briefing';
+  // What a run got right: a question's precision and recall, a change's hidden tests and coverage.
+  const correct = (r) => (r.precision != null ? `P ${r.precision} · R ${r.recall} (${r.answered} items)` : ok(r) ? `yes${r.coverOf ? `, coverage ${r.covered}/${r.coverOf}` : ''}` : `no (hidden ${r.hidden ? 'pass' : 'fail'}, suite ${r.suite ? 'pass' : `${r.suiteFail} fail`}${r.coverOf ? `, coverage ${r.covered}/${r.coverOf}` : ''})`);
+  const usage = (r) => (r.arm !== 'with' || !toolsMode ? '—' : r.kevmindCalls ? `${r.kevmindCalls} (${Object.entries(r.kevmind).map(([k, v]) => `${k} ${v}`).join(', ')}${r.listCalls ? `; list ${r.listCalls}` : ''}; first at turn ${r.firstKevmind})` : 'none');
+  const out = [`# ${toolsMode ? 'Tools' : 'Briefing'} benchmark: ${PROJECT.name}${tag ? ` (${tag})` : ''}`, '', `Model: ${[...new Set(runs.map((r) => r.model))].join(', ')}. Claude Code: ${[...new Set(runs.map((r) => r.version))].join(', ')}. Runs: ${runs.length}. "with" = ${armWord}.`, '', '## Every run', '',
+    `| Task | Arm | # | Correct | Tokens | Cache reads | Cache writes | Output | Wall time | Turns | Tool calls | Files read | Re-reads |${toolsMode ? ' KevMind tool calls |' : ''} Diff |`, `|---|---|---|---|---|---|---|---|---|---|---|---|---|${toolsMode ? '---|' : ''}---|`];
   for (const r of [...runs].sort((a, b) => String(a.task).localeCompare(String(b.task)) || a.at - b.at)) {
-    out.push(`| ${r.task}${control.has(String(r.task)) ? ' (control)' : ''} | ${r.arm} | ${r.n} | ${ok(r) ? 'yes' : `no (hidden ${r.hidden ? 'pass' : 'fail'}, suite ${r.suite ? 'pass' : `${r.suiteFail} fail`})`} | ${M(r.tokens.total)} | ${M(r.tokens.cacheRead)} | ${M(r.tokens.cacheWrite)} | ${M(r.tokens.output)} | ${min(r.wallMs)} | ${r.turns} | ${r.toolCalls} | ${r.filesRead} | ${r.rereads} | ${r.diff || '—'} |`);
+    out.push(`| ${r.task}${control.has(String(r.task)) ? ' (control)' : ''} | ${r.arm} | ${r.n} | ${correct(r)} | ${M(r.tokens.total)} | ${M(r.tokens.cacheRead)} | ${M(r.tokens.cacheWrite)} | ${M(r.tokens.output)} | ${min(r.wallMs)} | ${r.turns} | ${r.toolCalls} | ${r.filesRead} | ${r.rereads} |${toolsMode ? ` ${usage(r)} |` : ''} ${r.diff || '—'} |`);
   }
   out.push('', '## Per task (medians)', '', '| Task | Success with | Success without | Tokens with | Tokens without | Change | Wall with | Wall without | Change | Tool calls with / without | Files read with / without |', '|---|---|---|---|---|---|---|---|---|---|---|');
   const per = [];
@@ -276,7 +375,7 @@ function report(tag) {
   const verdict = main.length && lower === main.length && okW >= okWo ? 'saves tokens without hurting success' : main.length && higher === main.length ? 'costs tokens' : 'unclear';
   const ratios = main.map((x) => x.tW / x.tWo);
   out.push('', `## Overall${control.size ? ' (control tasks left out)' : ''}`, '',
-    `- Tasks with at least 10% fewer tokens with the briefing: ${lower} of ${main.length}; at least 10% more: ${higher} of ${main.length}.`,
+    `- Tasks with at least 10% fewer tokens with ${armWord}: ${lower} of ${main.length}; at least 10% more: ${higher} of ${main.length}.`,
     `- Median of the per-task token ratios (with / without): ${ratios.length ? med(ratios).toFixed(2) : '—'}; wall time: ${main.length ? med(main.map((x) => x.sW / x.sWo)).toFixed(2) : '—'}.`,
     `- Successes: ${okW} of ${main.reduce((n, x) => n + x.nW, 0)} with, ${okWo} of ${main.reduce((n, x) => n + x.nWo, 0)} without.`,
     `- Tokens spent by these runs (control included): ${M(runs.reduce((n, r) => n + r.tokens.total, 0))}.`,
@@ -287,7 +386,7 @@ function report(tag) {
 }
 
 const cmd = process.argv.slice(2).find((a, i, all) => !a.startsWith('--') && !(all[i - 1] || '').startsWith('--')); // the first word that is not a flag's value
-if (cmd === 'check') check();
+if (cmd === 'check') await check();
 else if (cmd === 'briefing') console.log(await briefing(taskOf(arg('task', TASKS[0].id))));
 else if (cmd === 'run') console.log(JSON.stringify(await run(taskOf(arg('task', TASKS[0].id)), arg('arm', 'with'), Number(arg('n', 1)), arg('model', MODEL), arg('tag', null)), null, 1));
 else if (cmd === 'claude-check') console.log(`ok: ${claudeBin()} is Claude Code ${checkBinary(claudeBin(), arg('model', MODEL))}, which can run ${arg('model', MODEL)}`);

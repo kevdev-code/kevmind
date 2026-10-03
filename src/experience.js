@@ -526,7 +526,7 @@ function capped(header, lines, footer, tokens = T.maxTokens) {
 function scope(proj, now) {
   const g = gate(proj, now);
   return `Evidence: ${plural(g.episodes, 'work episode')} on ${plural(g.days, 'day')} (last ${T.windowDays} days); ` +
-    `${plural(g.commits, 'git commit')}${g.gitOk ? '' : ` (git counts from ${T.minGitCommits})`}. History only: for code structure use Serena or other code tools.`;
+    `${plural(g.commits, 'git commit')}${g.gitOk ? '' : ` (git counts from ${T.minGitCommits})`}. History only: for code structure, code_map (approximate) or Serena.`;
 }
 
 const fileOf = (proj, p) => proj._fi.get(relPath(proj.root, p) || slash(String(p || '')).replace(/^\.\//, ''));
