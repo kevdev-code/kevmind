@@ -162,6 +162,27 @@ test('a shell syntax mistake in the command is not a known project failure, howe
   assert.ok(!/`cat`|unexpected EOF/.test(text), 'the briefing names no shell mistake');
 });
 
+test('each tool: files read in the area a call was about, against stretches without a call', () => {
+  const root = tmp();
+  const agg = emptyAggregate();
+  const billing = ['a', 'b', 'c', 'd', 'e'].map((x) => `src/billing/${x}.ts`);
+  // Three prompt turns with no call: each enters billing and reads four of its files.
+  for (let d = 1; d <= 3; d++) turn(agg, root, `s${d}`, NOW - d * DAY, { reads: billing.slice(0, 4), edits: [billing[4]] });
+  // One with a code_map call naming a billing file: then one billing file read, and a file elsewhere (not counted).
+  const base = { session_id: 'call', cwd: root };
+  let t = NOW - 3_600_000;
+  ingest(agg, { ...base, hook_event_name: 'UserPromptSubmit', prompt: 'fix billing' }, t);
+  ingest(agg, { ...base, hook_event_name: 'PostToolUse', tool_name: 'mcp__plugin_kevmind_experience__code_map', tool_input: { area: 'src/billing' }, tool_response: [{ type: 'text', text: 'Area `src/billing`: core `src/billing/a.ts`.' }] }, t += 1000);
+  for (const f of ['src/billing/b.ts', 'src/orders/x.ts']) ingest(agg, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, f) } }, t += 1000);
+  ingest(agg, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/billing/b.ts') } }, t += 1000);
+  const m = measure(projOf(agg, root), NOW);
+  assert.equal(m.stretches, 3, 'three call-free turns, each entering billing once (by reading)');
+  assert.deepEqual(m.tools, [{ tool: 'code_map', calls: 1, noData: 0, fewer: 1, compared: 1, withArea: 1, readsAfter: 1, readsWithout: 4 }]);
+  // The project map's areas, when given: the whole src/ is one area, so the read elsewhere counts too.
+  const wide = measure(projOf(agg, root), NOW, () => 'src');
+  assert.deepEqual([wide.tools[0].readsAfter, wide.tools[0].readsWithout], [2, 4]);
+});
+
 test('git co-change works from day one; episode evidence ranks above git', { skip: !hasGit() && 'needs git' }, async () => {
   const root = tmp();
   const run = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore', windowsHide: true });

@@ -70,6 +70,13 @@ window.I18N = {
       turn_off: 'After 50 calls, suggested files are not opened more often than the baseline: consider turning the tools off.',
       helping: 'Suggested files are opened more often than the baseline. It shows correlation, not proof.',
     },
+    expByToolTitle: 'Each tool, and the files read after it',
+    expByToolCalls: (n, noData) => `${n} call${n === 1 ? '' : 's'}${noData ? `, ${noData} with no data` : ''}`,
+    expByToolReads: (t) => (!t.withArea ? 'no answer named files, so no area to compare'
+      : !t.compared ? `after a call, ${t.readsAfter} file${t.readsAfter === 1 ? '' : 's'} read in its area (median); not enough stretches without a call to compare yet`
+      : `after a call, ${t.readsAfter} file${t.readsAfter === 1 ? '' : 's'} read in its area (median), against ${t.readsWithout} in comparable stretches without a call; fewer after ${t.fewer} of ${t.compared} compared call${t.compared === 1 ? '' : 's'}`),
+    expByToolNone: 'No calls yet.',
+    expByToolNote: (n, mins, min) => `A call's area is where the files its answer names are (the project map's folders). Files read there are counted for ${mins} minutes after the call, within that prompt turn; comparable stretches are the same window after a prompt turn with no call first reads that area (${n} so far; a call is compared from ${min}). Correlation, not proof.`,
     expNoDataShort: 'no data',
     expFollowed: 'followed',
     expIgnored: 'not followed',
@@ -384,6 +391,13 @@ window.I18N = {
       turn_off: 'Tras 50 llamadas, los archivos sugeridos no se abren más que en la referencia: considera apagar las herramientas.',
       helping: 'Los archivos sugeridos se abren más que en la referencia. Muestra correlación, no prueba.',
     },
+    expByToolTitle: 'Cada herramienta, y los archivos leídos después',
+    expByToolCalls: (n, noData) => `${n} llamada${n === 1 ? '' : 's'}${noData ? `, ${noData} sin datos` : ''}`,
+    expByToolReads: (t) => (!t.withArea ? 'ninguna respuesta nombró archivos, así que no hay área que comparar'
+      : !t.compared ? `tras una llamada, ${t.readsAfter} archivo${t.readsAfter === 1 ? '' : 's'} leído${t.readsAfter === 1 ? '' : 's'} en su área (mediana); aún no hay suficientes tramos sin llamada para comparar`
+      : `tras una llamada, ${t.readsAfter} archivo${t.readsAfter === 1 ? '' : 's'} leído${t.readsAfter === 1 ? '' : 's'} en su área (mediana), frente a ${t.readsWithout} en tramos comparables sin llamada; menos tras ${t.fewer} de ${t.compared} llamada${t.compared === 1 ? '' : 's'} comparada${t.compared === 1 ? '' : 's'}`),
+    expByToolNone: 'Aún no hay llamadas.',
+    expByToolNote: (n, mins, min) => `El área de una llamada es donde están los archivos que nombra su respuesta (las carpetas del mapa del proyecto). Los archivos leídos ahí se cuentan durante ${mins} minutos tras la llamada, dentro de ese turno; los tramos comparables son la misma ventana después de que un turno sin llamadas lee por primera vez esa área (${n} hasta ahora; una llamada se compara desde ${min}). Correlación, no prueba.`,
     expNoDataShort: 'sin datos',
     expFollowed: 'seguida',
     expIgnored: 'no seguida',

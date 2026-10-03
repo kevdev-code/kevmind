@@ -267,7 +267,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       return;
     }
     if (url.pathname === '/api/experience') {
-      experience.panel(url.searchParams.get('key')).then(
+      experience.panel(url.searchParams.get('key'), trees.load(url.searchParams.get('key'))).then(
         (r) => json(res, r),
         (err) => json(res, { error: String(err?.message || err) }, 500),
       );
@@ -449,13 +449,16 @@ function experienceKeeper() {
   tick();
   const timer = setInterval(tick, EXPERIENCE_TICK_MS);
   // The dashboard panel: what the tools would serve today and how calls have gone, even while the tools are off.
-  const panel = async (key) => {
+  // tree: the project's map, when built: a call's area is then one of its folders (else the file's own folder).
+  const panel = async (key, tree = null) => {
     await tick();
     const proj = agg.projects[key];
     const tools = experienceTools(DATA_DIR, pluginOption());
     if (!proj) return { known: false, tools, thresholds: THRESHOLDS };
     const now = Date.now();
-    return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now) };
+    const areas = new Map((tree?.areas || []).flatMap((a) => a.files.map((f) => [f.f, a.name])));
+    const areaOf = (p) => areas.get(p) ?? (p.split('/').slice(0, -1).join('/') || '.');
+    return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now, areaOf) };
   };
   // now(): the aggregate as it is (up to 15 s behind the logs), for the briefing, which must answer at once.
   return { panel, aggregate: async () => { await tick(); return agg; }, now: () => agg, stop: () => clearInterval(timer) };

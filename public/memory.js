@@ -331,6 +331,9 @@ function renderExperience(x) {
       <div><b>${pct(m.baseline)}</b><span>${esc(T.expBaseline(m.baselineSample))}</span></div>
     </div>
     <p class="verdict">${esc(T.expVerdict[m.verdict])}</p>
+    <h3 class="exp-h">${esc(T.expByToolTitle)}</h3>
+    ${m.tools?.length ? `<ul class="exp-list">${m.tools.map((t) => `<li><code>${esc(t.tool)}</code> ${esc(T.expByToolCalls(t.calls, t.noData))}<small>${esc(T.expByToolReads(t))}</small></li>`).join('')}</ul>` : `<p class="none">${esc(T.expByToolNone)}</p>`}
+    <p class="verdict">${esc(T.expByToolNote(m.stretches || 0, Math.round(x.thresholds.areaWindowMs / 60_000), x.thresholds.minStretches))}</p>
     ${m.last.length ? `<ul class="exp-list">${m.last.map((c) => `<li><code>${esc(c.tool)}</code> ${esc(new Date(c.ts).toLocaleString(lang))} · ≈ ${c.tokens} tok${c.noData ? ` · ${esc(T.expNoDataShort)}` : ''}${
       c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`);
 }

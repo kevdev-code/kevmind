@@ -34,6 +34,8 @@ export const THRESHOLDS = {
   gitCoChangeShare: 0.5,
   hotspotFixCommits: 3,    // mention "often fixed" from this many fix-labeled commits
   followWindowMs: 30 * 60_000, // a suggested file touched this soon after a call counts as followed
+  areaWindowMs: 15 * 60_000, // reads in an area are counted this long after a call (or after entering it), within the prompt turn
+  minStretches: 3,           // comparable stretches without a call needed before a call is compared
   maxTokens: 400,          // per tool answer, estimated as characters / 4
   maxItems: 3,             // per kind of insight, per file
 };
@@ -663,7 +665,12 @@ export function preview(proj, now = Date.now()) {
 
 // Calls seen through the hooks, and how often a suggested file was then read or edited, against a baseline:
 // how often a qualifying partner gets touched after an edit in episodes with no call. Correlation, not proof.
-export function measure(proj, now = Date.now()) {
+// Per tool, also the files read in the area a call was about (the areas of the files its answer cites; areaOf: a
+// project path to its area, the project map's folders when built, else the file's folder) in the rest of its prompt
+// turn, at most T.areaWindowMs, against comparable stretches without a call: the same window after a prompt turn with
+// no call first reads a file in that area. A call is compared once T.minStretches such stretches exist (for its areas,
+// else for the project).
+export function measure(proj, now = Date.now(), areaOf = (p) => p.split('/').slice(0, -1).join('/') || '.') {
   index(proj);
   const ctx = context(proj, now);
   const calls = [];
@@ -696,6 +703,35 @@ export function measure(proj, now = Date.now()) {
       if (ps.some((g) => { const t = Math.min(ep.r[g] ?? Infinity, ep.e[g] ?? Infinity); return t > t0 && t - t0 <= T.followWindowMs; })) hits++;
     }
   }
+  // Reads in the area after a call, against stretches without one.
+  const areaOfId = new Map(), area = (f) => areaOfId.get(f) ?? areaOfId.set(f, areaOf(proj.files[f])).get(f);
+  const readIn = (ep, areas, from, incl) => Object.entries(ep.r).filter(([f, t]) => (incl ? t >= from : t > from) && t <= Math.min(from + T.areaWindowMs, ep.last) && areas.has(area(+f))).length;
+  const stretches = new Map(); // area -> counts after first entering it, in prompt turns with no call
+  for (const { ep } of ctx.all) {
+    if (ep.calls.length) continue;
+    const first = new Map();
+    for (const [f, t] of Object.entries(ep.r)) { const a = area(+f); if (!first.has(a) || t < first.get(a)) first.set(a, t); }
+    for (const [a, t1] of first) (stretches.get(a) || stretches.set(a, []).get(a)).push(readIn(ep, new Set([a]), t1, true));
+  }
+  const median = (xs) => { const v = [...xs].sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
+  const everyStretch = [...stretches.values()].flat();
+  const byTool = new Map();
+  for (const { ep } of ctx.all) {
+    for (const [ts, tool, , noData, files] of ep.calls) {
+      const t = byTool.get(tool) || byTool.set(tool, { tool, calls: 0, noData: 0, after: [], base: [], fewer: 0, compared: 0 }).get(tool);
+      t.calls++; if (noData) t.noData++;
+      if (!files.length) continue;
+      const areas = new Set(files.map(area));
+      const own = [...areas].flatMap((a) => stretches.get(a) || []);
+      const base = own.length >= T.minStretches ? median(own) : everyStretch.length >= T.minStretches ? median(everyStretch) : null;
+      const after = readIn(ep, areas, ts, false);
+      t.after.push(after);
+      if (base === null) continue;
+      t.base.push(base); t.compared++;
+      if (after < base) t.fewer++;
+    }
+  }
+  const tools = [...byTool.values()].sort((a, b) => b.calls - a.calls).map(({ after, base, ...t }) => ({ ...t, withArea: after.length, readsAfter: median(after), readsWithout: median(base) }));
   calls.sort((a, b) => b.ts - a.ts);
   const withSuggestions = calls.filter((c) => c.followed !== null);
   const followedN = withSuggestions.filter((c) => c.followed).length;
@@ -709,6 +745,7 @@ export function measure(proj, now = Date.now()) {
     followRate: rate, followed: followedN, withSuggestions: withSuggestions.length,
     baseline, baselineSample: opportunities,
     verdict: calls.length < 50 ? 'collecting' : rate !== null && baseline !== null && rate <= baseline ? 'turn_off' : 'helping',
+    tools, stretches: everyStretch.length,
     last: calls.slice(0, 20),
   };
 }
