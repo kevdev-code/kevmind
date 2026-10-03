@@ -12,7 +12,7 @@ export const TASKS = [
     id: 2,
     fix: '4b4a281',
     hidden: { files: ['test/alerts.test.mjs'], tests: ['conflict alerts keep only the newest 50 per session', 'every event gets an increasing sequence number, also after the event list is trimmed'] },
-    prompt: `In a long session where two agents keep editing the same files, the conflict alerts of a session grow without limit, in the server's memory and in what the page receives. Keep only the newest 50 alerts per session; export the limit as \`MAX_ALERTS\` from src/state.js. Also give every event of a session an increasing sequence number in a \`seq\` field (the first event is 1), which keeps increasing after the event list is trimmed to its newest 300, so the page can key its rows by it. Add tests and run the tests at the end.`,
+    prompt: `In a long session where two agents keep editing the same files, the conflict alerts of a session grow without limit, in the server's memory and in what the page receives. Keep only the newest 50 alerts per session; export the limit as \`MAX_ALERTS\` from src/state.js. The page should then receive the whole capped list (all of the up to 50 alerts the session keeps), not a shorter slice of it. Also give every event of a session an increasing sequence number in a \`seq\` field (the first event is 1), which keeps increasing after the event list is trimmed to its newest 300, so the page can key its rows by it. Add tests and run the tests at the end.`,
   },
   {
     id: 3,
