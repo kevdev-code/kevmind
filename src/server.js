@@ -7,7 +7,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { State, baseName, outcomeOf } from './state.js';
 import { Tailer } from './transcript.js';
-import { listProjects, scanProject, projectRoot, keyOf } from './memory.js';
+import { listProjects, scanProject, projectRoot, keyOf, slugOf } from './memory.js';
 import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
 import { writeConfig, experienceTools, pluginOption, briefingOn } from './config.js';
@@ -17,6 +17,7 @@ import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
 import { importScanner } from './imports.js';
 import { codeMapper, staleNames } from './codemap.js';
+import { buildTree, profileOf, gapProblems, TREE } from './tree.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -25,6 +26,8 @@ export const PID_FILE = path.join(DATA_DIR, 'server.pid');
 export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
 export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read by mcp/server.js
 export const BRIEFINGS_FILE = path.join(DATA_DIR, 'briefings.jsonl'); // every session start the briefing saw, and its measurement
+export const TREE_DIR = path.join(DATA_DIR, 'tree'); // each project's knowledge tree (src/tree.js), read by mcp/server.js
+export const treeFile = (key) => path.join(TREE_DIR, `${slugOf(key)}.json`);
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
@@ -95,6 +98,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   const tailTimer = setInterval(tailTranscripts, 1000);
   const memory = memoryApi(state);
   const experience = experienceKeeper();
+  const trees = treeKeeper(memory, experience, broadcast);
   // The Brain view's graph: built from the memory reports, the experience aggregate and the tool counts, at most
   // every 20 s (the view asks again when Claude touches a file it doesn't know yet). Read-only, like the Memory tab.
   let brainHit = null;
@@ -112,7 +116,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     return promise;
   };
 
-  const briefing = briefingKeeper(state, memory, experience);
+  const briefing = briefingKeeper(state, memory, experience, trees);
 
   // "View on phone": a second, read-only listener on the home network while it is on (src/share.js).
   const share = makeShare({ port, handle, onChange: () => broadcastLocal({ type: 'share', share: share.status() }) });
@@ -140,6 +144,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
         log.write(ts, JSON.stringify({ ts, e: clean }));
         const s = state.apply(clean, ts);
         if (s) broadcast({ type: 'session', session: state.summary(s), sessions: state.list() });
+        if (clean.hook_event_name === 'SessionStart' && clean.cwd) { const root = projectRoot(clean.cwd); if (root) trees.ensure(keyOf(root), root); }
       });
       return;
     }
@@ -184,8 +189,10 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
 
     if (url.pathname === '/api/memory') return json(res, { projects: memory.projects() });
     if (url.pathname === '/api/memory/project') {
-      memory.report(url.searchParams.get('key')).then(
-        (r) => (r ? json(res, r) : json(res, { error: 'unknown project' }, 404)),
+      const key = url.searchParams.get('key');
+      trees.ensure(key);
+      memory.report(key).then(
+        (r) => (r ? json(res, { ...r, problems: [...r.problems, ...gapProblems(trees.load(key))] }) : json(res, { error: 'unknown project' }, 404)),
         (err) => json(res, { error: String(err?.message || err) }, 500),
       );
       return;
@@ -235,6 +242,30 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       briefing.preview(url.searchParams.get('key')).then((r) => json(res, r), (err) => json(res, { error: String(err?.message || err) }, 500));
       return;
     }
+    // The knowledge tree, for the Memory tab: its profile and areas (not the commit table). since: the tree the page
+    // already has, so an unchanged tree is not sent again at every poll.
+    if (url.pathname === '/api/tree') {
+      const key = url.searchParams.get('key'), t = trees.load(key), building = trees.building(key);
+      if (!t) return json(res, { tree: null, building });
+      if (String(t.at) === url.searchParams.get('since')) return json(res, { unchanged: true, at: t.at, building });
+      const { git, ...rest } = t;
+      return json(res, { tree: { ...rest, profile: profileOf(t) }, building });
+    }
+    // Build or refresh a project's tree now: the Memory tab's button and `kevmind init` (which sends a path).
+    // months: the git window for this tree (a number or 'all'); it stays until the next init says otherwise.
+    if (req.method === 'POST' && url.pathname === '/api/init') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 5000, async (body) => {
+        let p = {};
+        try { p = JSON.parse(body); } catch { /* handled below */ }
+        const root = p.root ? projectRoot(path.resolve(p.root)) || path.resolve(p.root) : memory.projects().find((x) => x.key === p.key)?.root;
+        const months = p.months === 'all' ? 'all' : Number(p.months) > 0 ? Number(p.months) : undefined;
+        if (!root || !fs.existsSync(root)) return json(res, { error: 'unknown project' }, 404);
+        const t = await trees.build(keyOf(root), { root, months, force: true });
+        json(res, t ? { ok: true, key: keyOf(root), file: treeFile(keyOf(root)), ms: t.ms, profile: profileOf(t) } : { error: 'the build failed; see server.log' }, t ? 200 : 500);
+      });
+      return;
+    }
     if (url.pathname === '/api/experience') {
       experience.panel(url.searchParams.get('key')).then(
         (r) => json(res, r),
@@ -280,6 +311,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     for (const w of watchers) w.close();
     clearInterval(tailTimer);
     experience.stop();
+    trees.stop();
     briefing.stop();
     for (const res of clients) res.end();
     log.end();
@@ -429,10 +461,90 @@ function experienceKeeper() {
   return { panel, aggregate: async () => { await tick(); return agg; }, now: () => agg, stop: () => clearInterval(timer) };
 }
 
+// Each project's knowledge tree (src/tree.js), in ~/.kevmind/tree/: built in the background the first time a project
+// with sessions appears (one at a time, progress over SSE), refreshed incrementally when its Memory tab is open or a
+// session starts in it (at most every TREE.refreshMs), and on demand (POST /api/init). Read-only on the project.
+function treeKeeper(memory, experience, broadcast) {
+  const trees = new Map(); // key -> { tree, building }
+  const load = (key) => {
+    if (!key) return null;
+    const c = trees.get(key);
+    if (c?.tree) return c.tree;
+    try {
+      const t = JSON.parse(fs.readFileSync(treeFile(key), 'utf8'));
+      if (t?.v === 1) { trees.set(key, { ...c, tree: t }); return t; }
+    } catch { /* not built yet */ }
+    return null;
+  };
+  let queue = Promise.resolve();
+  const build = (key, { root, months } = {}) => {
+    const c = trees.get(key) || {};
+    if (c.building) return c.building;
+    root = root || memory.projects().find((p) => p.key === key)?.root;
+    if (!root) return Promise.resolve(null);
+    const run = async () => {
+      const send = (phase, detail = {}) => broadcast({ type: 'tree', key, phase, ...detail });
+      try {
+        const prev = load(key);
+        const [report, map, agg] = await Promise.all([memory.report(key).catch(() => null), memory.codeMap(root), experience.aggregate()]);
+        if (!map) throw new Error('no code map');
+        const tree = await buildTree({ root, map, report, agg, prev, months: months ?? prev?.months ?? TREE.months, progress: send });
+        fs.mkdirSync(TREE_DIR, { recursive: true });
+        atomicWrite(treeFile(key), JSON.stringify(tree));
+        trees.set(key, { tree });
+        return tree;
+      } catch (e) {
+        console.error(`  tree (${path.basename(root)}): ${e.message}`);
+        send('error', { error: e.message });
+        return null;
+      }
+    };
+    const building = queue = queue.then(run, run); // one build at a time
+    trees.set(key, { ...c, building });
+    building.finally(() => { const x = trees.get(key); if (x?.building === building) trees.set(key, { tree: x.tree }); });
+    return building;
+  };
+  // A tree that is missing or older than TREE.refreshMs is (re)built in the background; the current one is returned.
+  const ensure = (key, root) => { const t = load(key); if (!t || Date.now() - t.at > TREE.refreshMs) build(key, { root }); return t; };
+  // The first time a project with sessions appears, its tree is built (checked every minute).
+  const firstSeen = () => { for (const p of memory.projects().filter((x) => x.source === 'session')) if (!load(p.key) && !trees.get(p.key)?.building) build(p.key); };
+  const boot = setTimeout(firstSeen, 3000);
+  const timer = setInterval(firstSeen, 60_000);
+  boot.unref(); timer.unref();
+  return { load, build, ensure, building: (key) => !!trees.get(key)?.building, stop: () => { clearTimeout(boot); clearInterval(timer); } };
+}
+
+// `kevmind init` with no dashboard running: the same build, in this process, written where the dashboard keeps it.
+export async function initOffline(dir, months) {
+  const root = projectRoot(path.resolve(dir)) || path.resolve(dir);
+  let agg = null;
+  try { agg = revive(JSON.parse(fs.readFileSync(EXPERIENCE_FILE, 'utf8'))); } catch { /* no sessions recorded yet */ }
+  const key = keyOf(root), file = treeFile(key);
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first build */ }
+  const [report, map] = await Promise.all([scanProject(root).catch(() => null), codeMapper()(root)]);
+  const tree = await buildTree({ root, map, report, agg, prev: prev?.v === 1 ? prev : null, months: months ?? prev?.months ?? TREE.months });
+  fs.mkdirSync(TREE_DIR, { recursive: true });
+  atomicWrite(file, JSON.stringify(tree));
+  return { ok: true, key, file, ms: tree.ms, profile: profileOf(tree) };
+}
+// `kevmind clear --project`: the project's map goes with its history (matched by folder name or path, like its events).
+export function clearTrees(nameOrPath) {
+  const wanted = String(nameOrPath).toLowerCase();
+  let n = 0;
+  for (const f of fs.existsSync(TREE_DIR) ? fs.readdirSync(TREE_DIR) : []) {
+    try {
+      const { root } = JSON.parse(fs.readFileSync(path.join(TREE_DIR, f), 'utf8'));
+      if (path.basename(root).toLowerCase() === wanted || keyOf(root) === keyOf(nameOrPath)) { fs.rmSync(path.join(TREE_DIR, f)); n++; }
+    } catch { /* not a tree */ }
+  }
+  return n;
+}
+
 // The session briefing (src/briefing.js): built when a session starts, recorded in briefings.jsonl whether it was
 // shown or withheld (in equal shares; with the code map on, also shown as v2), and measured once the stretch that
 // followed has settled.
-function briefingKeeper(state, memory, experience) {
+function briefingKeeper(state, memory, experience, trees) {
   // ponytail: every record is read at start and kept in memory (about 2 KB a start); rotate the file if it ever grows past a few MB.
   const records = [];
   try { for (const l of fs.readFileSync(BRIEFINGS_FILE, 'utf8').split('\n')) if (l) try { records.push(JSON.parse(l)); } catch { /* skip */ } } catch { /* none yet */ }
@@ -448,7 +560,7 @@ function briefingKeeper(state, memory, experience) {
   const build = async (root, sid, source, withMap, wait = false) => {
     const key = keyOf(root);
     const [report, map] = await Promise.all([reportOf(key), withMap ? (wait ? memory.codeMap(root) : mapOf(root)) : null]);
-    const facts = await gatherFacts({ agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions, report, toolsOn: toolsOn(), map });
+    const facts = await gatherFacts({ agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions, report, toolsOn: toolsOn(), map, tree: trees.load(key) });
     return briefingText(facts);
   };
   async function serve(p) {

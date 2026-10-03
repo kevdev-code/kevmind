@@ -15,9 +15,8 @@ export const MAP = {
   maxBytes: 512 * 1024, // bigger is a bundle or generated code
   hubShare: 0.97,     // a file imported by more files than this share of the others is shared infrastructure...
   hubMin: 8,          // ...and by at least this many
-  areaMin: 4,         // smaller groups are not areas
-  areaSplit: 60,      // bigger groups are split by subfolder
-  rounds: 12,         // label propagation
+  areaMax: 40,        // a folder with more code files below it is split into its subfolders...
+  areaMinSub: 6,      // ...except subfolders smaller than this, which stay with it
 };
 
 const CODE_EXT = new Set(Object.values(LANGUAGES).flatMap((l) => l.ext));
@@ -158,7 +157,7 @@ export function codeMapper() {
 }
 
 // Key files: PageRank over the imports (an importer passes its weight to what it imports). Files imported by more than
-// almost all others are shared infrastructure (a UI kit, utils, query keys): named as such, kept out of the areas.
+// almost all others are shared infrastructure (a UI kit, utils, query keys): named as such, apart from key files.
 function rank(map) {
   const n = map.files.length;
   let pr = new Float64Array(n).fill(1 / Math.max(1, n));
@@ -178,60 +177,32 @@ function rank(map) {
   map.hub = map.importers.map((s) => s.size >= map.hubAt);
 }
 
-// Areas: files that import each other, by label propagation over the imports (hubs left out, so they don't glue
-// everything together), seeded by folder; big ones split by subfolder; named by their most distinctive words.
-const GENERIC = new Set(('src lib app apps components component ui service services api hooks hook types type utils util index ' +
-  'test tests __tests__ spec specs frontend backend feature features module modules feature-module pages page modals modal routes ' +
-  'route config common shared public core db schema schemas store controllers controller middleware helpers helper models model ' +
-  'views view widgets widget screens screen js ts tsx jsx mjs cjs dart main default base').split(' '));
+// Areas: folders. A folder with more than MAP.areaMax code files below it is split into its subfolders; a subfolder
+// with fewer than MAP.areaMinSub files stays with its parent, whose own files then form an area named after it. Every
+// file is in exactly one area, named by its path ('.' for the project's own top-level files). Folders, unlike import
+// clusters, stay put when the code changes and are what notes talk about; imports still say which areas use which.
 function areas(map) {
-  const n = map.files.length;
-  const nb = map.files.map(() => new Set());
-  for (let i = 0; i < n; i++) for (const j of map.imports[i]) if (!map.hub[i] && !map.hub[j]) { nb[i].add(j); nb[j].add(i); }
-  const dirOf = (f) => f.split('/').slice(0, -1).join('/') || '.';
-  const label = map.files.map(dirOf);
-  for (let r = 0; r < MAP.rounds; r++) {
-    let changed = 0;
-    for (let i = 0; i < n; i++) {
-      const count = new Map([[label[i], 0.5]]); // a little inertia: a file keeps its folder's label unless its neighbors agree
-      for (const j of nb[i]) count.set(label[j], (count.get(label[j]) || 0) + 1);
-      const best = [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
-      if (best !== label[i]) { label[i] = best; changed++; }
+  const out = [];
+  const split = (prefix, ids) => {
+    const sub = new Map(), here = [];
+    for (const i of ids) {
+      const rest = map.files[i].slice(prefix.length).split('/');
+      if (rest.length === 1) here.push(i); else (sub.get(rest[0]) || sub.set(rest[0], []).get(rest[0])).push(i);
     }
-    if (!changed) break;
-  }
-  let groups = [...groupBy(map.files.map((f, i) => i), (i) => label[i]).values()];
-  // Too big to be one area: split by the subfolder under the group's common folder.
-  const common = (ids) => { const parts = ids.map((i) => dirOf(map.files[i]).split('/')); const k = parts[0].findIndex((seg, d) => parts.some((p) => p[d] !== seg)); return parts[0].slice(0, k < 0 ? parts[0].length : k); };
-  groups = groups.flatMap((g) => {
-    if (g.length <= MAP.areaSplit) return [g];
-    const depth = common(g).length;
-    return [...groupBy(g, (i) => dirOf(map.files[i]).split('/').slice(0, depth + 1).join('/')).values()];
-  });
-  const words = (f) => f.toLowerCase().replace(/\.(test|spec)\./, '.').split('/').flatMap((seg, k, all) => (k === all.length - 1 ? [seg.replace(/\.[^.]+$/, '')] : [seg])).flatMap((s) => s.split(/[._]+/));
-  const nameOf = (g) => {
-    const c = new Map();
-    for (const i of g) for (const w of new Set(words(map.files[i]))) if (w.length > 2 && !GENERIC.has(w) && !/^\d+$/.test(w)) c.set(w, (c.get(w) || 0) + 1);
-    // A word names the area when a quarter of its files carry it (two at least); a second one joins when nearly as common.
-    const top = [...c].filter(([, k]) => k >= Math.max(2, g.length / 4)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    if (top.length) return top[1] && top[1][1] >= top[0][1] * 0.8 ? `${top[0][0]} ${top[1][0]}` : top[0][0];
-    // Otherwise its folder, when that says something, or its two most central files.
-    const folder = common(g).pop();
-    if (folder && !GENERIC.has(folder.toLowerCase())) return folder;
-    return [...g].sort((a, b) => map.pr[b] - map.pr[a]).slice(0, 2).map((i) => map.files[i].split('/').pop().replace(/.[^.]+$/, '')).join(' + ');
+    for (const [d, s] of [...sub]) if (s.length < MAP.areaMinSub) { here.push(...s); sub.delete(d); }
+    const name = prefix.replace(/\/$/, '') || '.';
+    if (ids.length <= MAP.areaMax || !sub.size) { out.push({ name, files: ids }); return; }
+    if (here.length) out.push({ name, files: here });
+    for (const [d, s] of sub) split(`${prefix}${d}/`, s);
   };
-  const repoOf = (g) => { const r = map.files[g[0]].split('/')[0]; return g.every((i) => map.files[i].startsWith(`${r}/`)) && /^(frontend|backend|client|server|web|mobile|app|api)$/.test(r) ? r : ''; };
-  map.areas = groups.filter((g) => g.length >= MAP.areaMin).map((g) => {
-    const set = new Set(g);
+  split('', map.files.map((f, i) => i));
+  map.areas = out.map(({ name, files }) => {
+    const set = new Set(files);
     let inside = 0, outside = 0;
-    for (const i of g) for (const j of map.imports[i]) set.has(j) ? inside++ : outside++;
-    const top = [...g].sort((a, b) => map.pr[b] - map.pr[a]).slice(0, 3);
-    return { name: nameOf(g), repo: repoOf(g), folder: common(g).join('/'), files: g, inside, outside, top };
-  }).sort((a, b) => b.files.length - a.files.length);
-  // Two areas with the same name are told apart by their folder.
-  const byName = groupBy(map.areas, (a) => `${a.name}|${a.repo}`);
-  for (const list of byName.values()) if (list.length > 1) for (const a of list) a.name = `${a.name} (${a.folder || map.files[a.top[0]].split('/').pop()})`;
-  for (const a of map.areas) if (a.repo && !a.name.includes('(')) a.name = `${a.name} (${a.repo})`;
+    for (const i of files) for (const j of map.imports[i]) set.has(j) ? inside++ : outside++;
+    const top = [...files].sort((a, b) => map.pr[b] - map.pr[a]).slice(0, 3);
+    return { name, folder: name === '.' ? '' : name, files, inside, outside, top };
+  }).sort((a, b) => b.files.length - a.files.length || a.name.localeCompare(b.name));
   map.areaOf = new Map();
   map.areas.forEach((a, k) => { for (const i of a.files) map.areaOf.set(i, k); });
 }
@@ -356,7 +327,11 @@ function capped(lines, footer) {
 }
 const byFolder = (map, ids) => [...groupBy(ids, (i) => map.files[i].split('/').slice(0, -1).join('/') || '.')].sort((a, b) => b[1].length - a[1].length);
 
-export async function answerCodeMap(map, name, args = {}, hist = async () => '') {
+// tree: the project's knowledge tree (src/tree.js), when built: areas then add their git activity, Claude's record
+// and the notes about them, each with its source.
+export async function answerCodeMap(map, name, args = {}, hist = async () => '', tree = null) {
+  const day = (ts) => new Date(ts).toLocaleDateString('en-CA');
+  const window = tree ? (tree.months === 'all' ? 'all history' : `${tree.months} months`) : '';
   const fi = (p) => fileIndex(map, p);
   const histLine = async (i) => { const h = await hist(map.files[i]); return h ? `History of \`${base(map.files[i])}\`: ${h}` : ''; };
   if (args.name) {
@@ -405,17 +380,34 @@ export async function answerCodeMap(map, name, args = {}, hist = async () => '')
     const a = map.areas.find((x) => x.name.toLowerCase() === q) || map.areas.find((x) => x.name.toLowerCase().includes(q)) || map.areas.find((x) => x.folder && x.folder.toLowerCase().startsWith(q.replace(/\/+$/, '')));
     if (!a) return `No data: no area of ${name} is called \`${args.area}\`. Ask with no arguments for the list.\n${TRUST}`;
     const { shared, dependsOn, usedBy } = areaLinks(map, map.areas.indexOf(a));
-    const lines = [`Area ${a.name}: ${a.files.length} files${a.folder ? ` under \`${a.folder}\`` : ''}, ${a.inside} imports inside, ${a.outside} to other files.`,
+    const lines = [`Area \`${a.name}\`: ${a.files.length} code files, ${a.inside} imports inside, ${a.outside} to other files.`,
       `- Core: ${list(a.top.map((i) => map.files[i]))}.`];
     if (shared.length) lines.push(`- Uses shared: ${shared.map(([j]) => `\`${base(map.files[j])}\``).join(', ')}.`);
     if (dependsOn.length) lines.push(`- Depends on: ${dependsOn.map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
     if (usedBy.length) lines.push(`- Used by: ${usedBy.map(([o, n]) => `${map.areas[o].name} (${n})`).join(', ')}.`);
+    const k = tree ? tree.areas.findIndex((x) => x.name === a.name) : -1;
+    if (k >= 0) {
+      const t = tree.areas[k], g = t.git;
+      const hot = t.files.filter((x) => x.git?.n90).sort((x, y) => y.git.n90 - x.git.n90).slice(0, 3);
+      const busiest = hot.map((x) => `${list([base(x.f)])} (${x.git.n90}, ${x.git.fix} fix)`).join(', ');
+      lines.splice(1, 0, `- git (${window}): ${g.commits} commits, ${g.fixes} labeled fix, ${g.n90} in the last 90 days${g.last ? `; last change ${day(g.last)}` : ''}${g.dormant ? ' (dormant)' : ''}.${hot.length ? ` Busiest: ${busiest}.` : ''}`);
+      const notes = t.notes.map((j) => tree.docs[j]).sort((x, y) => y.cited.includes(k) - x.cited.includes(k)).slice(0, 4);
+      if (notes.length) lines.splice(2, 0, `- Notes to read: ${list(notes.map((d) => d.label || d.id), 4)}.`);
+      const c = t.claude, fails = c.failures.slice(0, 2).map((x) => `${list([x.fam])} ("${x.sig}")`).join(', ');
+      if (c.read || c.edit || c.failures.length) lines.push(`- Claude sessions: read in ${c.read} work episodes, edited in ${c.edit}${fails ? `; known failures fixed by editing here: ${fails}` : ''}.`);
+    }
     return capped(lines, TRUST);
   }
   const { key, hubs } = keyFiles(map);
   const lines = [`Code map of ${name}: ${map.files.length} code files${map.repos > 1 ? ` in ${map.repos} repos` : ''}, ${map.importers.reduce((n, s) => n + s.size, 0)} imports.`,
     `- Key files: ${key.map((i) => `\`${map.files[i]}\` (imported by ${map.importers[i].size})`).join(', ')}.`];
+  if (tree) {
+    const busy = [...tree.areas].filter((a) => a.git.n90).sort((x, y) => y.git.n90 - x.git.n90).slice(0, 3);
+    lines.push(`- Areas: ${tree.areas.length} folders; busiest in the last 90 days (git): ${busy.map((a) => `${a.name} (${a.git.n90} commits, ${a.git.fixes} fix)`).join(', ') || 'none'}.`);
+    const quiet = tree.gaps.quiet.slice(0, 3).map((k) => tree.areas[k].name);
+    lines.push(`- Notes: ${tree.docs.filter((d) => d.areas.length).length} of ${tree.docs.length} notes and CLAUDE.md sections talk about an area${quiet.length ? `; busy areas no note talks about: ${quiet.join(', ')}` : ''}.`);
+  } else lines.push(`- Areas: ${map.areas.slice(0, 6).map((a) => `${a.name} (${a.files.length})`).join(', ')}${map.areas.length > 6 ? `, and ${map.areas.length - 6} more` : ''}.`);
+  // Lines go whole past the cap, from here on: shared infrastructure is the first to go.
   if (hubs.length) lines.push(`- Shared infrastructure (imported by ${map.hubAt}+ files): ${hubs.map((i) => `\`${base(map.files[i])}\` (${map.importers[i].size})`).join(', ')}.`);
-  lines.push(`- Areas: ${map.areas.slice(0, 6).map((a) => `${a.name} (${a.files.length})`).join(', ')}${map.areas.length > 6 ? `, and ${map.areas.length - 6} more` : ''}.`);
   return capped(lines, TRUST);
 }

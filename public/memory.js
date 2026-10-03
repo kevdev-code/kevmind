@@ -14,6 +14,8 @@ let briefPreview = null, briefToggleError = null;
 let expToggleError = null; // why the last on/off change failed, if it did
 let memError = null;
 let memTimer = null;
+let memTree = null; // the project map (src/tree.js): profile, areas, notes; fetched again only when it changed
+let treeState = null; // { key, phase, ... } while a map is being built, from the server's SSE messages
 const memOpen = new Set(); // rows whose details are expanded
 const memPathsOpen = new Set(); // problem rows whose list of paths is expanded, kept across refreshes
 
@@ -58,15 +60,20 @@ async function loadMemory() {
     renderMemoryView();
     if (!memKey) return;
     const key = memKey;
-    const [res, exp, brief] = await Promise.all([
+    const [res, exp, brief, tree] = await Promise.all([
       fetch(`/api/memory/project?key=${encodeURIComponent(key)}`),
       fetch(`/api/experience?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
       fetch(`/api/briefing?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/tree?key=${encodeURIComponent(key)}&since=${memTree?.key === key ? memTree.at : ''}`).then((r) => r.json()).catch(() => null),
     ]);
     const body = await res.json();
     memError = res.ok ? null : body.error || String(res.status);
     if (res.ok && body.key === memKey) memReport = body;
-    if (key === memKey) { memExp = exp; memBrief = brief; }
+    if (key === memKey) {
+      memExp = exp; memBrief = brief;
+      if (tree && !tree.unchanged) memTree = tree.tree ? { ...tree.tree, key } : null;
+      if (tree?.building && !treeState) treeState = { key, phase: 'code' };
+    }
   } catch (e) {
     memError = String(e.message || e);
   }
@@ -79,6 +86,7 @@ function selectMemProject(key) {
   memReport = null;
   memExp = null;
   memBrief = null;
+  memTree = null;
   briefPreview = null;
   memOpen.clear();
   memPathsOpen.clear();
@@ -119,6 +127,7 @@ function renderMemoryView() {
   setText($('memUpdated'), memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })) : p ? T.memLoading : '');
   renderExperience(memExp);
   renderBriefing(memBrief);
+  renderTree();
   if (!r) {
     for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) patchHTML($(id), '');
     setText($('memClaudeDir'), '');
@@ -342,6 +351,69 @@ $('memExperience').addEventListener('click', async (e) => {
   renderExperience(memExp);
   $('expToggle')?.focus();
 });
+
+// The project map (src/tree.js): a short profile, then the areas (folders) by recent activity, each with what the
+// code, git, Claude sessions and the notes say about it, every fact under its source. Built by the server; the
+// button rebuilds it now (not on a shared screen).
+const treeOpen = new Set(); // areas expanded, by name
+const TREE_FILES = 12; // files listed per area, busiest first
+function renderTree() {
+  const el = $('memTree');
+  const t = memTree?.key === memKey ? memTree : null;
+  const shared = document.body.classList.contains('shared');
+  const st = treeState?.key === memKey ? treeState : null;
+  const status = st ? `<span class="muted" role="status">${esc(T.treeBuilding(st))}</span>`
+    : t ? `<span class="muted">${esc(T.treeBuilt(new Date(t.at).toLocaleString(lang, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }), t.ms))}</span>` : '';
+  const button = shared ? '' : `<button type="button" class="btn" id="treeBuild"${st ? ' disabled' : ''}>${esc(t ? T.treeRebuild : T.treeBuild)}</button>`;
+  const top = `<div class="exp-switch">${button}${status}</div>`;
+  if (!t) { patchHTML(el, `${top}<p class="empty">${esc(memKey ? T.treeNone : '')}</p>`); return; }
+  const p = t.profile, day = (ts) => new Date(ts).toLocaleDateString(lang, { day: 'numeric', month: 'short', year: 'numeric' });
+  const src = (k) => `<b class="src">${esc(T.treeSrc[k])}</b>`;
+  const profile = `<ul class="tree-profile">${T.treeProfile(p, p.since ? day(p.since) : null).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
+  const areas = t.areas.map((a, k) => ({ a, k })).sort((x, y) => y.a.git.n90 - x.a.git.n90 || y.a.git.commits - x.a.git.commits || x.a.name.localeCompare(y.a.name));
+  const rows = areas.map(({ a }) => {
+    const notes = a.notes.map((j) => t.docs[j]);
+    const files = [...a.files].sort((x, y) => (y.git?.n90 || 0) - (x.git?.n90 || 0) || (y.git?.n || 0) - (x.git?.n || 0) || y.by - x.by).slice(0, TREE_FILES);
+    const fileRow = (f) => `<li><code>${esc(f.f.split('/').pop())}</code><small>${esc([
+      f.git && `${T.treeSrc.git}: ${T.treeFileGit(f.git.n, f.git.fix, f.git.last ? day(f.git.last) : '')}`,
+      f.claude && `${T.treeSrc.claude}: ${T.treeFileClaude(f.claude.read, f.claude.edit)}`,
+      `${T.treeSrc.code}: ${T.treeFileCode(f.by, f.names.slice(0, 4), f.names.length - 4)}`,
+    ].filter(Boolean).join(' · '))}</small></li>`;
+    const open = treeOpen.has(a.name);
+    return `<li><details data-area="${esc(a.name)}"${open ? ' open' : ''}><summary><code>${esc(a.name)}</code> <span class="muted">${esc(T.treeAreaMeta(a.files.length, a.git.n90, a.git.fixes, notes.length, a.git.dormant))}</span></summary>
+      <p>${src('code')} ${esc(T.treeAreaCode(a.top.map((f) => f.split('/').pop()), a.uses.map(([n]) => n), a.usedBy.map(([n]) => n)))}</p>
+      <p>${src('git')} ${esc(T.treeAreaGit(a.git.commits, a.git.fixes, a.git.last ? day(a.git.last) : null, t.months))}</p>
+      ${a.claude.read || a.claude.edit || a.claude.failures.length ? `<p>${src('claude')} ${esc(T.treeAreaClaude(a.claude.read, a.claude.edit, a.claude.failures.map((x) => x.fam)))}</p>` : ''}
+      <p>${src('notes')} ${notes.length ? notes.map((d) => `<code title="${esc(d.id)}">${esc(d.label || d.id)}</code>`).join(', ') : esc(T.treeNoNotes)}</p>
+      <ul class="exp-list tree-files">${files.map(fileRow).join('')}</ul>
+      ${a.files.length > files.length ? `<p class="muted">${esc(T.treeMoreFiles(a.files.length - files.length))}</p>` : ''}</details></li>`;
+  }).join('');
+  patchHTML(el, `${top}${profile}<ul class="tree-areas">${rows}</ul>`);
+}
+$('memTree').addEventListener('toggle', (e) => {
+  const d = e.target.closest?.('details[data-area]');
+  if (!d) return;
+  if (d.open) treeOpen.add(d.dataset.area); else treeOpen.delete(d.dataset.area);
+}, true);
+$('memTree').addEventListener('click', async (e) => {
+  if (!e.target.closest('#treeBuild') || !memKey) return;
+  const key = memKey;
+  treeState = { key, phase: 'code' };
+  renderTree();
+  try {
+    const r = await fetch('/api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    treeState = null;
+  } catch (err) { treeState = { key, phase: 'error', error: err.message }; }
+  if (key === memKey) memTree = null; // fetched again, in full
+  loadMemory();
+});
+// Progress of a build, from the server: each phase, then done (or an error). When done, the map is fetched again.
+window.onTree = (msg) => {
+  treeState = msg.phase === 'done' ? null : msg;
+  if (msg.phase === 'done' && msg.key === memKey && view === 'memory' && !document.hidden) loadMemory();
+  else if (view === 'memory') renderTree();
+};
 
 // The session briefing: its switch, what a session starting now would receive, the last starts with exactly what
 // Claude received (or, withheld, what it would have), and the comparison with and without it, tokens first.

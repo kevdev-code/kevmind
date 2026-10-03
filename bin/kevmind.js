@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startServer, clearEvents, clearAll, isDemoEvent, projectMatcher, DATA_DIR, SERVER_LOG, PID_FILE } from '../src/server.js';
+import { startServer, clearEvents, clearAll, clearTrees, initOffline, isDemoEvent, projectMatcher, DATA_DIR, SERVER_LOG, PID_FILE } from '../src/server.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -33,6 +33,8 @@ KevMind · watch Claude Code work in real time
   kevmind tools on|off|status  Turn the experience tools for Claude on or off, or show their state and its source
   kevmind briefing on|off|status  A short note about the project for Claude at each session start, from KevMind's
                                records and git (off by default; half the starts are measured without it)
+  kevmind init [path] [--months=N|--all]  Build the project map now: areas, git history (12 months by default) and
+                               the notes that talk about each area. Read-only; it also builds by itself in the background
   kevmind share [on|off|status|new]  View the dashboard on your phone over your home Wi-Fi: a read-only link and QR
                                code (new: a new link; the old one stops working). Off by default.
 
@@ -73,8 +75,9 @@ switch (cmd) {
       console.log(`\n  ✓ All data deleted from ${DATA_DIR}.\n`);
     } else if (project) {
       const isProject = projectMatcher(project);
-      const n = clearEvents((e) => !isProject(e));
-      console.log(n ? `\n  ✓ Removed ${n} event${n === 1 ? '' : 's'} of project ${project}.\n` : `\n  No events of project ${project}.\n`);
+      const n = clearEvents((e) => !isProject(e)), maps = clearTrees(project);
+      console.log(n ? `\n  ✓ Removed ${n} event${n === 1 ? '' : 's'} of project ${project}.` : `\n  No events of project ${project}.`);
+      console.log(maps ? `  ✓ Removed its project map.\n` : '');
     } else {
       const n = clearEvents((e) => !isDemoEvent(e));
       console.log(`\n  ✓ Removed ${n} demo event${n === 1 ? '' : 's'}.\n`);
@@ -128,6 +131,25 @@ switch (cmd) {
     if (sub === 'on' || sub === 'off') writeConfig(DATA_DIR, { briefing: sub === 'on' });
     else if (sub !== 'status') fail('Usage: kevmind briefing on | off | status');
     console.log(`\n  Session briefing: ${briefingOn(DATA_DIR) ? 'on' : 'off'} (${configFile(DATA_DIR)})\n  It applies from the next session start; what Claude received is in the Memory tab.\n`);
+    break;
+  }
+  case 'init': {
+    // The project map (src/tree.js): the code, git history and memory, so KevMind knows a project before any session.
+    // Read-only on the project. --months=N or --all: the git window (12 months by default), kept for later refreshes.
+    const target = path.resolve(args[0] || process.cwd());
+    if (!fs.existsSync(target)) fail(`No such folder: ${target}`);
+    const months = flags.has('--all') ? 'all' : Number([...flags].find((f) => f.startsWith('--months='))?.slice(9)) || undefined;
+    console.log(`\n  Building the project map of ${path.basename(target)}…`);
+    const r = (await isUp())
+      ? await fetch(`${base}/api/init`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ root: target, months }) }).then((x) => x.json())
+      : await initOffline(target, months).catch((e) => ({ error: e.message }));
+    if (r.error) fail(r.error);
+    const p = r.profile, n = (x) => x.toLocaleString('en');
+    console.log(`  ✓ Built in ${n(r.ms)} ms: ${r.file}\n`);
+    console.log(`  ${n(p.files)} code files in ${p.repos} repo${p.repos === 1 ? '' : 's'}, ${p.areas} areas (${p.active} active, ${p.dormant} dormant)`);
+    console.log(`  git (${p.months === 'all' ? 'all history' : `${p.months} months`}): ${n(p.commits)} commits${p.busiest.length ? `; busiest in 90 days: ${p.busiest.map((a) => `${a.name} (${a.n90})`).join(', ')}` : ''}`);
+    console.log(`  Notes: ${p.linked} of ${p.docs} notes and CLAUDE.md sections talk about an area${p.quiet ? `; ${p.quiet} busy area${p.quiet === 1 ? ' has' : 's have'} none` : ''}`);
+    console.log(`\n  The Memory tab shows the whole map.\n`);
     break;
   }
   case 'share': {

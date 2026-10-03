@@ -157,6 +157,7 @@ function connect() {
     const msg = JSON.parse(m.data);
     if (msg.type === 'reload') return location.reload();
     if (msg.type === 'share') return window.onShare?.(msg.share); // View on phone (share.js); this PC's pages only
+    if (msg.type === 'tree') return window.onTree?.(msg); // a project map being built (memory.js)
     if (msg.type === 'hello') {
       if (bootId && msg.bootId !== bootId) return location.reload();
       bootId = msg.bootId;

@@ -84,8 +84,8 @@ const RUNNER_RE = /^(npm|pnpm|yarn|bun|bunx|npx|node|deno|tsx|tsc|vitest|jest|es
 
 // Everything the briefing may say, from the records. live: the server's session state (agents, replies) for sessions
 // of the last 24 h; report: the memory report when it is at hand (else no notes); git(repo, args): read-only git;
-// map: the project's code map, for v2 only (else no map lines).
-export async function gatherFacts({ agg, root, name, sid, source, now = Date.now(), live = null, report = null, toolsOn = false, git = gitRead, map = null }) {
+// map: the project's code map, for v2 only (else no map lines); tree: its knowledge tree (src/tree.js), when built.
+export async function gatherFacts({ agg, root, name, sid, source, now = Date.now(), live = null, report = null, toolsOn = false, git = gitRead, map = null, tree = null }) {
   const projs = projectsUnder(agg, root);
   const sessions = sessionsOf(projs);
   const facts = { name, now, source, last: null, git: [], failures: [], rereads: [], together: [], notes: [], stale: [], toolsOn, items: [] };
@@ -161,13 +161,14 @@ export async function gatherFacts({ agg, root, name, sid, source, now = Date.now
     facts.stale = (report.problems || []).filter((pr) => (pr.code === 'cited_file_missing' || pr.code === 'possibly_moved') && /[\\/]memory[\\/]|\.serena/.test(pr.file || '') && (pr.params?.items || []).some((it) => near(it.path)))
       .slice(0, BRIEF.maxStale).map((pr) => ({ note: noteName(pr.file), path: pr.params.items[0].path, moved: pr.code === 'possibly_moved' }));
   }
-  if (map) facts.map = mapFacts(map, facts, report);
+  if (map) facts.map = mapFacts(map, facts, report, tree);
   return facts;
 }
 
 // v2: the area the last edits fall in (most of them), what it leans on and who leans on it; the most depended-on
-// files; and notes that name code no code file has anymore (the Memory tab's stale names).
-function mapFacts(map, facts, report) {
+// files; and notes that name code no code file has anymore (the Memory tab's stale names). With the knowledge tree,
+// the area's git activity and the notes about it (those citing something in it first).
+function mapFacts(map, facts, report, tree) {
   const counts = new Map();
   for (const f of facts.last?.edited || []) {
     const a = map.areaOf.get(fileIndex(map, f));
@@ -178,6 +179,12 @@ function mapFacts(map, facts, report) {
   if (k != null) {
     const a = map.areas[k], l = areaLinks(map, k);
     area = { name: a.name, files: a.files.length, core: a.top.slice(0, 2).map((i) => map.files[i]), dependsOn: l.dependsOn.slice(0, 2).map(([o]) => map.areas[o].name), usedBy: l.usedBy.slice(0, 2).map(([o]) => map.areas[o].name), others: counts.size - 1 };
+    const t = tree?.areas.findIndex((x) => x.name === a.name) ?? -1;
+    if (t >= 0) {
+      const ta = tree.areas[t];
+      area.git = { n90: ta.git.n90, fixes: ta.git.fixes, months: tree.months };
+      area.notes = ta.notes.map((j) => tree.docs[j]).sort((x, y) => y.cited.includes(t) - x.cited.includes(t)).slice(0, 2).map((d) => d.label || noteName(d.file));
+    }
   }
   const { key, hubs } = keyFiles(map);
   const stale = (report?.problems || []).filter((pr) => pr.code === 'stale_name').slice(0, BRIEF.maxStale)
@@ -227,7 +234,9 @@ export function briefingText(f) {
     const { area: a, key, hubs, stale } = f.map;
     if (a) {
       const links = [a.dependsOn.length && `uses ${a.dependsOn.join(', ')}`, a.usedBy.length && `is used by ${a.usedBy.join(', ')}`].filter(Boolean);
-      add(RANK.area, (name) => `Code map (from imports and exports, approximate): the last edits are in the ${a.name} area (${plural(a.files, 'file')}; core ${name(a.core)})${links.length ? `, which ${links.join(' and ')}` : ''}.${a.others ? ` They also touch ${plural(a.others, 'other area')}.` : ''}`);
+      const busy = a.git && (a.git.n90 || a.git.fixes) ? ` git: ${plural(a.git.n90, 'commit')} in the last 90 days; ${a.git.fixes} labeled fix in ${a.git.months === 'all' ? 'its history' : `${a.git.months} months`}.` : '';
+      const notes = a.notes?.length ? ` Notes about it: ${a.notes.map(code).join(', ')}.` : '';
+      add(RANK.area, (name) => `Code map (from imports and exports, approximate): the last edits are in the area ${code(a.name)} (${plural(a.files, 'code file')}; core ${name(a.core)})${links.length ? `, which ${links.join(' and ')}` : ''}.${a.others ? ` They also touch ${plural(a.others, 'other area')}.` : ''}${busy}${notes}`);
     }
     if (key.length) add(RANK.keyFiles, (name) => `Most depended-on files: ${key.map((k) => `${name([k.file])} (imported by ${k.by})`).join(', ')}${hubs.length ? `; shared by most of the code: ${hubs.map((h) => `${code(h.file.split('/').pop())} (${h.by})`).join(', ')}` : ''}.`);
     for (const s of stale) add(RANK.staleName, () => `${code(s.note)} names ${list(s.names)}, which no code file has anymore (git: last in the code on ${s.date}).`);

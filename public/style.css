@@ -318,6 +318,15 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .brief-starts .arm-shown, .brief-starts .arm-map { color: var(--text); font-weight: 600; }
 .brief-starts small { color: var(--text-3); }
 .brief-preview { margin-top: var(--sp-2); }
+/* The project map: a short profile, then one row per area (a folder) that opens on its facts, each under its source. */
+.tree-profile { margin: var(--sp-3) 0 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-2); max-width: 90ch; }
+.tree-areas { margin-top: var(--sp-4); display: flex; flex-direction: column; font-size: var(--fs-sm); }
+.tree-areas > li { border-top: 1px solid var(--border); }
+.tree-areas summary { cursor: pointer; padding: 6px 0; overflow-wrap: anywhere; }
+.tree-areas summary .muted { font-size: var(--fs-xs); }
+.tree-areas details > p { margin: 6px 0 0 var(--sp-4); font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; }
+.tree-areas .src { font-weight: 600; color: var(--text); margin-right: 4px; }
+.tree-files { margin: var(--sp-2) 0 var(--sp-3) var(--sp-4); }
 table.brief-cmp { max-width: 640px; }
 .brief-cmp th:first-child, .brief-cmp td:first-child { width: 60%; white-space: normal; }
 @media (max-width: 520px) { .brief-cmp.v2 th:first-child, .brief-cmp.v2 td:first-child { width: 40%; } } /* a fourth column needs the room */

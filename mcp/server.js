@@ -13,7 +13,7 @@ import {
   emptyAggregate, revive, updateFromLogs, refreshGit, projectAt, repoFor, relPath, history, partners, answerFileContext, answerFileHistory, answerKnownFailures, THRESHOLDS,
 } from '../src/experience.js';
 import { codeMapper, answerCodeMap } from '../src/codemap.js';
-import { projectRoot, keyOf } from '../src/memory.js';
+import { projectRoot, keyOf, slugOf } from '../src/memory.js';
 import { experienceTools } from '../src/config.js';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
@@ -53,14 +53,14 @@ const TOOLS = [
   {
     name: 'code_map',
     description: 'This project\'s code from its import and export statements, with its history: where an exported name is used, what a file holds and who imports it, ' +
-      'how one file reaches another, what an area of files holds; with no arguments, the key files and areas. Approximate (names, no type check): ' +
+      'how one file reaches another, an area (a folder): its git activity, notes to read; with no arguments, key files and busiest areas. Approximate (names, no type check): ' +
       'exact references come from Serena or a language server. Answers in under 200 tokens. Not on every task.',
     inputSchema: { type: 'object', properties: {
       name: { type: 'string', description: 'An exported name (function, class, constant, type): which files use it' },
       file: { type: 'string', description: 'A code file: what it exports and who uses it, what it imports, its area' },
       from: { type: 'string', description: 'With to: how this file reaches the other one through imports' },
       to: { type: 'string', description: 'With from: the other file' },
-      area: { type: 'string', description: 'An area name from the overview, or a folder' },
+      area: { type: 'string', description: 'An area: a folder path, as the overview names it' },
     } },
   },
 ];
@@ -68,6 +68,15 @@ const TOOLS = [
 // The code map: rebuilt at most every 10 s, and then only the files that changed are read again.
 const mapper = codeMapper();
 let map = null, mapAt = 0;
+// The project's knowledge tree, as the dashboard last wrote it (read again when the file changes); null until built.
+let tree = null, treeAt = 0;
+function treeNow() {
+  try {
+    const file = path.join(DATA_DIR, 'tree', `${slugOf(keyOf(ROOT))}.json`), m = fs.statSync(file).mtimeMs;
+    if (m !== treeAt) { tree = JSON.parse(fs.readFileSync(file, 'utf8')); treeAt = m; }
+  } catch { tree = null; treeAt = 0; }
+  return tree?.v === 1 ? tree : null;
+}
 async function codeMapNow() {
   if (!map || Date.now() - mapAt > 10_000) { map = await mapper(ROOT); mapAt = Date.now(); }
   return map;
@@ -159,7 +168,7 @@ async function call(name, args = {}) {
     const w = where(repo);
     return answerFileHistory(await projectFor(repo), w.name, repo === ROOT ? p : path.resolve(ROOT, p), now, { prefix: w.prefix });
   }
-  if (name === 'code_map') return answerCodeMap(await codeMapNow(), NAME, args || {}, historyOf);
+  if (name === 'code_map') return answerCodeMap(await codeMapNow(), NAME, args || {}, historyOf, treeNow());
   if (name === 'known_failures') {
     const repo = args.path ? repoFor(ROOT, String(args.path)) : ROOT;
     return answerKnownFailures(await projectFor(repo), where(repo).name, args.command ? String(args.command) : '', now);

@@ -130,7 +130,7 @@ test('v2: the same briefing first, then the code map: the area of the last edits
     const v2 = briefingText(await gatherFacts({ agg, root, name: 'demo-shop', sid: 's4', source: 'startup', now, git, toolsOn: true, report, map }));
     const v1Lines = v1.text.split('\n').slice(0, -1); // all but the tools line
     assert.deepEqual(v2.text.split('\n').filter((l) => v1Lines.includes(l)), v1Lines, 'v2 says everything v1 says, in the same order');
-    assert.match(v2.text, /- Code map \(from imports and exports, approximate\): the last edits are in the Cart area \(3 files; core `src\/price\.js`, `src\/cart\.js`\)\./);
+    assert.match(v2.text, /- Code map \(from imports and exports, approximate\): the last edits are in the area `Cart` \(3 code files; core `src\/price\.js`, `src\/cart\.js`\)\./);
     assert.match(v2.text, /- Most depended-on files: `src\/price\.js` \(imported by 1\); shared by most of the code: `util\.js` \(3\)\./, 'a file nothing imports is not a key file');
     assert.match(v2.text, /- `memory\/cart_notes\.md` names `legacyTotal`, which no code file has anymore \(git: last in the code on 2026-09-29\)\./);
     assert.match(v2.text, /file_context, file_history, known_failures and code_map tools/);
