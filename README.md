@@ -120,7 +120,7 @@ As an alternative, the plugin has an "Experience tools for Claude" option (`expe
 - `file_context(paths)`: files that usually change or get read together with the given ones.
 - `file_history(path)`: how many work episodes read and edited a file, by which agent types, and how often git changed or fixed it.
 - `known_failures(command)`: failures this project has seen before, and what came before the next success.
-- `code_map(name | file | from, to | area)`: the code from its import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another, and, with no arguments, the key files and the areas (folders) with their git activity and the notes about them. Answers about a file add its history, in under 200 tokens.
+- `code_map(name | file | from, to | area)`: the code from its import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another, and, with no arguments, the key files and the areas (folders) with their git activity and the notes about them. Answers about a file add its history, in under 200 tokens. With `list: true` it returns the complete list instead (everyone using a name, a file's importers and imports, an area's files and who imports them), 60 paths a page, marking files that import only types.
 
 The evidence comes from two places: KevMind's own record of past Claude Code work, counted in work episodes, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
 
