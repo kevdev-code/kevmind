@@ -177,6 +177,10 @@ Not read yet: Go, Rust, Java, Kotlin, Swift, Ruby, C and C++. Also not followed:
 6. **Harness.** `prototype/brain/` mounts the same `view.js` on synthetic data with a replay, for the benchmark and for screenshots at ~600 and ~3,000 nodes; `?sessions` plays three sessions in three projects at once (`makeSessions` in `data.js`).
 7. **All live sessions.** The page keeps the newest summary of every session the stream sends (each event comes with its own session's, selected or not) and asks for the rest once. Live means working, waiting for the OK, or active in the last 10 minutes after a prompt; waiting ones first, then the most recent, at most 6 (`brainLiveSessions` in `public/brain.js`). Each session is applied like the selected one used to be (its past at once, then event by event) with its id on every event; the view keeps one Claude and its subagents per session (`<session>/<agent>`), lights the projects of all the sessions at work, and lets a session that leaves the list fade out. A session in a project the graph doesn't have yet asks for a newer graph at once (2.5 to 8 s, as for a file just created). In the end-to-end check on a throwaway server, a third session in a new project was on the brain 5.9 s after its first event (28 s with the slower path used for unknown files).
 
+## The session briefing and the project map
+
+The briefing (v2) carries what the project map knows about the area of the last edits. In a small controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) the briefing showed no consistent token saving on isolated fixes; it stays off by default and its live measurement decides. [How it was measured](BENCHMARK.md).
+
 ## Files
 
 - `src/brain.js`: the graph from the memory report, the experience aggregate and tool counts (read-only).

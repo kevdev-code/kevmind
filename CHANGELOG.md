@@ -10,6 +10,12 @@ What changed in each version of KevMind. Dates are local. Versions before 0.5.0 
 - **Memory tab: the project map**, a short profile and the areas by recent activity, each opening on its facts and files. Two new gap checks: busy or fragile areas no note talks about, and areas many notes cite (worth checking that they still agree). Both are prompts to copy; KevMind writes no notes.
 - `code_map` answers about an area with its git activity, the notes to read and what Claude did there; its overview names the busiest areas and the busy ones no note covers. Briefing v2 says how busy the area of the last edits has been and which notes talk about it.
 
+- **Experience panel: each tool, and the files read after it.** For every call to `code_map`, `file_context`, `file_history` or `known_failures`, how many files Claude then read in the area the call was about (the project map's folders), against comparable stretches without a call. Counted from the hooks, no extra tokens; correlation, not proof.
+
+### Docs
+
+- [docs/BENCHMARK.md](docs/BENCHMARK.md): a small controlled benchmark of the session briefing (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) found no consistent token saving on isolated fixes. The README's briefing section says so; the briefing stays off by default.
+
 ### Changed
 
 - The code map's areas are folders (they were import clusters), so the map, `code_map`, the briefing and the Memory tab name areas the same way, by path.

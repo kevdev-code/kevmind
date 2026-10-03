@@ -108,7 +108,7 @@ Known limits:
 
 ## Next
 
-- The controlled benchmark (`prototype/briefing-bench/`): four past KevMind fixes, three runs with the briefing and three without, on Opus 5.5. The pilot (task 1, one run per arm) used 1.31 M tokens with the briefing and 1.13 M without, both successful. The full run waits for the owner's go-ahead.
+- The controlled benchmark is closed (2026-10-02): 5 tasks on 2 projects, 3 runs per arm, Opus 5.5, no consistent token saving on isolated fixes ([BENCHMARK.md](BENCHMARK.md)). The briefing stays off by default; the live measurement decides. What reaches Claude through the tools is measured live instead: per tool, the files read in the area a call was about, against stretches without a call (Experience panel).
 - The Brain's areas from the project map.
 - After enough live starts, keep whichever arm saves tokens (or neither).
 

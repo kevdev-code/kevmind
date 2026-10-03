@@ -138,7 +138,7 @@ The history answers come from `~/.kevmind/experience.json`, which the dashboard 
 
 `code_map` is approximate on purpose. It reads only import and export statements and the names in them (JavaScript, TypeScript and Dart for names; the import languages of the Brain tab for links), keeps a per-file cache that it refreshes when a file changes, and never type-checks, indexes symbols, edits code or writes memory. A file "uses" a name when it imports the file that exports it (directly or through one barrel) and mentions the name. On a real app of about 950 code files in two repos, its "where is this used" matched TypeScript's own references for 50 names with a precision of 0.99 and a recall of 1.00; the first answer there takes about 0.4 s, later ones about 0.25 s. Exact references and definitions stay with Serena or a language server, so KevMind works alongside them, and alongside Claude's auto memory.
 
-The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
+The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline, and, for each tool, how many files Claude then read in the area the call was about, against comparable stretches without a call. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
 
 ## Session briefing (optional)
 
@@ -159,6 +159,8 @@ npx kevmind briefing on
 or the switch in the Memory tab's **Session briefing** panel. It takes effect at the next session start.
 
 **Does it help?** Half of the session starts get the briefing and half don't, so the two can be compared on what happens next: time and steps to the first edit, files read again, known failures repeated, and tokens (input, output and cache reads, from the session transcript) until the first edit and for the whole stretch. The panel shows the exact text each start received (or, when withheld, what it would have received), what a session starting now would get, and the comparison. After 20 measured starts on each side it says whether the briefing saves tokens; if it costs tokens instead, it tells you to turn it off.
+
+In a small controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) the briefing showed no consistent token saving on isolated fixes; it stays off by default and its live measurement decides. [How it was measured](docs/BENCHMARK.md).
 
 **v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the half that gets the briefing gets v2: the same note plus lines from the code map (the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has). The comparison is then v2 against no briefing.
 
