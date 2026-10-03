@@ -15,7 +15,7 @@ Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Br
 ## Key decisions and why
 
 - **History, plus an approximate code map; coexist with Serena.** KevMind reports what happened (sessions, git). Since the code map (after 0.5.1) it also reads import and export statements and the names in them, with a per-file cache, read-only, never type-checking or editing: enough for "where is this used, what depends on what" in under 200 tokens. Exact references and definitions stay with Serena or a language server; reimplementing them would conflict and cost context. (Until 0.5.1 the rule was "history only, no code parsing".)
-- **Work episodes, not sessions.** Many users (the owner included) work in 1–3 long sessions; an episode (a prompt turn ending with an edit) is the unit that repeats.
+- **Work episodes, not sessions.** Many users work in 1–3 long sessions; an episode (a prompt turn ending with an edit) is the unit that repeats.
 - **At least 2 distinct local days per insight.** Patterns that only repeat inside one conversation are not knowledge. Days are local, not UTC, so an evening isn't counted twice.
 - **Read-only Memory tab.** It reports and hands out fix prompts; Claude Code (with the user) makes the changes.
 - **Experience tools opt-in via `kevmind tools`.** Off costs zero context (`tools/list` is empty). The desktop app can't change plugin options, so KevMind has its own switch.
@@ -26,7 +26,7 @@ Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Br
 
 - **Per-event cost:** 3.6–3.9 ms of main thread per event at 5 events/s (goal was 2 ms; was 25 ms). Script is ~0.6 ms; the rest is the browser producing frames. Idle and hidden-tab budgets are met (no layout/paint when idle; ~0.2% CPU hidden).
 - **Timeline zoom:** never narrower than 60 s, so in short sessions the bars are slivers at the right edge.
-- **Episode insights are thin:** as of 2026-10-02 few patterns pass the thresholds on the owner's machine (one "read before edit" pair; most "changed together" answers come from git, see [BRAIN.md](BRAIN.md#the-links-and-what-is-scenery)). Projects with only 2 or 3 edit episodes get git answers only.
+- **Episode insights are thin:** as of 2026-10-02 few patterns pass the thresholds on the main test machine (one "read before edit" pair; most "changed together" answers come from git, see [BRAIN.md](BRAIN.md#the-links-and-what-is-scenery)). Projects with only 2 or 3 edit episodes get git answers only.
 - **Long sessions:** the server never prunes a session's agent list, so SSE payloads grow in sessions that launch hundreds of subagents (heap plateaus ~1.3 MB in a 1 h synthetic run).
 - **721–1100 px:** two-column layout keeps the page scroll (the app shell is ≥1101 px; Memory ≥901 px).
 - **Experience verdict:** "helping / turn off" needs 50 tool calls first.
@@ -43,7 +43,7 @@ What the requirements became:
 - Real data only: `GET /api/brain` builds the graph from the memory report, the experience aggregate, the import statements of the code files in it and tool counts. Read-only. How each kind of link is built: [BRAIN.md](BRAIN.md#the-links-and-what-is-scenery).
 - A switch for animations (`prefers-reduced-motion` sets it off by default); idle is fully still unless Auto-rotate is on.
 - Nothing renders while the tab is hidden or another view is shown.
-- Raw WebGL2, zero dependencies; 30 fps on the RTX at ~600 and ~3,000 nodes; on SwiftShader (the stand-in for a machine without a GPU) 28.8 fps in normal use and about 25 with the camera moving at 3,000 nodes.
+- Raw WebGL2, zero dependencies; 30 fps on a high-end discrete GPU at ~600 and ~3,000 nodes; on SwiftShader (the stand-in for a machine without a GPU) 28.8 fps in normal use and about 25 with the camera moving at 3,000 nodes.
 - Works on a phone through "View on phone" (read-only), with a lighter brain.
 - The session selected in Live, or every live session at once ("All live sessions", at most 6), each Claude tagged with its project.
 
@@ -57,7 +57,7 @@ Known limits:
 
 ## Session briefing (v1, 0.5.1)
 
-A short, factual note for Claude at each session start (`src/briefing.js`, `hooks/brief.js`), off by default, measured against starts without it. Design and examples on real data: the owner's local design doc (`.claude/design/code-map-and-briefing.md`, git-ignored). Decisions (2026-10-02): the narrower rule for the code map is approved (reads import/export statements and names, keeps a per-file cache, read-only, never type-checks or edits; CLAUDE.md, README and the tool descriptions change when it is built); read-only `git ls-files` and `git status --porcelain` are approved (the briefing uses `status`); Serena stays optional for exact references; the briefing and the code map are each off by default with their own switch.
+A short, factual note for Claude at each session start (`src/briefing.js`, `hooks/brief.js`), off by default, measured against starts without it. Design and examples on real data: a local design doc (`.claude/design/code-map-and-briefing.md`, git-ignored). Decisions (2026-10-02): the narrower rule for the code map is approved (reads import/export statements and names, keeps a per-file cache, read-only, never type-checks or edits; CLAUDE.md, README and the tool descriptions change when it is built); read-only `git ls-files` and `git status --porcelain` are approved (the briefing uses `status`); Serena stays optional for exact references; the briefing and the code map are each off by default with their own switch.
 
 Known limits:
 
@@ -69,7 +69,7 @@ Known limits:
 
 `src/codemap.js` and the `code_map` MCP tool (behind the experience tools' switch, off by default): which files use an exported name, what a file exports and who imports it, how one file reaches another, key files (PageRank over imports, shared infrastructure apart) and areas (label propagation, named from folder and file names). Each file answer adds its history. The Memory tab also checks docs against code: `npm run` scripts no package.json has, and code names no code file has anymore that `git log -S` shows were there before.
 
-Measured on the owner's machine: a real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links, 71 areas); KevMind itself in 68 / 34 ms. Against TypeScript's `findReferences` on 50 exported names of that app's frontend (391 using files): precision 0.990, recall 1.000, 48 names exact.
+Measured on the test machine: a real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links, 71 areas); KevMind itself in 68 / 34 ms. Against TypeScript's `findReferences` on 50 exported names of that app's frontend (391 using files): precision 0.990, recall 1.000, 48 names exact.
 
 Known limits:
 
@@ -79,7 +79,7 @@ Known limits:
 
 ## Session briefing v2 (0.5.1)
 
-While the code map is on, the measurement is two arms (`ARMS.v2`): withheld against v2, which is v1's lines plus the code map's, ranked among them: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. With the map off it stays withheld against v1 (v1's code is kept). On the owner's projects the v2 preview is 1,318 to 1,407 characters and builds in 117 to 357 ms with the map warm.
+While the code map is on, the measurement is two arms (`ARMS.v2`): withheld against v2, which is v1's lines plus the code map's, ranked among them: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. With the map off it stays withheld against v1 (v1's code is kept). On the test projects the v2 preview is 1,318 to 1,407 characters and builds in 117 to 357 ms with the map warm.
 
 Known limits:
 
@@ -91,9 +91,9 @@ Known limits:
 
 `src/tree.js`, built by the dashboard for every project with sessions the first time it appears (even with the experience tools off), refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files → exported names, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; gap checks in the Memory tab; `code_map` and briefing v2 use it.
 
-Decisions (2026-10-02): areas by folder rather than import clusters (on the owner's largest app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); the map is built even with the tools off, and what reaches Claude stays behind the switch; 12 months of git by default, `--all` on demand; area summaries written by a model are left for later, and only if the controlled benchmark shows they help.
+Decisions (2026-10-02): areas by folder rather than import clusters (on the largest test app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); the map is built even with the tools off, and what reaches Claude stays behind the switch; 12 months of git by default, `--all` on demand; area summaries written by a model are left for later, and only if the controlled benchmark shows they help.
 
-Measured on the owner's machine (map warm means the code map's per-file cache is filled):
+Measured on the test machine (map warm means the code map's per-file cache is filled):
 
 | Project | Repos | Code files | Commits (12 months) | Full build | Incremental | On disk |
 |---|---|---|---|---|---|---|

@@ -14,6 +14,7 @@ What changed in each version of KevMind. Dates are local. Versions before 0.5.0 
 
 ### Docs
 
+- Public docs name no exact hardware (a high-end discrete GPU, no integrated GPU enabled) and speak to every reader, not one person.
 - [docs/BENCHMARK.md](docs/BENCHMARK.md): a small controlled benchmark of the session briefing (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) found no consistent token saving on isolated fixes. The README's briefing section says so; the briefing stays off by default.
 
 ### Changed

@@ -24,7 +24,7 @@ const REPO = path.resolve(HERE, '..', '..');
 const PLUGIN = path.join(HERE, 'plugin');
 const TMP = path.join(os.tmpdir(), 'kevmind-bench');
 const RUN_TIMEOUT_MS = 25 * 60_000;
-const MODEL = 'claude-opus-5-5[1m]'; // the owner's usual model (settings: opus[1m])
+const MODEL = 'claude-opus-5-5[1m]'; // the model the benchmark pinned (Opus 5.5, 1M context)
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
 
 // The project: KevMind by default; another one from its git-ignored tasks file. A project says where it lives, the repos
