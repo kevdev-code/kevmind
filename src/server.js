@@ -16,6 +16,8 @@ import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
 import { importScanner } from './imports.js';
 import { codeMapper, staleNames } from './codemap.js';
 import { buildTree, profileOf, gapProblems, TREE } from './tree.js';
+import { buildSuggestions, projectDocs, isApplied, outcome, retire, COVERED, SUGGEST } from './suggest.js';
+import { projectsUnder, sessionsOf } from './experience.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.kevmind');
@@ -25,6 +27,7 @@ export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
 export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // the experience aggregate, rebuilt from the logs when missing
 export const TREE_DIR = path.join(DATA_DIR, 'tree'); // each project's knowledge tree (src/tree.js)
 export const treeFile = (key) => path.join(TREE_DIR, `${slugOf(key)}.json`);
+export const SUGGESTIONS_FILE = path.join(DATA_DIR, 'suggestions.json'); // memory suggestions shown, dismissed and applied
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
 const GIT_REFRESH_MS = 10 * 60_000;
@@ -96,6 +99,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   const memory = memoryApi(state);
   const experience = experienceKeeper();
   const trees = treeKeeper(memory, experience, broadcast);
+  const suggestions = suggestionsKeeper(memory, experience, trees);
   // The Brain view's graph: built from the memory reports, the experience aggregate and the tool counts, at most
   // every 20 s (the view asks again when Claude touches a file it doesn't know yet). Read-only, like the Memory tab.
   let brainHit = null;
@@ -187,9 +191,25 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       const key = url.searchParams.get('key');
       trees.ensure(key);
       memory.report(key).then(
-        (r) => (r ? json(res, { ...r, problems: [...r.problems, ...gapProblems(trees.load(key))] }) : json(res, { error: 'unknown project' }, 404)),
+        // The problems a memory suggestion covers show as suggestions instead (one list).
+        (r) => (r ? json(res, { ...r, problems: [...r.problems, ...gapProblems(trees.load(key))].filter((p) => !COVERED.has(p.code)) }) : json(res, { error: 'unknown project' }, 404)),
         (err) => json(res, { error: String(err?.message || err) }, 500),
       );
+      return;
+    }
+    // Memory suggestions: the edits to propose, and those applied with what happened since.
+    if (url.pathname === '/api/suggestions' && req.method === 'GET') {
+      suggestions.get(url.searchParams.get('key')).then((r) => (r ? json(res, r) : json(res, { error: 'unknown project' }, 404)), (err) => json(res, { error: String(err?.message || err) }, 500));
+      return;
+    }
+    // Dismissing one ("history": a note that tells history on purpose). KevMind's own store only, from this PC only.
+    if (url.pathname === '/api/suggestions/dismiss' && req.method === 'POST') {
+      if (shared || !ownJson(req)) return res.writeHead(403).end();
+      readBody(req, 1000, (body) => {
+        let p = {};
+        try { p = JSON.parse(body); } catch { /* handled below */ }
+        json(res, suggestions.dismiss(String(p.id || ''), p.reason === 'history' ? 'history' : 'dismissed') ? { ok: true } : { error: 'unknown suggestion' });
+      });
       return;
     }
     // The knowledge tree, for the Memory tab: its profile and areas (not the commit table). since: the tree the page
@@ -285,7 +305,7 @@ export function clearEvents(keep) {
 
 export function clearAll() {
   for (const name of logFiles(DATA_DIR)) fs.rmSync(path.join(DATA_DIR, name), { force: true });
-  for (const f of [SPOOL_FILE, EXPERIENCE_FILE]) fs.rmSync(f, { force: true });
+  for (const f of [SPOOL_FILE, EXPERIENCE_FILE, SUGGESTIONS_FILE]) fs.rmSync(f, { force: true });
 }
 
 export const isDemoEvent = (e) => String(e?.session_id || '').startsWith('demo-') || baseName(e?.cwd || '') === 'demo-kevmind';
@@ -442,6 +462,64 @@ function treeKeeper(memory, experience, broadcast) {
   const timer = setInterval(firstSeen, 60_000);
   boot.unref(); timer.unref();
   return { load, build, ensure, building: (key) => !!trees.get(key)?.building, stop: () => { clearTimeout(boot); clearInterval(timer); } };
+}
+
+// Memory suggestions (src/suggest.js) per project, and KevMind's own record of them in suggestions.json: when each
+// was first shown, dismissed (and why), and applied (the first time its edit shows in the files). Applied ones are
+// measured on what they targeted; one that changed nothing is then proposed for removal. Never writes a project file.
+// ponytail: records are kept forever (about 1 KB each); prune old unapplied ones if the file ever grows past a few MB.
+function suggestionsKeeper(memory, experience, trees) {
+  let store = { v: 1, items: {} };
+  try { const s = JSON.parse(fs.readFileSync(SUGGESTIONS_FILE, 'utf8')); if (s?.v === 1 && s.items) store = s; } catch { /* none yet */ }
+  const save = () => { fs.mkdirSync(DATA_DIR, { recursive: true }); atomicWrite(SUGGESTIONS_FILE, JSON.stringify(store)); };
+  const cache = new Map(); // key -> { at, promise }
+  const card = ({ id, kind, history, edit, why, prompt }) => ({ id, kind, history: !!history, edit, why, prompt });
+  const compute = async (key) => {
+    const p = memory.projects().find((x) => x.key === key);
+    if (!p) return null;
+    const [report, agg] = await Promise.all([memory.report(key), experience.aggregate()]);
+    const now = Date.now(), tree = trees.load(key);
+    const list = buildSuggestions({ root: p.root, report, tree, agg, now });
+    const docs = projectDocs(report), sessions = sessionsOf(projectsUnder(agg, p.root));
+    let dirty = false;
+    const ids = new Set(list.map((s) => s.id));
+    for (const [id, r] of Object.entries(store.items)) {
+      if (r.key !== key || r.dismissed) continue;
+      const done = !ids.has(id) && isApplied(r.fact, docs); // a suggestion still proposed is not applied
+      if (done && !r.appliedAt) { r.appliedAt = now; dirty = true; }
+      if (!done && r.appliedAt && ids.has(id)) { r.appliedAt = null; dirty = true; } // the edit was undone
+    }
+    for (const s of list) if (!store.items[s.id]) { store.items[s.id] = { key, kind: s.kind, first: now, fact: s.fact, metric: s.metric || null, edit: s.edit, why: s.why }; dirty = true; }
+    const applied = Object.entries(store.items).filter(([, r]) => r.key === key && r.appliedAt).map(([id, r]) => ({ id, ...r, outcome: outcome({ id, ...r }, sessions, now) }));
+    const retired = applied.map((a) => retire(a, a.outcome, docs, p.root)).filter(Boolean);
+    for (const s of retired) if (!store.items[s.id]) { store.items[s.id] = { key, kind: s.kind, first: now, fact: s.fact, metric: null, edit: s.edit, why: s.why }; dirty = true; }
+    if (dirty) save();
+    const open = [...list, ...retired].filter((s) => !store.items[s.id]?.dismissed && !store.items[s.id]?.appliedAt);
+    return {
+      key, shown: open.slice(0, SUGGEST.shown).map(card), more: open.slice(SUGGEST.shown).map(card),
+      applied: applied.sort((a, b) => b.appliedAt - a.appliedAt).map(({ id, kind, edit, why, appliedAt, outcome: o }) => ({ id, kind, edit, why, appliedAt, outcome: o })),
+      dismissed: Object.values(store.items).filter((r) => r.key === key && r.dismissed).length,
+      thresholds: SUGGEST,
+    };
+  };
+  return {
+    get(key) {
+      const hit = cache.get(key);
+      if (hit && Date.now() - hit.at < 15_000) return hit.promise;
+      const promise = compute(key);
+      cache.set(key, { at: Date.now(), promise });
+      promise.catch(() => cache.delete(key));
+      return promise;
+    },
+    dismiss(id, reason) {
+      const r = store.items[id];
+      if (!r) return false;
+      r.dismissed = { at: Date.now(), reason };
+      save();
+      cache.delete(r.key);
+      return true;
+    },
+  };
 }
 
 // `kevmind init` with no dashboard running: the same build, in this process, written where the dashboard keeps it.

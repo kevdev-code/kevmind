@@ -279,6 +279,28 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); tab
 .issues small { display: block; color: var(--text-3); font-size: var(--fs-xs); overflow-wrap: anywhere; margin-top: 2px; }
 .issues li.note { border: 0; padding: 2px 0; color: var(--text-3); font-size: var(--fs-xs); }
 .issues li.shared { border-style: dashed; color: var(--text-2); }
+/* Memory suggestions: one card per edit, its evidence, where it goes, and the edit itself as a diff (+ added, − removed). */
+.sg-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sg { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3); font-size: var(--fs-sm); min-width: 0; }
+.sg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); justify-content: space-between; }
+.sg-head b { font-weight: 600; overflow-wrap: anywhere; }
+.sg-why, .sg-where { margin: 6px 0 0; color: var(--text-2); font-size: var(--fs-xs); max-width: 90ch; overflow-wrap: anywhere; }
+.sg-where { color: var(--text-3); }
+.sg-diff { font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--raised); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); margin: var(--sp-2) 0 0; max-height: 260px; overflow-y: auto; }
+.sg-diff > span { display: block; padding-left: 1.4em; text-indent: -1.4em; }
+.sg-sign { display: inline-block; width: 1.4em; text-indent: 0; font-weight: 600; }
+.sg-diff .del { color: var(--text-3); text-decoration: line-through; }
+.sg-diff .ins { color: var(--text); }
+.sg-diff .ctx { color: var(--text-2); }
+.sg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+.sg-actions button.link { font-size: var(--fs-xs); }
+.sg-more { margin-top: var(--sp-3); }
+.sg-more > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-2); }
+.sg-more > .sg-list { margin-top: var(--sp-2); }
+.sg-h { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-sm); font-weight: 600; }
+.sg-applied { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); }
+.sg-applied li { overflow-wrap: anywhere; }
+.sg-status { display: block; color: var(--text-2); margin-top: 2px; }
 .fix-all { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; margin: var(--sp-3) 0 var(--sp-1); }
 .fix-all small { color: var(--text-3); font-size: var(--fs-xs); }
 .btn { flex: none; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: var(--r-sm); padding: 4px 10px; font-size: var(--fs-xs); font-weight: 500; cursor: pointer; white-space: nowrap; transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }

@@ -32,6 +32,62 @@ window.I18N = {
     memNoneTier: 'Nothing here.',
     memCopyFix: 'Copy fix prompt',
     memCopyAll: 'Copy all fix prompts',
+    sgTitle: 'Memory suggestions',
+    sgSub: 'edits to what Claude reads; you apply them',
+    sgNone: 'Nothing to suggest right now. Suggestions from sessions (repeated failures, files read every session) need about a week of use.',
+    sgMore: (n) => `${n} more suggestion${n === 1 ? '' : 's'}`,
+    sgKind: {
+      fix: (w) => ({ cited_file_missing: 'A path that no longer exists', possibly_moved: 'A path that moved', stale_name: 'A name no longer in the code', missing_script: 'A script that doesn’t exist' }[w.items[0].code]),
+      failure: (w) => `A failure that keeps coming back: \`${w.fam}\``,
+      orient: (w) => `Read every session: \`${w.file.split('/').pop()}\``,
+      area: (w) => (w.fragile ? 'A fix-prone area no note covers' : 'A busy area no note covers'),
+      never_read: () => 'A note no session opens',
+      dormant: (w) => `A section about code nobody touches: “${w.section}”`,
+      no_change: () => 'An added line that changed nothing',
+    },
+    sgWhy: {
+      fix: (w) => w.items.map((x) => ({
+        cited_file_missing: `\`${x.token}\` exists nowhere in the project (working tree or default branch).`,
+        possibly_moved: `\`${x.token}\` is not there; a file with the same name is at ${x.to.map((t) => `\`${t}\``).join(' or ')}.`,
+        stale_name: `No code file has \`${x.token}\` anymore${x.date ? `; git last saw it in the code on ${x.date}` : ''}.`,
+        missing_script: `No package.json in the project has the script in \`${x.token}\`.`,
+      }[x.code])).join(' '),
+      failure: (w) => `It failed with “${w.sig}” in ${w.episodes} work episodes on ${w.days} days (${w.occurrences} times, last ${w.last}); ${w.fixN} times the next success came after ${w.fixKind === 'cmd' ? 'running' : 'editing'} \`${w.fix}\`.`,
+      orient: (w) => `Claude read \`${w.file}\` without editing it in ${w.n} of the last ${w.of} sessions, on ${w.days} days. A line saying what it holds can save the trip.`,
+      area: (w) => `\`${w.area}\`: ${w.files} code files, ${w.n90} commits in the last ${w.hotDays} days, ${w.fixes} labeled fix in ${w.months === 'all' ? 'all of git history' : `${w.months} months`}. No note or CLAUDE.md section talks about it.`,
+      never_read: (w) => `No session opened \`${w.note.split('/').pop()}\` in the last ${w.days} days, and its line in MEMORY.md is loaded at every start.`,
+      dormant: (w) => `It only cites ${w.areas.map((a) => `\`${a}\``).join(', ')}: no commit there in over ${w.days} days${w.last ? ` (last ${w.last})` : ''}, and no session touched it.`,
+      no_change: (w) => `Applied and measured over ${w.sessions} sessions with no clear change, and it costs tokens whenever it loads.`,
+    },
+    sgWhere: (e) => ({
+      add: () => (e.create ? `New file \`${e.file}\`` : `\`${e.file}\`, after line ${e.after}`),
+      note: () => `New note \`${e.file.split('/').pop()}\` and its line in \`MEMORY.md\` (\`${e.over}\` already has ${e.oversized} lines)`,
+      remove_range: () => `\`${e.file}\`, lines ${e.from}–${e.to}`,
+    }[e.op] || (() => (e.line ? `\`${e.file}\`, line ${e.line}` : `\`${e.file}\``)))(),
+    sgSection: (title, a, b) => `lines ${a}–${b}: the section “${title}”`,
+    sgDiffLabel: 'The edit: lines with + are added, lines with − removed',
+    sgTokens: (n) => `${n > 0 ? '+' : '−'}${Math.abs(n)} tokens when it loads`,
+    sgNoText: 'KevMind can’t write this line from the facts alone: the prompt asks Claude to propose one for you to review.',
+    sgHistoryHint: 'This is a note: it may tell history on purpose.',
+    sgCopyText: 'Copy text',
+    sgCopyPrompt: 'Copy prompt',
+    sgDismiss: 'Dismiss',
+    sgHistory: 'Keep, it’s history',
+    sgDismissed: (n) => `${n} dismissed`,
+    sgApplied: 'Applied',
+    sgOutcome: (kind, o) => {
+      const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+      const d = {
+        failure: () => `it failed ${o.after} time${o.after === 1 ? '' : 's'} in ${o.afterSessions} session${o.afterSessions === 1 ? '' : 's'} that ran the command, against ${o.before} in ${o.beforeSessions} before`,
+        orient: () => `read without editing in ${pct(o.after)} of ${o.afterSessions} session${o.afterSessions === 1 ? '' : 's'}, against ${pct(o.before)} of ${o.beforeSessions} before`,
+        area: () => `files read before the first edit there: median ${o.after ?? '—'} in ${o.afterSessions} episode${o.afterSessions === 1 ? '' : 's'}, against ${o.before ?? '—'} before`,
+      }[kind];
+      if (o.status === 'waiting') return `Measuring: ${o.have} of ${o.need} sessions, ${o.days} of ${o.needDays} days`;
+      if (o.status === 'helped') return `Helped: ${d()}`;
+      if (o.status === 'no_change') return `No clear change: ${d()}. Suggested for removal above.`;
+      return o.tokens ? `Done: ${o.tokens > 0 ? '+' : '−'}${Math.abs(o.tokens)} tokens when it loads` : 'Done';
+    },
+    sgCorrelation: 'Each applied suggestion is measured on what it targeted, before and after: a correlation, not proof.',
     treeTitle: 'Project map',
     treeSub: 'from the code, git and Claude sessions',
     treeNone: 'Not built yet. It builds by itself in the background the first time a project has a session, or build it now. Nothing is written to the project.',
@@ -273,6 +329,62 @@ window.I18N = {
     memNoneTier: 'Nada aquí.',
     memCopyFix: 'Copiar prompt de arreglo',
     memCopyAll: 'Copiar todos los prompts de arreglo',
+    sgTitle: 'Sugerencias de memoria',
+    sgSub: 'cambios a lo que Claude lee; tú los aplicas',
+    sgNone: 'Nada que sugerir por ahora. Las sugerencias que salen de las sesiones (fallos que se repiten, archivos que se leen en cada sesión) necesitan una semana de uso, más o menos.',
+    sgMore: (n) => `${n} sugerencia${n === 1 ? '' : 's'} más`,
+    sgKind: {
+      fix: (w) => ({ cited_file_missing: 'Una ruta que ya no existe', possibly_moved: 'Una ruta que se movió', stale_name: 'Un nombre que ya no está en el código', missing_script: 'Un script que no existe' }[w.items[0].code]),
+      failure: (w) => `Un fallo que vuelve: \`${w.fam}\``,
+      orient: (w) => `Se lee en cada sesión: \`${w.file.split('/').pop()}\``,
+      area: (w) => (w.fragile ? 'Un área propensa a fallos sin nota' : 'Un área muy activa sin nota'),
+      never_read: () => 'Una nota que ninguna sesión abre',
+      dormant: (w) => `Una sección sobre código que nadie toca: «${w.section}»`,
+      no_change: () => 'Una línea añadida que no cambió nada',
+    },
+    sgWhy: {
+      fix: (w) => w.items.map((x) => ({
+        cited_file_missing: `\`${x.token}\` no existe en ninguna parte del proyecto (ni en el árbol de trabajo ni en la rama principal).`,
+        possibly_moved: `\`${x.token}\` no está ahí; hay un archivo con el mismo nombre en ${x.to.map((t) => `\`${t}\``).join(' o ')}.`,
+        stale_name: `Ningún archivo de código tiene ya \`${x.token}\`${x.date ? `; git lo vio en el código por última vez el ${x.date}` : ''}.`,
+        missing_script: `Ningún package.json del proyecto tiene el script de \`${x.token}\`.`,
+      }[x.code])).join(' '),
+      failure: (w) => `Falló con «${w.sig}» en ${w.episodes} episodios de trabajo en ${w.days} días (${w.occurrences} veces, la última el ${w.last}); ${w.fixN} veces el siguiente éxito llegó después de ${w.fixKind === 'cmd' ? 'ejecutar' : 'editar'} \`${w.fix}\`.`,
+      orient: (w) => `Claude leyó \`${w.file}\` sin editarlo en ${w.n} de las últimas ${w.of} sesiones, en ${w.days} días. Una línea que diga qué contiene puede ahorrarle la visita.`,
+      area: (w) => `\`${w.area}\`: ${w.files} archivos de código, ${w.n90} commits en los últimos ${w.hotDays} días, ${w.fixes} marcados como arreglo en ${w.months === 'all' ? 'todo el historial de git' : `${w.months} meses`}. Ninguna nota ni sección de CLAUDE.md habla de ella.`,
+      never_read: (w) => `Ninguna sesión abrió \`${w.note.split('/').pop()}\` en los últimos ${w.days} días, y su línea en MEMORY.md se carga en cada inicio.`,
+      dormant: (w) => `Solo cita ${w.areas.map((a) => `\`${a}\``).join(', ')}: ningún commit ahí en más de ${w.days} días${w.last ? ` (el último, ${w.last})` : ''}, y ninguna sesión lo tocó.`,
+      no_change: (w) => `Se aplicó y se midió durante ${w.sessions} sesiones sin un cambio claro, y cuesta tokens cada vez que se carga.`,
+    },
+    sgWhere: (e) => ({
+      add: () => (e.create ? `Archivo nuevo \`${e.file}\`` : `\`${e.file}\`, después de la línea ${e.after}`),
+      note: () => `Nota nueva \`${e.file.split('/').pop()}\` y su línea en \`MEMORY.md\` (\`${e.over}\` ya tiene ${e.oversized} líneas)`,
+      remove_range: () => `\`${e.file}\`, líneas ${e.from}–${e.to}`,
+    }[e.op] || (() => (e.line ? `\`${e.file}\`, línea ${e.line}` : `\`${e.file}\``)))(),
+    sgSection: (title, a, b) => `líneas ${a}–${b}: la sección «${title}»`,
+    sgDiffLabel: 'El cambio: las líneas con + se añaden, las líneas con − se quitan',
+    sgTokens: (n) => `${n > 0 ? '+' : '−'}${Math.abs(n)} tokens cada vez que se carga`,
+    sgNoText: 'KevMind no puede escribir esta línea solo con los hechos: el prompt le pide a Claude que proponga una para que la revises.',
+    sgHistoryHint: 'Es una nota: puede contar historia a propósito.',
+    sgCopyText: 'Copiar texto',
+    sgCopyPrompt: 'Copiar prompt',
+    sgDismiss: 'Descartar',
+    sgHistory: 'Dejarla, es historia',
+    sgDismissed: (n) => `${n} descartada${n === 1 ? '' : 's'}`,
+    sgApplied: 'Aplicadas',
+    sgOutcome: (kind, o) => {
+      const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+      const d = {
+        failure: () => `falló ${o.after} ${o.after === 1 ? 'vez' : 'veces'} en ${o.afterSessions} ${o.afterSessions === 1 ? 'sesión' : 'sesiones'} que ejecutaron el comando, frente a ${o.before} en ${o.beforeSessions} antes`,
+        orient: () => `leído sin editar en el ${pct(o.after)} de ${o.afterSessions} ${o.afterSessions === 1 ? 'sesión' : 'sesiones'}, frente al ${pct(o.before)} de ${o.beforeSessions} antes`,
+        area: () => `archivos leídos antes de la primera edición ahí: mediana ${o.after ?? '—'} en ${o.afterSessions} ${o.afterSessions === 1 ? 'episodio' : 'episodios'}, frente a ${o.before ?? '—'} antes`,
+      }[kind];
+      if (o.status === 'waiting') return `Midiendo: ${o.have} de ${o.need} sesiones, ${o.days} de ${o.needDays} días`;
+      if (o.status === 'helped') return `Ayudó: ${d()}`;
+      if (o.status === 'no_change') return `Sin cambio claro: ${d()}. Arriba se sugiere quitarla.`;
+      return o.tokens ? `Hecho: ${o.tokens > 0 ? '+' : '−'}${Math.abs(o.tokens)} tokens cada vez que se carga` : 'Hecho';
+    },
+    sgCorrelation: 'Cada sugerencia aplicada se mide en lo que buscaba mejorar, antes y después: una correlación, no una prueba.',
     treeTitle: 'Mapa del proyecto',
     treeSub: 'del código, git y las sesiones de Claude',
     treeNone: 'Aún no está hecho. Se hace solo, en segundo plano, la primera vez que un proyecto tiene una sesión; o hazlo ahora. No se escribe nada en el proyecto.',

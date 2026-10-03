@@ -378,7 +378,7 @@ async function scanAutoMemory(ctx) {
   const indexPath = path.join(dir, 'MEMORY.md');
   const indexText = await readText(indexPath);
   const files = (await entries(dir)).filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.md') && e.name !== 'MEMORY.md').map((e) => e.name);
-  if (indexText === null && !files.length) return { display: display(dir), exists: false, index: null, notes: [] };
+  if (indexText === null && !files.length) return { dir, display: display(dir), exists: false, index: null, notes: [] };
 
   const lines = (indexText || '').split(/\r?\n/);
   const listed = new Map();
@@ -436,7 +436,7 @@ async function scanAutoMemory(ctx) {
         `${n.display} is about ${n.tokens} tokens (estimate), so every time Claude reads it a large part of the context goes to this one note. Split it into smaller topic notes, or trim history that no longer matters.`);
     }
   }
-  return { display: display(dir), exists: true, index, notes };
+  return { dir, display: display(dir), exists: true, index, notes };
 }
 
 // ---- Serena --------------------------------------------------------------------------------------------------

@@ -52,7 +52,7 @@ const since = (months, now) => Math.floor((now - months * 30.44 * DAY) / 1000);
 // Each repo's commits in the window: only the new ones when the previous tree read the same window (`<head>..HEAD`),
 // all of them when it didn't or when that range no longer exists (history rewritten).
 async function readGit(root, repoDirs, prev, months, now) {
-  const old = prev && prev.months === months ? decode(prev.git) : [];
+  const old = prev && prev.months === months ? commitsOf(prev.git) : [];
   const repos = {}, commits = [];
   for (const dir of repoDirs) {
     const rel = path.relative(root, dir).split(path.sep).join('/'), pre = rel ? `${rel}/` : '';
@@ -75,7 +75,7 @@ function encode(commits) {
   const of = (f) => { if (!id.has(f)) { id.set(f, files.length); files.push(f); } return id.get(f); };
   return { files, commits: commits.map((c) => [c.hash.slice(0, 12), c.ts, (c.fix ? 1 : 0) | (c.revert ? 2 : 0), c.repo, c.files.map(of), ...(c.revert ? [c.subject.slice(0, 80)] : [])]) };
 }
-function decode(git) {
+export function commitsOf(git) {
   if (!git?.commits) return [];
   return git.commits.map(([hash, ts, flags, repo, ids, subject = '']) => ({ hash, ts, subject, fix: !!(flags & 1), revert: !!(flags & 2), repo, files: ids.map((i) => git.files[i]) }));
 }
@@ -217,7 +217,7 @@ export async function buildTree({ root, map, report = null, agg = null, prev = n
   return tree;
 }
 
-// The project profile, in numbers: what the Memory tab says at the top and the tools say when asked for an overview.
+// The project profile, in numbers: what the Memory tab says at the top of the project map.
 export function profileOf(tree) {
   const active = tree.areas.filter((a) => !a.git.dormant);
   const byN90 = [...tree.areas].filter((a) => a.git.n90).sort((a, b) => b.git.n90 - a.git.n90).slice(0, 3);
@@ -232,7 +232,7 @@ export function profileOf(tree) {
 }
 
 // The gap checks, as Memory tab problems with a prompt to copy. They describe; they never ask Claude to write a note on
-// its own or judge what notes say.
+// its own or judge what notes say. busy_area_no_notes shows as a memory suggestion (src/suggest.js) instead.
 export function gapProblems(tree) {
   if (!tree) return [];
   const months = tree.months === 'all' ? 'all of git history' : `the last ${tree.months} months`;

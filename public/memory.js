@@ -10,6 +10,7 @@ let memKey = null;
 let memReport = null;
 let memError = null;
 let memTimer = null;
+let memSg = null; // memory suggestions (src/suggest.js): the cards to show, and the applied ones with what happened since
 let memTree = null; // the project map (src/tree.js): profile, areas, notes; fetched again only when it changed
 let treeState = null; // { key, phase, ... } while a map is being built, from the server's SSE messages
 const memOpen = new Set(); // rows whose details are expanded
@@ -56,9 +57,10 @@ async function loadMemory() {
     renderMemoryView();
     if (!memKey) return;
     const key = memKey;
-    const [res, tree] = await Promise.all([
+    const [res, tree, sg] = await Promise.all([
       fetch(`/api/memory/project?key=${encodeURIComponent(key)}`),
       fetch(`/api/tree?key=${encodeURIComponent(key)}&since=${memTree?.key === key ? memTree.at : ''}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/suggestions?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
     ]);
     const body = await res.json();
     memError = res.ok ? null : body.error || String(res.status);
@@ -66,6 +68,7 @@ async function loadMemory() {
     if (key === memKey) {
       if (tree && !tree.unchanged) memTree = tree.tree ? { ...tree.tree, key } : null;
       if (tree?.building && !treeState) treeState = { key, phase: 'code' };
+      if (sg?.key === key) memSg = sg;
     }
   } catch (e) {
     memError = String(e.message || e);
@@ -78,6 +81,7 @@ function selectMemProject(key) {
   memKey = key;
   memReport = null;
   memTree = null;
+  memSg = null;
   memOpen.clear();
   memPathsOpen.clear();
   renderMemoryView();
@@ -116,6 +120,7 @@ function renderMemoryView() {
   setText($('memRoot'), p ? p.root : '');
   setText($('memUpdated'), memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })) : p ? T.memLoading : '');
   renderTree();
+  renderSuggestions();
   if (!r) {
     for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) patchHTML($(id), '');
     setText($('memClaudeDir'), '');
@@ -274,6 +279,75 @@ function renderTables(r) {
     })),
   ));
 }
+
+// Memory suggestions: each card is one edit to a file Claude reads, with its evidence and the exact text, shown as a
+// diff ("+" added, "−" removed, so not by color alone). The user applies it: "Copy text" copies the line, "Copy prompt"
+// the same edit worded for Claude Code. Dismiss (or "Keep, it's history" for a note) goes to KevMind's own store.
+// Applied ones list what happened since, measured on what they targeted.
+const sgOpen = { more: false };
+const ticks = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+function sgDiff(e) {
+  const line = (sign, text, cls) => `<span class="${cls}"><span class="sg-sign" aria-hidden="true">${sign}</span>${esc(text)}</span>`;
+  const pre = (lines) => `<pre class="sg-diff" aria-label="${esc(T.sgDiffLabel)}">${lines.join('\n')}</pre>`;
+  // A new note is two edits: the note itself, and its line in MEMORY.md.
+  if (e.op === 'note') return `<p class="sg-where"><code>${esc(e.file.split('/').pop())}</code></p>${pre(e.body.trim().split('\n').map((l) => line('+', l, 'ins')))}` +
+    `<p class="sg-where"><code>MEMORY.md</code></p>${pre([line('+', e.index, 'ins')])}`;
+  const out = [];
+  if (e.op === 'add') out.push(line('+', e.text, 'ins'));
+  else if (e.op === 'replace') out.push(line('−', e.old, 'del'), line('+', e.text, 'ins'));
+  else if (e.op === 'remove') out.push(line('−', e.old, 'del'));
+  else if (e.op === 'remove_range') out.push(line('−', T.sgSection(e.title, e.from, e.to), 'del'));
+  else if (e.old) out.push(line(' ', e.old, 'ctx'));
+  return out.length ? pre(out) : '';
+}
+function sgCard(s) {
+  const e = s.edit, shared = document.body.classList.contains('shared');
+  const copyable = e.text || e.op === 'note';
+  return `<li class="sg" data-sg="${esc(s.id)}">
+    <div class="sg-head"><b>${ticks(T.sgKind[s.why.code](s.why))}</b>${e.tokens ? `<span class="muted">${esc(T.sgTokens(e.tokens))}</span>` : ''}</div>
+    <p class="sg-why">${ticks(T.sgWhy[s.why.code](s.why))}</p>
+    <p class="sg-where">${ticks(T.sgWhere(e))}</p>
+    ${sgDiff(e)}
+    ${e.op === 'prompt' ? `<p class="sg-why">${esc(T.sgNoText)}</p>` : ''}
+    ${s.history ? `<p class="sg-why">${esc(T.sgHistoryHint)}</p>` : ''}
+    <div class="sg-actions">
+      ${copyable ? `<button type="button" class="btn" data-sg-copy>${esc(T.sgCopyText)}</button>` : ''}
+      <button type="button" class="btn${copyable ? '' : ' primary'}" data-sg-prompt>${esc(T.sgCopyPrompt)}</button>
+      ${shared ? '' : `${s.history ? `<button type="button" class="btn" data-sg-dismiss="history">${esc(T.sgHistory)}</button>` : ''}<button type="button" class="btn link" data-sg-dismiss="dismissed">${esc(T.sgDismiss)}</button>`}
+    </div>
+  </li>`;
+}
+function renderSuggestions() {
+  const el = $('memSuggest');
+  const x = memSg?.key === memKey ? memSg : null;
+  if (!x) { patchHTML(el, memKey ? `<p class="empty">${esc(T.memLoading)}</p>` : ''); return; }
+  const calm = `<p class="calm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>${esc(T.sgNone)}</p>`;
+  const more = x.more.length ? `<details class="sg-more"${sgOpen.more ? ' open' : ''}><summary>${esc(T.sgMore(x.more.length))}</summary><ul class="sg-list">${x.more.map(sgCard).join('')}</ul></details>` : '';
+  const applied = x.applied.length ? `<h3 class="sg-h">${esc(T.sgApplied)}</h3><ul class="sg-applied">${x.applied.map((a) => `<li>
+      <b>${ticks(T.sgKind[a.why.code](a.why))}</b> <span class="muted">${ticks(T.sgWhere(a.edit))} · ${esc(new Date(a.appliedAt).toLocaleDateString(lang, { day: 'numeric', month: 'short' }))}</span>
+      <span class="sg-status">${esc(T.sgOutcome(a.kind, a.outcome))}</span></li>`).join('')}</ul><p class="muted">${esc(T.sgCorrelation)}</p>` : '';
+  const dismissed = x.dismissed ? `<p class="muted">${esc(T.sgDismissed(x.dismissed))}</p>` : '';
+  patchHTML(el, `${x.shown.length ? `<ul class="sg-list">${x.shown.map(sgCard).join('')}</ul>` : calm}${more}${applied}${dismissed}`);
+}
+$('memSuggest').addEventListener('toggle', (e) => { if (e.target.matches?.('details.sg-more')) sgOpen.more = e.target.open; }, true);
+$('memSuggest').addEventListener('click', async (e) => {
+  const card = e.target.closest('li[data-sg]');
+  const s = card && memSg && [...memSg.shown, ...memSg.more].find((x) => x.id === card.dataset.sg);
+  if (!s) return;
+  const b = e.target.closest('button');
+  if (b?.hasAttribute('data-sg-copy')) await copyText(b, s.edit.op === 'note' ? `${s.edit.body}\n${s.edit.index}\n` : s.edit.text, T.sgCopyText);
+  else if (b?.hasAttribute('data-sg-prompt')) await copyText(b, s.prompt, T.sgCopyPrompt);
+  else if (b?.dataset.sgDismiss) {
+    b.disabled = true;
+    try {
+      const r = await fetch('/api/suggestions/dismiss', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: s.id, reason: b.dataset.sgDismiss }) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      memSg = { ...memSg, shown: memSg.shown.filter((x) => x.id !== s.id), more: memSg.more.filter((x) => x.id !== s.id), dismissed: memSg.dismissed + 1 };
+      renderSuggestions();
+      loadMemory();
+    } catch { b.disabled = false; b.textContent = T.memCopyFailed; }
+  }
+});
 
 // The project map (src/tree.js): a short profile, then the areas (folders) by recent activity, each with what the
 // code, git, Claude sessions and the notes say about it, every fact under its source. Built by the server; the
