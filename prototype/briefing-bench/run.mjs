@@ -289,7 +289,7 @@ function report(tag) {
 const cmd = process.argv.slice(2).find((a, i, all) => !a.startsWith('--') && !(all[i - 1] || '').startsWith('--')); // the first word that is not a flag's value
 if (cmd === 'check') check();
 else if (cmd === 'briefing') console.log(await briefing(taskOf(arg('task', TASKS[0].id))));
-else if (cmd === 'run') console.log(JSON.stringify(await run(taskOf(arg('task', TASKS[0].id)), arg('arm', 'with'), Number(arg('n', 1)), arg('model', MODEL)), null, 1));
+else if (cmd === 'run') console.log(JSON.stringify(await run(taskOf(arg('task', TASKS[0].id)), arg('arm', 'with'), Number(arg('n', 1)), arg('model', MODEL), arg('tag', null)), null, 1));
 else if (cmd === 'claude-check') console.log(`ok: ${claudeBin()} is Claude Code ${checkBinary(claudeBin(), arg('model', MODEL))}, which can run ${arg('model', MODEL)}`);
 else if (cmd === 'series') await series(String(arg('tasks', TASKS.map((t) => t.id).join(','))).split(','), Number(arg('n', 3)), arg('model', MODEL), arg('tag', null));
 else if (cmd === 'report') report(arg('tag', null));
