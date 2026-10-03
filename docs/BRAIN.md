@@ -144,8 +144,8 @@ Six kinds of link, each a real relation read from your files or from what Claude
 | Index entries | `MEMORY.md` to note | Each note `MEMORY.md` lists. |
 | Imports | file to file | An `@path` import between instruction files, and the import statements of code files (below). |
 | Notes citing code | note or instruction file to file | A file path written in the note's text that is there in the working tree. Paths in code blocks, in negated sentences and under "don't" headings are skipped, as in the Memory tab. A cited file is a node even when Claude never touched it. |
-| Changed together | file and file | The experience tools' answer: edited in the same work episode at least 3 times, on at least 2 days, in at least half of the file's edit episodes; or committed together in git (from `git log`, at its own thresholds). A hub that changes with everything is left out. |
-| Read before edit | file to file | Also the experience tools': read before the file's first edit in at least 3 episodes, on at least 2 days, in at least 60% of its edit episodes. |
+| Changed together | file and file | From KevMind's record of sessions (`src/experience.js`): edited in the same work episode at least 3 times, on at least 2 days, in at least half of the file's edit episodes; or committed together in git (from `git log`, at its own thresholds). A hub that changes with everything is left out. |
+| Read before edit | file to file | Also from that record: read before the file's first edit in at least 3 episodes, on at least 2 days, in at least 60% of its edit episodes. |
 
 **Imports of code files** (`src/imports.js`). For every code file that is a node, its import statements are read (only those: no symbols, no index) and each one is resolved to a file the way its language does. When that file is a node too, it is a link; an import never adds a node. What is not a file of the project is no link: an npm or pub package, the standard library, a commented-out line.
 
@@ -177,9 +177,9 @@ Not read yet: Go, Rust, Java, Kotlin, Swift, Ruby, C and C++. Also not followed:
 6. **Harness.** `prototype/brain/` mounts the same `view.js` on synthetic data with a replay, for the benchmark and for screenshots at ~600 and ~3,000 nodes; `?sessions` plays three sessions in three projects at once (`makeSessions` in `data.js`).
 7. **All live sessions.** The page keeps the newest summary of every session the stream sends (each event comes with its own session's, selected or not) and asks for the rest once. Live means working, waiting for the OK, or active in the last 10 minutes after a prompt; waiting ones first, then the most recent, at most 6 (`brainLiveSessions` in `public/brain.js`). Each session is applied like the selected one used to be (its past at once, then event by event) with its id on every event; the view keeps one Claude and its subagents per session (`<session>/<agent>`), lights the projects of all the sessions at work, and lets a session that leaves the list fade out. A session in a project the graph doesn't have yet asks for a newer graph at once (2.5 to 8 s, as for a file just created). In the end-to-end check on a throwaway server, a third session in a new project was on the brain 5.9 s after its first event (28 s with the slower path used for unknown files).
 
-## The session briefing and the project map
+## The project map, the briefing and the tools
 
-The briefing (v2) carries what the project map knows about the area of the last edits. In a small controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) the briefing showed no consistent token saving on isolated fixes; it stays off by default and its live measurement decides. [How it was measured](BENCHMARK.md).
+Until 0.6.0 the project map also fed a session briefing and MCP tools for Claude. The briefing showed no consistent token saving and Claude didn't call the tools, so both were removed ([how they were measured](BENCHMARK.md)); the map now feeds the Memory tab's suggestions.
 
 ## Files
 

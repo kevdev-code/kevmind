@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Brain, the session briefing (off by default, measured; v2 adds the code map), and the code map (`code_map`, with the experience tools). 0.5.0 brought the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
+Status as of 2026-10-02. Version **0.6.0** (unreleased): memory suggestions and the project map, and the MCP tools and the session briefing removed. 0.5.1 brought every live session at once in the Brain; 0.5.0 the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -8,17 +8,21 @@ Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Br
 
 **Phase 2: Memory tab (0.2).** Read-only report per project: `CLAUDE.md` files and imports, Claude's auto memory, Serena notes, what loads at session start (InstructionsLoaded hook), and problems first (broken links/imports, notes missing from `MEMORY.md`, size limits, outdated cited paths, worktree copies, duplicates, notes never read), each with a "copy fix prompt".
 
-**Phase 3: experience tools (0.3.x).** Opt-in MCP server in the plugin with `file_context`, `file_history`, `known_failures`: which files change or get read together, a file's history, recurring failures and what fixed them. Evidence from KevMind's event log (work episodes) and `git log`. Monthly event logs, `experience.json` aggregate, project wipe (`clear --project`), on/off switch (`kevmind tools on|off`, dashboard toggle, config file wins over the plugin option), nested-repo routing, local-time dates, hub partners by lift, a measurement panel (calls, tokens, follow rate vs a baseline).
+**Phase 3: experience data (0.3.x).** KevMind's record of past work: monthly event logs, the `experience.json` aggregate counted in work episodes, `git log`, project wipe (`clear --project`), nested-repo routing, local-time dates, hub partners by lift. Until 0.6.0 it fed an opt-in MCP server (`file_context`, `file_history`, `known_failures`, later `code_map`); it now feeds the memory suggestions, the project map and the Brain.
 
 **Design pass (0.4.x).** PRODUCT.md and DESIGN.md (Impeccable process: critique 25/40 before). OKLCH tokens for dark and light (WCAG AA everywhere), system/dark/light switch, one hue per meaning, rails without cards, status-first Now panel, "needs your OK" in the tab title and favicon, agent status words, grouped conflict alerts capped at 50 per session. Incremental rendering (rAF batching, keyed rows, change-only writes, nothing while hidden). 0.4.1: app shell, sessions grouped by project with titles from the transcript, distinct file names. 0.4.2: sessions that never got going are hidden or folded; new README GIF and light screenshot.
 
+**Phase 4: Brain tab (0.5.x).** Below.
+
+**Phase 5: memory suggestions (0.6.0).** Below.
+
 ## Key decisions and why
 
-- **History, plus an approximate code map; coexist with Serena.** KevMind reports what happened (sessions, git). Since the code map (after 0.5.1) it also reads import and export statements and the names in them, with a per-file cache, read-only, never type-checking or editing: enough for "where is this used, what depends on what" in under 200 tokens. Exact references and definitions stay with Serena or a language server; reimplementing them would conflict and cost context. (Until 0.5.1 the rule was "history only, no code parsing".)
+- **Improve what Claude already reads; add nothing of its own.** Claude always reads `CLAUDE.md` and the memory index; it doesn't call extra tools, and a briefing saved no tokens consistently ([BENCHMARK.md](BENCHMARK.md)). So KevMind proposes edits to those files and measures them, and the user applies them. The MCP tools and the briefing were removed in 0.6.0.
+- **History, plus an approximate code map; coexist with Serena.** KevMind reports what happened (sessions, git) and reads import and export statements and the names in them, with a per-file cache, read-only, never type-checking or editing. Exact references and definitions stay with Serena or a language server; reimplementing them would conflict.
 - **Work episodes, not sessions.** Many users work in 1–3 long sessions; an episode (a prompt turn ending with an edit) is the unit that repeats.
 - **At least 2 distinct local days per insight.** Patterns that only repeat inside one conversation are not knowledge. Days are local, not UTC, so an evening isn't counted twice.
-- **Read-only Memory tab.** It reports and hands out fix prompts; Claude Code (with the user) makes the changes.
-- **Experience tools opt-in via `kevmind tools`.** Off costs zero context (`tools/list` is empty). The desktop app can't change plugin options, so KevMind has its own switch.
+- **Read-only Memory tab.** It reports, suggests and hands out text and prompts; Claude Code (with the user) makes the changes.
 - **No cost shown.** Prices change; token counts are exact, money would be a guess.
 - **Local only.** 127.0.0.1, no telemetry, no CDN or web fonts, zero runtime dependencies.
 
@@ -26,10 +30,9 @@ Status as of 2026-10-02. Version **0.5.1**: every live session at once in the Br
 
 - **Per-event cost:** 3.6–3.9 ms of main thread per event at 5 events/s (goal was 2 ms; was 25 ms). Script is ~0.6 ms; the rest is the browser producing frames. Idle and hidden-tab budgets are met (no layout/paint when idle; ~0.2% CPU hidden).
 - **Timeline zoom:** never narrower than 60 s, so in short sessions the bars are slivers at the right edge.
-- **Episode insights are thin:** as of 2026-10-02 few patterns pass the thresholds on the main test machine (one "read before edit" pair; most "changed together" answers come from git, see [BRAIN.md](BRAIN.md#the-links-and-what-is-scenery)). Projects with only 2 or 3 edit episodes get git answers only.
+- **Episode evidence is thin at first:** the suggestions from sessions (failures, orientation reads) need about a week of normal use; the event log on the main test machine covered 2.3 days when 0.6.0 was built, and none qualified yet.
 - **Long sessions:** the server never prunes a session's agent list, so SSE payloads grow in sessions that launch hundreds of subagents (heap plateaus ~1.3 MB in a 1 h synthetic run).
 - **721–1100 px:** two-column layout keeps the page scroll (the app shell is ≥1101 px; Memory ≥901 px).
-- **Experience verdict:** "helping / turn off" needs 50 tool calls first.
 - **Tooling not in the repo:** the UI benchmark (headless Edge over CDP, synthetic events) and the Live GIF recorder (`kevmind demo` on a test server, `?focus=latest`, screencast frames to ffmpeg) live in session scratch folders; recreate them if needed. The Brain tab's video is recorded by `prototype/brain/bench/record.mjs`.
 - **Planned:** read `.serena/memories` in the Memory tab (never reimplement indexing). Re-run the Impeccable critique on the new design.
 
@@ -55,43 +58,13 @@ Known limits:
 - Import links are read for JavaScript/TypeScript, Dart, Python, PHP, C#, CSS and HTML, and only between files that are nodes (touched by Claude or cited by a note); Go, Rust, Java, Kotlin and others are not read yet.
 - Regions come from folder names (`lobeOfPath` in `public/brain/graph.js`): a project with unusual folder names lands mostly in the parietal lobe.
 
-## Session briefing (v1, 0.5.1)
+## Project map (0.6.0)
 
-A short, factual note for Claude at each session start (`src/briefing.js`, `hooks/brief.js`), off by default, measured against starts without it. Design and examples on real data: a local design doc (`.claude/design/code-map-and-briefing.md`, git-ignored). Decisions (2026-10-02): the narrower rule for the code map is approved (reads import/export statements and names, keeps a per-file cache, read-only, never type-checks or edits; CLAUDE.md, README and the tool descriptions change when it is built); read-only `git ls-files` and `git status --porcelain` are approved (the briefing uses `status`); Serena stays optional for exact references; the briefing and the code map are each off by default with their own switch.
+`src/tree.js`, built by the dashboard for every project with sessions the first time it appears, refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files → exported names, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; the memory suggestions are built on it.
 
-Known limits:
+Decisions (2026-10-02): areas by folder rather than import clusters (on the largest test app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); 12 months of git by default, `--all` on demand; area summaries written by a model are left out.
 
-- The verdict needs 20 measured starts on each side; with a few working sessions a day, expect weeks.
-- A session's last reply and its running subagents are known only for sessions of the last 24 hours (the server's live state); older ones get the rest.
-- Tokens come from the transcript tailer, which follows sessions of the last 24 hours: a start whose stretch settles later is measured without tokens.
-
-## Code map (0.5.1)
-
-`src/codemap.js` and the `code_map` MCP tool (behind the experience tools' switch, off by default): which files use an exported name, what a file exports and who imports it, how one file reaches another, key files (PageRank over imports, shared infrastructure apart) and areas (label propagation, named from folder and file names). Each file answer adds its history. The Memory tab also checks docs against code: `npm run` scripts no package.json has, and code names no code file has anymore that `git log -S` shows were there before.
-
-Measured on the test machine: a real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links, 71 areas); KevMind itself in 68 / 34 ms. Against TypeScript's `findReferences` on 50 exported names of that app's frontend (391 using files): precision 0.990, recall 1.000, 48 names exact.
-
-Known limits:
-
-- Names are read for JavaScript, TypeScript and Dart; links for every import language of the Brain tab. A name used through a member (`api.fetchUser`) or a namespace import counts when the importer mentions it; a local variable with the same name is a false positive.
-- A stale name in a note about a fixed bug is history on purpose, so it is a suggestion, not a warning. The first Memory report waits at most 1.5 s for `git log -S`; names it hasn't checked yet show up on a later report.
-- `bun run` and `yarn run` also run binaries and files: those are skipped. A monorepo with `workspaces` skips the script check.
-
-## Session briefing v2 (0.5.1)
-
-While the code map is on, the measurement is two arms (`ARMS.v2`): withheld against v2, which is v1's lines plus the code map's, ranked among them: the area most of the last edits fall in (size, two core files, two areas it uses and two that use it), the most depended-on files with the shared infrastructure, and notes naming code the code dropped. With the map off it stays withheld against v1 (v1's code is kept). On the test projects the v2 preview is 1,318 to 1,407 characters and builds in 117 to 357 ms with the map warm.
-
-Known limits:
-
-- Starts measured before 0.5.1 as v1 stay in their own column; new ones are v2 or withheld.
-- At a start the map gets 400 ms; a cold build (a project's first start after the dashboard starts) goes on in the background and that v2 start has no map lines.
-- Past 1,500 characters the lowest-ranked lines go (stale names, stale paths, key files, notes, in that order); the tools line always stays.
-
-## Project map (unreleased)
-
-`src/tree.js`, built by the dashboard for every project with sessions the first time it appears (even with the experience tools off), refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files → exported names, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; gap checks in the Memory tab; `code_map` and briefing v2 use it.
-
-Decisions (2026-10-02): areas by folder rather than import clusters (on the largest test app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); the map is built even with the tools off, and what reaches Claude stays behind the switch; 12 months of git by default, `--all` on demand; area summaries written by a model are left for later, and only if the controlled benchmark shows they help.
+The code behind it (`src/codemap.js`): exported names by regex (JavaScript, TypeScript, Dart), imports resolved by `src/imports.js`, key files by PageRank over imports. A real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links); KevMind itself in 68 / 34 ms.
 
 Measured on the test machine (map warm means the code map's per-file cache is filled):
 
@@ -103,14 +76,32 @@ Measured on the test machine (map warm means the code map's per-file cache is fi
 Known limits:
 
 - Folder words link a note to an area by name ("billing"); a word the project uses everywhere ("shop" in a shop app) is ignored, but a common word below that (in under a fifth of the notes) can still link loosely. The "many notes" check counts only notes that cite a file or exported name in the area.
-- The experience tools keep their own `git log` for "changes together" (365 days or 2,000 commits); the map reads its own window. Merging the two readers was planned but bought little (about 0.4 s every 10 minutes).
+- The experience aggregate keeps its own `git log` for "changes together" (365 days or 2,000 commits); the map reads its own window.
 - Areas in the Brain view come in a later step.
+
+## Phase 5: memory suggestions (0.6.0)
+
+Short, copyable edits to `CLAUDE.md` and memory notes, each with its evidence and the exact text (`src/suggest.js`, the Memory tab's first panel): wrong facts from the docs ↔ code checks, failures that keep coming back with their fix, files read every session without being edited, busy or fix-prone areas no note covers, and trims. Added lines stay under 160 characters and go to the nearest `CLAUDE.md`, or to a memory note when that file would pass 200 lines. KevMind never writes them; when one is applied, it measures what it targeted before and after, and proposes removing a line that changed nothing.
+
+Decisions (2026-10-02): the MCP tools, the tools switch and the session briefing are removed (live counts: 4 tool calls in 39 sessions over 2.3 days, all in KevMind's own repository); the suggestions replace the Memory problems they cover; `CLAUDE.md` by default, a memory note when it is oversized; thresholds in `SUGGEST`.
+
+On real data when it was built: one project's oversized `CLAUDE.md` (256 lines) cited three files that no longer exist, each a list line to remove (−15 to −17 tokens per session), and five fix-prone areas went to memory notes; another project had a README command for a script that doesn't exist and three busy frontend areas, whose lines go to the frontend's own `CLAUDE.md`. The route answers in about 1 ms cached and 6 to 220 ms when it recomputes (mostly the memory report), only while the Memory tab is open.
+
+Known limits:
+
+- The added text is built from facts only (exported names, commits, fixes, co-change), so it says what and where, not why; when there are no facts to say, the card offers a prompt for Claude instead of text.
+- "Applied" is detected by the key fact (a path, a command and its fix), not the exact wording: a doc that already mentions the path elsewhere counts.
+- A verdict needs 5 sessions on 3 days after the edit, so it takes about a week; the before window is the same number of sessions before it.
+
+## Removed in 0.6.0
+
+- **The session briefing** (0.5.1): a factual note at session start, half the starts withheld to compare. A controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) found no consistent token saving on isolated fixes.
+- **The MCP tools** (0.3–0.5.1): `file_context`, `file_history`, `known_failures` and `code_map` (with a complete-list mode). In a probe on a 950-file app Claude never called them, not even with a one-line hint, and found the answer with Grep alone; in real use they were called 4 times in 39 sessions.
+
+[BENCHMARK.md](BENCHMARK.md) records both. The code is in the git history (the last commit with them is `05d4d88`).
 
 ## Next
 
-- The controlled benchmark is closed (2026-10-02): 5 tasks on 2 projects, 3 runs per arm, Opus 5.5, no consistent token saving on isolated fixes ([BENCHMARK.md](BENCHMARK.md)). The briefing stays off by default; the live measurement decides. What reaches Claude through the tools is measured live instead: per tool, the files read in the area a call was about, against stretches without a call (Experience panel).
+- Use it for a while, then release 0.6.0.
 - The Brain's areas from the project map.
-- After enough live starts, keep whichever arm saves tokens (or neither).
-
 - Replay a past session step by step (the Brain tab would be a good stage for it).
-- `CLAUDE.md` suggestions based on what Claude keeps re-reading.

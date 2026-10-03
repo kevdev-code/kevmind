@@ -8,7 +8,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 **English** · [Español](README.es.md)
 
-> Status: **0.5**. The live dashboard, the Memory tab, the Brain tab, View on your phone and the optional experience tools for Claude work. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+> Status: **0.6** (unreleased). The live dashboard, the Memory tab with its memory suggestions, the project map, the Brain tab and View on your phone work. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## What it shows
 
@@ -21,7 +21,7 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 - **What Claude says and thinks**: short excerpts of its replies and of its readable thinking summaries, read from the session transcript, with a toggle to hide the thinking. When reasoning happened but nothing readable came back, the feed says so with the token count.
 - **Tokens**: input, output and cache read/write per session and per agent, counted once per API call. No cost estimates: prices change.
 - **Project map**: each project from day one, without any session history: its areas (folders), how busy each one is and how many of its commits were fixes (git), what Claude did there, and which memory notes and `CLAUDE.md` sections talk about it. Built in the background, read-only.
-- **Memory tab**: what Claude Code and Serena remember about each project, with problems first. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes. It shows how much context loads at every session start, and flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, outdated file paths, `npm run` scripts that `package.json` no longer has, code names the code has dropped (with the experience tools on), worktree copies, large notes, possible overlaps, and notes no session reads. Each problem has a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
+- **Memory tab**: what Claude Code and Serena remember about each project. It covers the `CLAUDE.md` files and their imports, Claude's auto memory, and Serena's notes, and shows how much context loads at every session start. On top, [memory suggestions](#memory-suggestions): short edits to what Claude reads, each with its evidence and the exact text. Below, it flags broken links and imports, notes missing from `MEMORY.md`, a `MEMORY.md` past Claude's 200-line / 25 KB limit, oversized instruction files, worktree copies, large notes and possible overlaps, each with a "Copy fix prompt" button to paste into Claude Code. KevMind itself never edits these files.
 - **Brain tab**: everything above as a living 3D brain. Instruction files, memory notes, Serena notes, the code files Claude touched and the tools it used are cells grouped in lobes, one color per kind of knowledge (instructions, docs, logic, interface, memory, tools and tests, infrastructure); their real links are fibers (notes that link or cite code, files that import each other or change together). While a session works, Claude (coral) and its subagents (silver, numbered) travel from file to file along the links between them, leaving a trail, and what they touch glows and cools. When Claude works in several projects at once, "All live sessions" shows them all on the same brain, each tag with its project, and a session waiting for your OK comes first. Each kind of action (read, edit, new file, search, command, web, subagent, waiting for your OK, error) has its own short animation, so you can tell what Claude is doing at a glance. Orbit, zoom, search, filter, click a cell for its details, or turn on Auto-rotate. Only real data, read-only, and it rests completely when nothing happens.
 
 The dashboard is available in English and Spanish, in a dark and a light theme (it follows your system, or pick one with the switch in the top-right corner), and it works at phone width. On wide screens the page stays still and each column (sessions, center, right rail) scrolls on its own; the activity feed scrolls inside its panel.
@@ -105,72 +105,31 @@ Claude Code ──hook (stdin JSON)──▶ hooks/send.js ──POST──▶ l
 2. `send.js` forwards the event to the local server. If the server isn't running, it spools the event to `~/.kevmind/spool.jsonl` and exits: **it never blocks Claude**. The server ingests the spool at its next start, so nothing is lost while the dashboard is down.
 3. The server masks secrets (tokens, keys, `.env` lines), stores the event and streams it to the browser.
 
-## Experience tools for Claude (optional)
+## Memory suggestions
 
-KevMind can also answer Claude's questions about a project's history and, approximately, its code, through four MCP tools built into the plugin. They are **off by default**. Turn them on with
+Claude reads `CLAUDE.md` and its memory index at the start of every session, and a nested `CLAUDE.md` when it works in that folder. So KevMind helps by improving what Claude already reads: the Memory tab proposes short edits, each with its evidence and the exact text, and you apply the ones you want. KevMind never writes them.
 
-```bash
-npx kevmind tools on
-```
+- **Wrong facts:** a path that no longer exists or moved, a code name the code dropped (`git log -S` tells removed names from planned ones), an `npm run` script no `package.json` has. The edit replaces or removes that exact line; when the line says more than the stale reference, a prompt asks Claude to update it. Notes often tell history on purpose: there, **Keep, it's history** dismisses the suggestion for good.
+- **A failure that keeps coming back** with the same fix (the same command and error in at least 2 work episodes on 2 days, fixed the same way at least twice): one line saying what fixes it.
+- **Files Claude reads every session without editing them** (in at least half the sessions with work, at least 5 of them, on 3 days): one line with what the file exports and the file it usually changes with. A Read before an Edit doesn't count; Claude Code requires it.
+- **Busy or fix-prone areas no note covers:** one line with the commits, the fixes and the files most often fixed.
+- **Trims:** the `MEMORY.md` line of a note no session opens, a `CLAUDE.md` section that only cites code nobody touched in 180 days, and an added line that changed nothing.
 
-or with the switch at the top of the **Experience** panel in the dashboard's Memory tab. `kevmind tools off` turns them off, and `kevmind tools status` shows whether they're on and where that comes from. The setting lives in `~/.kevmind/config.json` and takes effect in the next Claude Code session. While they're off, Claude sees no tools from KevMind, so they cost no context.
+Every added line stays under 160 characters (about 40 tokens) and goes to the nearest `CLAUDE.md` above the code it names; when that file would pass 200 lines, it becomes a memory note with one line in `MEMORY.md` instead. Each card shows the tokens it adds or saves, the edit as a diff, **Copy text**, **Copy prompt** (the same edit worded for Claude Code) and **Dismiss**. At most 5 are shown per project; the rest are folded.
 
-As an alternative, the plugin has an "Experience tools for Claude" option (`experience_tools`) in `/config`. KevMind's own setting wins when both are set, so "off" is always respected.
+**Does it help?** When a suggestion's edit shows up in the files (reworded is fine), KevMind measures what it targeted, before and after, over at least 5 sessions on 3 days: whether the failure stops repeating, whether the file is read without being edited in fewer sessions (at least 20 points fewer), whether fewer files are read before the first edit in that area. A line that changed nothing is then suggested for removal, since it costs tokens every time it loads. It's a correlation, not proof, and the panel says so.
 
-- `file_context(paths)`: files that usually change or get read together with the given ones.
-- `file_history(path)`: how many work episodes read and edited a file, by which agent types, and how often git changed or fixed it.
-- `known_failures(command)`: failures this project has seen before, and what came before the next success.
-- `code_map(name | file | from, to | area)`: the code from its import and export statements: which files use an exported name, what a file exports and who imports it, how one file reaches another, and, with no arguments, the key files and the areas (folders) with their git activity and the notes about them. Answers about a file add its history, in under 200 tokens. With `list: true` it returns the complete list instead (everyone using a name, a file's importers and imports, an area's files and who imports them), 60 paths a page, marking files that import only types.
+Suggestions from code, git and your notes work from day one; those from sessions need about a week of normal use. Work is counted in work episodes: a prompt turn that ends with at least one edit (without prompts, a block of activity separated from the next by more than 30 minutes). Dates and days are in your machine's local time zone. Each file belongs to the git repo that holds it, so a `frontend/` and a `backend/` with their own repos are counted per repo.
 
-The evidence comes from two places: KevMind's own record of past Claude Code work, counted in work episodes, and the project's git history (read-only `git log`, the last 365 days or 2,000 commits). Git alone is enough to start, so the tools are useful on any repository from day one.
-
-A work episode is one prompt turn that ends with at least one edit; without prompts, a block of activity separated from the next by more than 30 minutes. Compactions and system messages don't start a new one, so one long session still yields many episodes. Every pattern also has to show up on at least 2 different days, so something that only repeats inside one conversation never qualifies. Each insight has its own threshold; there is no project-wide minimum besides the 20 commits git needs.
-
-Each file belongs to the git repo that holds it. If you run Claude at a repo's root but work in `frontend/` and `backend/`, and those are separate git repos, their history is kept and answered per repo, and the answer names the repo it came from. Repos outside the folder Claude runs in are never answered.
-
-Every answer:
-
-- cites its source and counts on one line, episodes first, such as "changes with `b.ts` (episodes: 5 on 2 days; git: 7 of 12 commits; last 2026-10-21)". Dates and days are in your machine's local time zone. Two files you ask about that change together are reported once, as "usually change together";
-- stays under about 400 tokens;
-- says "No data:" instead of guessing. Nothing is served below fixed thresholds, for example "edited together in at least 3 episodes on 2 different days and in half the episodes that edited the file", "read first in at least 3 episodes" or "the same failure in at least 2 episodes on 2 days, with the same fix twice". All thresholds live in `src/experience.js`.
-
-The history answers come from `~/.kevmind/experience.json`, which the dashboard keeps up to date, and typically take under 40 ms.
-
-`code_map` is approximate on purpose. It reads only import and export statements and the names in them (JavaScript, TypeScript and Dart for names; the import languages of the Brain tab for links), keeps a per-file cache that it refreshes when a file changes, and never type-checks, indexes symbols, edits code or writes memory. A file "uses" a name when it imports the file that exports it (directly or through one barrel) and mentions the name. On a real app of about 950 code files in two repos, its "where is this used" matched TypeScript's own references for 50 names with a precision of 0.99 and a recall of 1.00; the first answer there takes about 0.4 s, later ones about 0.25 s. Exact references and definitions stay with Serena or a language server, so KevMind works alongside them, and alongside Claude's auto memory.
-
-The **Experience** panel in the Memory tab shows what would be served today even while the tools are off, and, once Claude uses them, how many calls were made, the tokens served, and how often a suggested file was then opened compared with a baseline, and, for each tool, how many files Claude then read in the area the call was about, against comparable stretches without a call. If that doesn't beat the baseline after 50 calls, the panel tells you to turn the tools off.
-
-## Session briefing (optional)
-
-Every new Claude Code session starts cold. With the briefing on, KevMind gives Claude a short note when a session starts (a new session, `/clear`, or after a compaction), built only from what it already recorded and from git:
-
-- where the last session with edits left off: the files it edited last, a test or build still failing, subagents left running, its last reply;
-- git: the last commit and what is not committed, in the project and each repo nested in it;
-- failures that keep coming back and what fixed them (at the experience tools' thresholds);
-- the files read in each of the last three sessions, and the files that usually change with the last edits;
-- memory notes that cite those files, and notes whose cited files are gone.
-
-It is at most 1,500 characters (about 350 tokens), written as facts, never as instructions; when there is more to say, the least important lines go first, and the line naming KevMind's tools always stays. Nothing is written to your project, `CLAUDE.md` or Claude's memory. It is **off by default**:
-
-```bash
-npx kevmind briefing on
-```
-
-or the switch in the Memory tab's **Session briefing** panel. It takes effect at the next session start.
-
-**Does it help?** Half of the session starts get the briefing and half don't, so the two can be compared on what happens next: time and steps to the first edit, files read again, known failures repeated, and tokens (input, output and cache reads, from the session transcript) until the first edit and for the whole stretch. The panel shows the exact text each start received (or, when withheld, what it would have received), what a session starting now would get, and the comparison. After 20 measured starts on each side it says whether the briefing saves tokens; if it costs tokens instead, it tells you to turn it off.
-
-In a small controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) the briefing showed no consistent token saving on isolated fixes; it stays off by default and its live measurement decides. [How it was measured](docs/BENCHMARK.md).
-
-**v2, with the code map.** While the [experience tools](#experience-tools-for-claude-optional) are on, the half that gets the briefing gets v2: the same note plus lines from the code map (the area the last edits fall in with its core files and neighbouring areas, the most depended-on files, and notes that name code the code no longer has). The comparison is then v2 against no briefing.
+**Why not tools or a briefing?** Earlier versions also gave Claude four MCP tools (`file_context`, `file_history`, `known_failures`, `code_map`) and a session briefing. In controlled benchmarks Claude never called the tools on its own, not even with a one-line hint, and the briefing showed no consistent token saving; in two days of real use, the tools were called 4 times in 39 sessions. Both were removed in 0.6.0. [docs/BENCHMARK.md](docs/BENCHMARK.md) records how they were measured.
 
 ## Project map
 
 KevMind shouldn't need weeks of sessions to know a project. The first time a project has a Claude Code session, the dashboard builds its map in the background (about a second for a thousand files); `npx kevmind init [path]` or the **Rebuild** button in the Memory tab builds it now.
 
 - **Areas are folders.** A folder with more than 40 code files is split into its subfolders. For each area: its core files and which areas it uses (from imports), commits in the last 90 days and in the last 12 months, how many were labeled fix, reverts, when it last changed (git), what Claude read and edited there and which known failures were fixed there (KevMind's record), and the notes that talk about it.
-- **Your memory, organized.** Auto-memory notes, Serena notes and each `CLAUDE.md` section are linked to the areas they cite or name. KevMind never writes or edits a note. The Memory tab flags busy areas no note talks about, and areas many notes cite, with a prompt to copy.
-- **Every fact says where it comes from**: code, git, Claude sessions or notes. With the experience tools on, `code_map` and the session briefing use the map too.
+- **Your memory, organized.** Auto-memory notes, Serena notes and each `CLAUDE.md` section are linked to the areas they cite or name. KevMind never writes or edits a note. Busy areas no note talks about become [memory suggestions](#memory-suggestions); areas many notes cite are flagged with a prompt to copy.
+- **Every fact says where it comes from**: code, git, Claude sessions or notes. The memory suggestions are built on it.
 - **History window:** 12 months by default; `npx kevmind init --all` (or `--months=N`) reads more.
 - The map lives in `~/.kevmind/tree/` (25 KB for a 70-file project, about 0.5 MB for one with 950 files and 1,000 commits). Nothing is written to the project.
 
@@ -195,10 +154,10 @@ Watch the dashboard from your phone on the same Wi-Fi. Click **View on phone** i
 - The server only listens on `127.0.0.1`, unless you turn on [View on your phone](#view-on-your-phone): then it also listens on your home network, read-only and behind a private link.
 - Events spooled while the dashboard is down are masked by the hook before they touch disk.
 - From transcripts, only excerpts of at most 200 characters are kept, masked like everything else. Thinking signatures and redacted thinking are never read, and the transcript itself is never copied.
-- The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`, plus, with the experience tools on, `git ls-files` and `git log -S` to tell code names that were removed from ones that never existed.
-- The session briefing (off by default) uses the same records plus read-only `git log` and `git status`. Each start's text is kept in `~/.kevmind/briefings.jsonl` so you can see exactly what Claude received; it reaches Claude like any other context.
+- The Memory tab only reads. It shows metadata, descriptions and headings, never full note bodies. From Serena's global config it reads only the project list, never the `auth_secret`. Git is used only through read-only `git ls-tree`, `git ls-files`, `git log` and `git log -S` (to tell code names that were removed from ones that never existed).
+- Memory suggestions are built from what KevMind already has: the masked event log, the project map and the Memory report. KevMind keeps its own record of them in `~/.kevmind/suggestions.json` (which were shown, dismissed and applied, and their evidence: counts and paths, never file contents) and never writes a project file, `CLAUDE.md` or note. Nothing reaches Claude unless you paste it.
 - The project map keeps paths, exported names, counts, commit hashes and the subject of revert commits (at most 80 characters); never file contents.
-- The experience tools collect nothing new: they read the already-masked event log, `git log` and, for `code_map`, the import and export statements of the project's code files (listed with `git ls-files`), only for the project Claude is working in, and never write. `npx kevmind clear --project <name>` removes one project's history.
+- `npx kevmind clear --project <name>` removes one project's history and map.
 
 ## Configuration
 
@@ -256,13 +215,12 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 
 - [x] Tokens per session and per agent, from transcripts (no cost estimates: prices change).
 - [x] Memory tab: `CLAUDE.md` files, auto memory and Serena notes, flagging stale, duplicate or broken-link notes.
-- [x] Experience tools: an opt-in MCP server so Claude can ask about a project's history before working.
 - [x] Brain tab: memory, files, tools and live agents as a 3D brain.
 - [x] Brain tab: every live session at once.
-- [x] Session briefing at session start, measured against starts without it (tokens included).
-- [ ] A light code map (exported names, key files, areas) for the experience tools and the briefing.
+- [x] Project map: areas, git history and the notes about each area, from day one.
+- [x] Memory suggestions: copyable edits to `CLAUDE.md` and notes, measured after you apply them.
 - [ ] Replay a past session step by step.
-- [ ] `CLAUDE.md` suggestions based on what Claude keeps re-reading.
+- Tried and removed: MCP tools for Claude and a session briefing (see [docs/BENCHMARK.md](docs/BENCHMARK.md)).
 
 Current status, decisions and known limitations: [docs/ROADMAP.md](docs/ROADMAP.md).
 

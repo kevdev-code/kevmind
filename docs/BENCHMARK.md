@@ -1,8 +1,12 @@
-# The session briefing: a controlled benchmark
+# What was tried: the session briefing and the MCP tools
 
-In October 2026 we checked whether KevMind's session briefing makes Claude Code cheaper on a task. **Result: no consistent token saving on isolated fixes.** The briefing stays off by default, and its live measurement (half of the session starts get it, half don't) decides.
+Until 0.5, KevMind also gave Claude context of its own: a short briefing at session start, and four MCP tools to ask about a project's history and code. In October 2026 both were measured. **The briefing showed no consistent token saving, and Claude never called the tools on its own.** Both were removed in 0.6.0; KevMind now helps by improving what Claude already reads (`CLAUDE.md` and memory, through the Memory tab's suggestions). This page is the record of how they were measured.
 
-## Setup
+## The session briefing: a controlled benchmark
+
+Did the briefing make Claude Code cheaper on a task? **Result: no consistent token saving on isolated fixes.**
+
+### Setup
 
 - **Model and tool:** Claude Opus 5.5 (1M context), Claude Code 2.1.288, headless (`claude -p`), the user's settings, plugins and MCP servers left out.
 - **Two arms:** the briefing that a session starting at that commit would have received (v2: KevMind's records up to that moment, git, and the project map), handed over at session start by a one-file plugin, against nothing. The text is the same for every run of a task. KevMind's MCP tools are off in both arms.
@@ -13,9 +17,9 @@ In October 2026 we checked whether KevMind's session briefing makes Claude Code 
 - **Three runs per arm,** one at a time, alternating with and without. Tokens are input, output, cache reads and cache writes, as Claude Code reports them.
 - **Verdict rule, fixed before the runs:** "saves tokens" only if every task's median uses at least 10% fewer tokens with the briefing and succeeds no less often.
 
-The runner is in [`prototype/briefing-bench/`](../prototype/briefing-bench/); the private project's task file is not in the repository.
+The runner was `prototype/briefing-bench/`, removed in 0.6.0 (it is in the git history up to commit `05d4d88`); the private project's task file was never in the repository.
 
-## Results (medians of 3 runs per arm)
+### Results (medians of 3 runs per arm)
 
 | Project | Task | Success with / without | Tokens with | Tokens without | Change |
 |---|---|---|---|---|---|
@@ -28,10 +32,27 @@ The runner is in [`prototype/briefing-bench/`](../prototype/briefing-bench/); th
 
 Over the five tasks (control left out): 2 used at least 10% fewer tokens with the briefing, none used 10% more, and the median ratio (with / without) was 0.94. Successes: 14 of 15 with, 15 of 15 without. **Verdict: unclear.** About 32 M tokens were spent in all.
 
-## Limits
+### Limits
 
 - **Small sample.** Runs of the same task in the same arm varied by up to about 50%, so three runs per arm only show large effects. A first single run of the backend fix suggested −22%; with three runs it was +7%.
 - **Thin briefings on the private app.** KevMind had recorded no work on it before those commits, so its briefings held only git and the key files of the project map, not where the last session left off.
 - **The backend fix's hidden test accepted one approach only.** It checks that the stored time zone is set for the database session before the queries run. One run converted each date in the query instead, which is also a valid fix, and failed the test; it counts as a failure here.
 - **A corrected task.** The first prompt for the conflict-alerts task left out part of what its test checks, and all six of its runs failed in both arms; the prompt was corrected and the task run again, and only the second set is counted.
-- **Not tested:** resuming unfinished work (where knowing how the last session ended should matter most), and KevMind's MCP tools (`code_map`, `file_context`, `file_history`, `known_failures`), which were off in both arms. The Memory tab's Experience panel now measures the tools in real use instead: for each call, the files then read in the area it was about, against comparable stretches without a call.
+- **Not tested:** resuming unfinished work (where knowing how the last session ended should matter most), and KevMind's MCP tools (`code_map`, `file_context`, `file_history`, `known_failures`), which were off in both arms. They were measured separately (below).
+
+## The MCP tools: do they get called?
+
+The four tools were `file_context`, `file_history`, `known_failures` and `code_map` (an approximate code map from import and export statements, with a complete-list mode). Before a full benchmark, a probe checked whether Claude uses them at all.
+
+- **Task:** list every file in the frontend of the same private application (about 950 code files) that calls its API service modules directly instead of through a hook. The ground truth, 8 files, came from the TypeScript checker following each value import to its declaration, through barrels. Grep for the import path finds 12 candidates: 5 import only types, and it misses one import through a barrel.
+- **Arms:** the tools off; the tools on (the MCP server connected and its four tools listed to Claude, with the project map built for that commit); the tools on plus a one-line hint at session start naming them. Same model and harness as above.
+
+| Arm | Runs | KevMind tool calls | Files found | Tokens per run |
+|---|---|---|---|---|
+| Tools off | 1 | — | 8 of 8 | 424 k |
+| Tools on | 3 | 0 | 8 of 8 each | 363 k, 454 k, 477 k |
+| Tools on + hint | 2 | 0 | 8 of 8 each | 374 k, 441 k |
+
+Claude used Grep, Bash and Read in every run and found all 8 files; the tools were never called, so whether they would help when used could not be measured. Every run's tool list included Claude Code's tool search, which suggests MCP tools were deferred (Claude sees their names, not their descriptions, until it searches); this was not verified. One more limit: the code map's area list would have missed the barrel import too.
+
+**Real use agreed.** Over 2.3 days with the tools on, across 39 sessions in three projects, the event log shows 4 calls in 2 sessions, both in KevMind's own repository, one of them a development session testing them. A full run (about 17–32 M tokens) was not worth spending to measure tools that go unused, and the tools were removed.

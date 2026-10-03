@@ -4,23 +4,31 @@ What changed in each version of KevMind. Dates are local. Versions before 0.5.0 
 
 ## Unreleased
 
+KevMind now helps by improving what Claude already reads (`CLAUDE.md`, the memory index and notes) instead of adding tools or context of its own. The MCP tools and the session briefing are removed: benchmarks and real use showed Claude doesn't call extra tools and the briefing saved no tokens consistently ([docs/BENCHMARK.md](docs/BENCHMARK.md)).
+
 ### Added
 
+- **Memory suggestions** in the Memory tab: short, copyable edits to `CLAUDE.md` and memory notes, each with its evidence, the exact text as a diff and the tokens it adds or saves. Paths that no longer exist or moved, names the code dropped and scripts no `package.json` has (the exact line removed or replaced, or a prompt when the line says more); a failure that keeps coming back with the same fix; files Claude reads every session without editing them; busy or fix-prone areas no note covers; and trims (the `MEMORY.md` line of a note nobody opens, a section about code nobody touches, an added line that changed nothing). Added lines stay under 160 characters and go to the nearest `CLAUDE.md`, or to a memory note when that file would pass 200 lines. **Copy text**, **Copy prompt** and **Dismiss** ("Keep, it's history" for a note); KevMind never writes them.
+- **Did it help?** Once a suggestion's edit shows up in the files, KevMind measures what it targeted, before and after, over at least 5 sessions on 3 days (the failure stops repeating, the file is read without editing in fewer sessions, fewer files are read before the first edit in the area). A line that changed nothing is then suggested for removal. Its own record is `~/.kevmind/suggestions.json`.
 - **Project map.** KevMind knows a project from its first session: the dashboard builds its map in the background (about a second for a thousand files), `npx kevmind init [path] [--months=N|--all]` or the Memory tab's **Rebuild** button builds it now. Areas are folders; for each: core files and the areas it uses (code), commits in the last 90 days and 12 months, fixes, reverts and its last change (git), what Claude read and edited there and the known failures fixed there (KevMind's record), and the memory notes and `CLAUDE.md` sections that talk about it. Every fact says its source. Read-only; it lives in `~/.kevmind/tree/`.
-- **Memory tab: the project map**, a short profile and the areas by recent activity, each opening on its facts and files. Two new gap checks: busy or fragile areas no note talks about, and areas many notes cite (worth checking that they still agree). Both are prompts to copy; KevMind writes no notes.
-- **`code_map(…, list: true)`: complete lists.** Everyone using a name, every importer and import of a file, every file of an area and who imports it from outside, 60 paths a page (`page: 2`…). A file that imports only types from it (`import type`) is marked "(types only)": it doesn't call the code. Default answers stay under 200 tokens.
-- `code_map` answers about an area with its git activity, the notes to read and what Claude did there; its overview names the busiest areas and the busy ones no note covers. Briefing v2 says how busy the area of the last edits has been and which notes talk about it.
+- **Memory tab: the project map**, a short profile and the areas by recent activity, each opening on its facts and files. Areas many notes cite are flagged (worth checking that they still agree), with a prompt to copy.
 
-- **Experience panel: each tool, and the files read after it.** For every call to `code_map`, `file_context`, `file_history` or `known_failures`, how many files Claude then read in the area the call was about (the project map's folders), against comparable stretches without a call. Counted from the hooks, no extra tokens; correlation, not proof.
+### Removed
+
+- **The experience tools for Claude** (`file_context`, `file_history`, `known_failures`, `code_map`), their MCP server, the `kevmind tools` command, the plugin's `experience_tools` option and the Experience panel. In a controlled benchmark Claude never called them on its own, not even with a one-line hint; in two days of real use they were called 4 times in 39 sessions.
+- **The session briefing** (`hooks/brief.js`), the `kevmind briefing` command and its panel. A controlled benchmark (5 tasks on 2 projects, 3 runs per arm) found no consistent token saving. If you installed the hooks with `kevmind install`, run it again to drop the briefing's hook; the plugin drops it by itself.
+- `~/.kevmind/config.json` and `briefings.jsonl` are no longer read; you can delete them.
+- The benchmark runner (`prototype/briefing-bench/`). Git history keeps it; [docs/BENCHMARK.md](docs/BENCHMARK.md) records how both were measured.
+
+### Changed
+
+- The Memory tab's checks for paths, code names, scripts, quiet areas and unread notes now show as memory suggestions (one list, not two). Code names the code dropped are checked whether or not anything else is on.
+- The code map's areas are folders (they were import clusters), so the map and the Memory tab name areas the same way, by path.
 
 ### Docs
 
 - Public docs name no exact hardware (a high-end discrete GPU, no integrated GPU enabled) and speak to every reader, not one person.
-- [docs/BENCHMARK.md](docs/BENCHMARK.md): a small controlled benchmark of the session briefing (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) found no consistent token saving on isolated fixes. The README's briefing section says so; the briefing stays off by default.
-
-### Changed
-
-- The code map's areas are folders (they were import clusters), so the map, `code_map`, the briefing and the Memory tab name areas the same way, by path.
+- [docs/BENCHMARK.md](docs/BENCHMARK.md): the briefing benchmark and the tools probe, as the record of what was tried.
 
 ## 0.5.1 (2026-10-02)
 
