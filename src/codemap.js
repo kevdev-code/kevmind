@@ -143,12 +143,15 @@ export function codeMapper() {
     });
     for (const k of cache.keys()) if (!live.has(k)) cache.delete(k);
     const imports = N.map(() => new Set()), importers = N.map(() => new Set());
-    for (const [a, b] of await scan(N.map((f) => ({ file: f.abs, root: f.repo.dir })))) {
+    const typeLinks = new Set(), valueLinks = new Set(); // "i>j": i imports only types from j when it is in the first only
+    for (const [a, b, typeOnly] of await scan(N.map((f) => ({ file: f.abs, root: f.repo.dir })))) {
       const i = idx.get(fold(path.resolve(a))), j = idx.get(fold(path.resolve(b))); // the resolver may write paths its own way
       if (i == null || j == null || i === j) continue;
       imports[i].add(j); importers[j].add(i);
+      (typeOnly ? typeLinks : valueLinks).add(`${i}>${j}`);
     }
-    const map = { root, repos: repos.length, repoDirs: repos.map((r) => r.dir), files:N.map((f) => f.rel), info, imports, importers, at: Date.now() };
+    const typesOnly = new Set([...typeLinks].filter((k) => !valueLinks.has(k)));
+    const map = { root, repos: repos.length, repoDirs: repos.map((r) => r.dir), files: N.map((f) => f.rel), info, imports, importers, typesOnly, at: Date.now() };
     rank(map);
     areas(map);
     map.ms = Date.now() - t0;
@@ -327,9 +330,52 @@ function capped(lines, footer) {
 }
 const byFolder = (map, ids) => [...groupBy(ids, (i) => map.files[i].split('/').slice(0, -1).join('/') || '.')].sort((a, b) => b[1].length - a[1].length);
 
+// list: true: the complete list behind an answer, LIST_PAGE paths a page (the one answer not held to ~200 tokens).
+// name: every file that uses it; file: every file that imports it, then every file it imports; area: every file in it,
+// then every file outside it that imports one of them.
+// An importer that takes nothing but types from the file (`import type`) is marked "(types only)".
+export const LIST_PAGE = 60;
+function listAnswer(map, name, args) {
+  const typeOnly = (i, j) => map.typesOnly?.has(`${i}>${j}`);
+  const mark = (i, j) => `${map.files[i]}${typeOnly(i, j) ? ' (types only)' : ''}`;
+  let title, items;
+  if (args.name) {
+    const found = usesOf(map, String(args.name));
+    if (!found.length) return `No data: no code file in ${name} exports \`${args.name}\` (as its import and export statements say).\n${TRUST}`;
+    items = found.flatMap((u) => u.users.map((i) => {
+      // Through a barrel: types only when the importer takes only types from every barrel it reaches the file through.
+      const via = map.importers[u.file].has(i) ? [u.file] : [...map.imports[i]].filter((b) => map.info[b].barrel && map.imports[b].has(u.file));
+      const types = via.length && via.every((b) => typeOnly(i, b));
+      return `${map.files[i]}${types ? ' (types only)' : ''}${found.length > 1 ? ` (from \`${map.files[u.file]}\`)` : ''}`;
+    })).sort();
+    title = `\`${args.name}\` (${found.map((u) => `\`${map.files[u.file]}\``).join(', ')}) is used in ${items.length} file${items.length === 1 ? '' : 's'}`;
+  } else if (args.file) {
+    const i = fileIndex(map, args.file);
+    if (i == null) return `No data: \`${args.file}\` is not a code file of ${name} the map knows.\n${TRUST}`;
+    const by = [...map.importers[i]].map((j) => mark(j, i)).sort(), uses = [...map.imports[i]].map((j) => map.files[j]).sort();
+    items = [...by.map((x) => `imported by: ${x}`), ...uses.map((x) => `imports: ${x}`)];
+    title = `\`${map.files[i]}\`: imported by ${by.length} file${by.length === 1 ? '' : 's'}, imports ${uses.length}`;
+  } else if (args.area) {
+    const q = String(args.area).toLowerCase().replace(/\/+$/, '');
+    const a = map.areas.find((x) => x.name.toLowerCase() === q) || map.areas.find((x) => x.name.toLowerCase().includes(q));
+    if (!a) return `No data: no area of ${name} is called \`${args.area}\`. Ask with no arguments for the list.\n${TRUST}`;
+    // Its files, then every file outside it that imports one of them (types only when it takes nothing else from it).
+    const inside = new Set(a.files), outside = new Map(); // importer -> imports only types from the area so far
+    for (const i of a.files) for (const j of map.importers[i]) if (!inside.has(j)) outside.set(j, (outside.get(j) ?? true) && typeOnly(j, i));
+    const own = a.files.map((i) => map.files[i]).sort(), users = [...outside].map(([j, t]) => `${map.files[j]}${t ? ' (types only)' : ''}`).sort();
+    items = [...own.map((x) => `in the area: ${x}`), ...users.map((x) => `used from outside by: ${x}`)];
+    title = `Area \`${a.name}\`: ${own.length} code file${own.length === 1 ? '' : 's'}, used from outside by ${users.length}`;
+  } else return `No data: list needs a name, a file or an area.\n${TRUST}`;
+  const pages = Math.max(1, Math.ceil(items.length / LIST_PAGE)), page = Math.max(1, Math.floor(Number(args.page) || 1));
+  if (page > pages) return `No data: page ${page} is past the end (${pages} page${pages === 1 ? '' : 's'}).\n${TRUST}`;
+  const rows = items.slice((page - 1) * LIST_PAGE, page * LIST_PAGE);
+  return `${title} (page ${page} of ${pages}):\n${rows.map((x) => `- ${x}`).join('\n')}\n${page < pages ? `Page ${page} of ${pages}: ask again with page: ${page + 1} for the next.` : 'End of the list.'}\n${TRUST}`;
+}
+
 // tree: the project's knowledge tree (src/tree.js), when built: areas then add their git activity, Claude's record
 // and the notes about them, each with its source.
 export async function answerCodeMap(map, name, args = {}, hist = async () => '', tree = null) {
+  if (args.list) return listAnswer(map, name, args);
   const day = (ts) => new Date(ts).toLocaleDateString('en-CA');
   const window = tree ? (tree.months === 'all' ? 'all history' : `${tree.months} months`) : '';
   const fi = (p) => fileIndex(map, p);

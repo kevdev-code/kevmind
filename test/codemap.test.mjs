@@ -85,6 +85,32 @@ test('answers stay under 200 tokens, end with how far to trust them, and say "No
   assert.match(await answerCodeMap(map, 'demo', { file: 'src/missing.ts' }), /^No data: /);
 });
 
+test('list: true gives the complete list, 60 paths a page, and marks importers of types only', async () => {
+  const dir = tmp();
+  try {
+    write(path.join(dir, 'src', 'lib', 'api.ts'), 'export type Row = { id: number };\nexport function fetchRows() { return []; }\n');
+    for (let i = 0; i < 5; i++) write(path.join(dir, 'src', 'lib', `helper${i}.ts`), `export const h${i} = ${i};\n`); // six files: lib is an area of its own
+    for (let i = 0; i < 64; i++) write(path.join(dir, 'src', 'screens', `screen${i}.ts`), `import { fetchRows } from '../lib/api';\nexport const s${i} = fetchRows();\n`);
+    write(path.join(dir, 'src', 'forms', 'form.ts'), "import type { Row } from '../lib/api';\nexport const empty: Row[] = [];\n");
+    const map = await codeMapper()(dir);
+    const one = await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true });
+    assert.match(one, /^`fetchRows` \(`src\/lib\/api\.ts`\) is used in 64 files \(page 1 of 2\):\n/);
+    assert.equal(one.split('\n').filter((l) => l.startsWith('- ')).length, 60);
+    assert.match(one, /Page 1 of 2: ask again with page: 2 for the next\./);
+    const two = await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true, page: 2 });
+    assert.equal(two.split('\n').filter((l) => l.startsWith('- ')).length, 4);
+    assert.match(two, /End of the list\./);
+    assert.match(await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true, page: 3 }), /^No data: page 3 is past the end \(2 pages\)/);
+    const file = await answerCodeMap(map, 'demo', { file: 'src/lib/api.ts', list: true, page: 2 });
+    assert.match(file, /- imported by: src\/screens\/screen9\.ts\n/);
+    const area = await answerCodeMap(map, 'demo', { area: 'src/lib', list: true });
+    assert.match(area, /^Area `src\/lib`: 6 code files, used from outside by 65 \(page 2 of 2\):\n|^Area `src\/lib`: 6 code files, used from outside by 65 \(page 1 of 2\):\n/);
+    assert.match(area, /- in the area: src\/lib\/api\.ts\n(- in the area: src\/lib\/helper\d\.ts\n){5}- used from outside by: src\/forms\/form\.ts \(types only\)\n- used from outside by: src\/screens\/screen0\.ts\n/);
+    const plain = await answerCodeMap(map, 'demo', { name: 'fetchRows' });
+    assert.ok(plain.length <= 800, 'without list, the answer stays short');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('names the code dropped: only those git shows in the code before, never planned or present ones', async () => {
   const dir = tmp();
   project(dir);

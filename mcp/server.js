@@ -52,15 +52,17 @@ const TOOLS = [
   },
   {
     name: 'code_map',
-    description: 'This project\'s code from its import and export statements, with its history: where an exported name is used, what a file holds and who imports it, ' +
-      'how one file reaches another, an area (a folder): its git activity, notes to read; with no arguments, key files and busiest areas. Approximate (names, no type check): ' +
-      'exact references come from Serena or a language server. Answers in under 200 tokens. Not on every task.',
+    description: 'This project\'s code from its import and export statements, with history: who uses an exported name, a file\'s exports and importers, ' +
+      'how one file reaches another, an area (a folder) with its git activity and notes; else key files, busiest areas. Approximate (no type check): ' +
+      'exact references come from Serena or a language server. Under 200 tokens; list: true gives complete lists, 60 paths a page. Not on every task.',
     inputSchema: { type: 'object', properties: {
       name: { type: 'string', description: 'An exported name (function, class, constant, type): which files use it' },
       file: { type: 'string', description: 'A code file: what it exports and who uses it, what it imports, its area' },
       from: { type: 'string', description: 'With to: how this file reaches the other one through imports' },
       to: { type: 'string', description: 'With from: the other file' },
       area: { type: 'string', description: 'An area: a folder path, as the overview names it' },
+      list: { type: 'boolean', description: 'With name, file or area: every file (its users; its importers, then its imports; the area\'s files, then who imports them), one per line; an importer of types only is marked' },
+      page: { type: 'number', description: 'With list: which page of 60 (from 1)' },
     } },
   },
 ];

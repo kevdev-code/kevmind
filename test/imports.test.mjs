@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { importScanner, specifiersOf, LANGUAGES } from '../src/imports.js';
+import { importScanner, specifiersOf, typeOnlySpecifiers, LANGUAGES } from '../src/imports.js';
 import { buildBrain } from '../src/brain.js';
 import { emptyAggregate, ingest } from '../src/experience.js';
 import { keyOf } from '../src/memory.js';
@@ -249,6 +249,31 @@ test('in the graph, an import is a link only between files that are nodes; it ad
   write('src/orders.ts', "import { stock } from './stock';\nimport { cart } from './cart';\n// a longer file\n");
   g = await build();
   assert.deepEqual(pairs(g), ['src/orders.ts -> src/cart.ts', 'src/orders.ts -> src/stock.ts']);
+});
+
+test('imports for types only: import type, export type, all-type named imports; any value import wins', () => {
+  const text = [
+    "import type { Report } from './a';",
+    "import { type A, type B } from './b';",
+    "import { type C, d } from './c';",
+    "export type { E } from './e';",
+    "import type F from './f';",
+    "import { g } from './f';",
+    "import './side-effect';",
+    "import type { H } from './h';",
+    "const lazy = () => import('./h');",
+  ].join('\n');
+  assert.deepEqual([...typeOnlySpecifiers(text)].sort(), ['./a', './b', './e']);
+});
+
+test('a link says whether it brings only types', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kevmind-types-'));
+  try {
+    for (const [f, t] of Object.entries({ 'api.ts': 'export type R = 1; export const get = () => 1;\n', 'screen.ts': "import { get } from './api';\n", 'form.ts': "import type { R } from './api';\n", 'both.ts': "import type { R } from './api';\nimport { get } from './api';\n" })) fs.writeFileSync(path.join(dir, f), t);
+    const links = await importScanner()(['screen.ts', 'form.ts', 'both.ts'].map((f) => ({ file: path.join(dir, f), root: dir })));
+    const of = (f) => links.filter(([a]) => path.basename(a) === f).map(([, b, t]) => [path.basename(b), t]);
+    assert.deepEqual([of('screen.ts'), of('form.ts'), of('both.ts')], [[['api.ts', 0]], [['api.ts', 1]], [['api.ts', 0]]], 'one link per imported file; a value import makes it a value link');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('reading imports only reads: files and folder listings, no writes, no processes', () => {
