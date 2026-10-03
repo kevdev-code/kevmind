@@ -197,7 +197,7 @@ async function series(ids, n, model, tag) {
 // the briefing and successes with ≥ without; "costs" if every task is at least 10% higher; otherwise "unclear".
 function report(tag) {
   const runs = fs.readdirSync(path.join(OUT, 'results')).flatMap((d) => { const f = path.join(OUT, 'results', d, 'runs.jsonl'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []; })
-    .filter((r) => (tag ? r.series === tag : true) && !r.infraError && r.tokens.total > 0);
+    .filter((r) => (tag ? tag.split(',').includes(r.series) : true) && !r.infraError && !r.superseded && r.tokens.total > 0); // superseded: a task fixed since
   const med = (xs) => { const v = xs.filter((x) => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
   const M = (n) => (n == null ? '—' : n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n));
   const min = (ms) => `${(ms / 60_000).toFixed(1)} min`;
