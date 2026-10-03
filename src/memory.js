@@ -123,7 +123,7 @@ export function listProjects({ cwds = new Map(), home = os.homedir() } = {}) {
 // projects: [{ root, name }] every known project, so a file shared by several (a parent folder's CLAUDE.md)
 // has its problems reported once, under the project it lives in.
 // codeNames(names): resolves to a Map of the names no code file has anymore but git shows in the code before
-// (name -> { commit, date, subject }); from the code map, so null while the experience tools are off.
+// (name -> { commit, date, subject }), from the code map; null skips the check.
 export async function scanProject(root, { home = os.homedir(), now = Date.now(), reads = null, loaded = [], projects = [], codeNames = null } = {}) {
   root = path.resolve(root);
   const problems = [];
@@ -799,8 +799,8 @@ async function checkCitations(ctx, sources) {
     }
     if (names.length) named.push({ owner, names });
   }
-  // Names no code file has anymore although git shows them in the code before (codeNames comes from the code map,
-  // when the experience tools are on). A name that was never in the code is planned work or not code: left out.
+  // Names no code file has anymore although git shows them in the code before (codeNames comes from the code map).
+  // A name that was never in the code is planned work or not code: left out.
   if (ctx.codeNames && named.length) {
     const gone = await ctx.codeNames([...new Set(named.flatMap((x) => x.names.map((c) => c.name)))]);
     for (const { owner, names } of named) {

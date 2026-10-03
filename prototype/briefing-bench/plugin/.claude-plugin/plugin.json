@@ -1,5 +1,0 @@
-{
-  "name": "kevmind-briefing-bench",
-  "version": "0.0.0",
-  "description": "Benchmark only: hands Claude a fixed briefing at session start (BENCH_CONTEXT_FILE), or nothing."
-}

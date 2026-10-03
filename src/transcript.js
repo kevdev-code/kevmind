@@ -118,7 +118,7 @@ export class Tailer {
     if (m.model) this.s.model = m.model;
     if (m.id && !f.seen.has(m.id)) {
       f.seen.add(m.id); // ponytail: grows with the session (~100 B per API call); fine for days, not for months
-      this.state.addUsage(this.s, f.actor, m.usage, ts);
+      this.state.addUsage(this.s, f.actor, m.usage);
       f.cur = { id: m.id, thought: false, silent: false, thinkingTokens: m.usage?.output_tokens_details?.thinking_tokens || 0 };
       this.changed = true;
     }

@@ -30,9 +30,6 @@ KevMind · watch Claude Code work in real time
   kevmind install [--force]    Add the hooks to ~/.claude/settings.json (refuses when the plugin is installed)
   kevmind uninstall            Remove KevMind's hooks
   kevmind demo                 Start the dashboard and simulate a sample session
-  kevmind tools on|off|status  Turn the experience tools for Claude on or off, or show their state and its source
-  kevmind briefing on|off|status  A short note about the project for Claude at each session start, from KevMind's
-                               records and git (off by default; half the starts are measured without it)
   kevmind init [path] [--months=N|--all]  Build the project map now: areas, git history (12 months by default) and
                                the notes that talk about each area. Read-only; it also builds by itself in the background
   kevmind share [on|off|status|new]  View the dashboard on your phone over your home Wi-Fi: a read-only link and QR
@@ -108,29 +105,6 @@ switch (cmd) {
       await runDemo(port, Number(args[0]) || 1);
       console.log('  ✓ Demo finished. The dashboard stays open (Ctrl+C to quit).');
     });
-    break;
-  }
-  case 'tools': {
-    // The experience tools for Claude: KevMind's own switch, in config.json. It wins over the plugin option.
-    const { writeConfig, experienceTools, optionState, pluginOption, configFile } = await import('../src/config.js');
-    const sub = args[0] || 'status';
-    if (sub === 'on' || sub === 'off') writeConfig(DATA_DIR, { experienceTools: sub === 'on' });
-    else if (sub !== 'status') fail('Usage: kevmind tools on | off | status');
-    const option = pluginOption();
-    const st = experienceTools(DATA_DIR, option);
-    const from = { config: `config file (${configFile(DATA_DIR)})`, plugin: 'plugin option "experience_tools"', default: 'default (nothing set)' }[st.source];
-    console.log(`\n  Experience tools: ${st.on ? 'on' : 'off'}\n  Source: ${from}`);
-    if (st.source === 'config' && optionState(option) !== null) console.log(`  Plugin option: ${optionState(option) ? 'on' : 'off'} (the config file wins)`);
-    console.log(`\n  Changes take effect in the next Claude Code session.\n`);
-    break;
-  }
-  case 'briefing': {
-    // The session briefing (src/briefing.js, hooks/brief.js): KevMind's own switch, in config.json. Off by default.
-    const { writeConfig, briefingOn, configFile } = await import('../src/config.js');
-    const sub = args[0] || 'status';
-    if (sub === 'on' || sub === 'off') writeConfig(DATA_DIR, { briefing: sub === 'on' });
-    else if (sub !== 'status') fail('Usage: kevmind briefing on | off | status');
-    console.log(`\n  Session briefing: ${briefingOn(DATA_DIR) ? 'on' : 'off'} (${configFile(DATA_DIR)})\n  It applies from the next session start; what Claude received is in the Memory tab.\n`);
     break;
   }
   case 'init': {

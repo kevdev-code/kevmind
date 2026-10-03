@@ -1,4 +1,4 @@
-// The code map (src/codemap.js): exported names, who uses them, how files connect, its answers, and names the docs
+// The code map (src/codemap.js): exported names, imports through barrels and aliases, and names the docs
 // still mention after the code dropped them. Also the Memory tab's checks built on it (stale names, missing scripts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { exportsOf, codeMapper, usesOf, connection, fileIndex, answerCodeMap, staleNames } from '../src/codemap.js';
+import { exportsOf, codeMapper, fileIndex, staleNames } from '../src/codemap.js';
 import { scanProject } from '../src/memory.js';
 
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
@@ -46,71 +46,17 @@ function project(dir) {
   write(path.join(dir, 'src', 'e.ts'), '// formatDate is mentioned here but never imported\nexport const e = 1;\n');
 }
 
-test('who uses a name: importers that mention it, directly, through a barrel or an alias', async () => {
+test('imports resolve directly, through a barrel and through an alias; a bare name finds its file', async () => {
   const dir = tmp();
   project(dir);
   const map = await codeMapper()(dir);
   const f = (p) => fileIndex(map, p);
-  const uses = usesOf(map, 'formatDate');
-  assert.equal(uses.length, 1);
-  assert.equal(map.files[uses[0].file], 'src/util/format.ts');
-  assert.deepEqual(uses[0].users.map((i) => map.files[i]).sort(), ['src/a.ts', 'src/b.ts', 'src/d.ts']);
-  assert.deepEqual(usesOf(map, 'unusedThing')[0].users.map((i) => map.files[i]), ['src/c.ts']);
+  const importers = (p) => [...map.importers[f(p)]].map((i) => map.files[i]).sort();
+  assert.deepEqual(importers('src/util/format.ts'), ['src/a.ts', 'src/c.ts', 'src/d.ts', 'src/index.ts']);
+  assert.deepEqual(importers('src/index.ts'), ['src/b.ts']);
+  assert.ok(map.info[f('src/index.ts')].barrel);
   assert.equal(f('a.ts'), f('src/a.ts'), 'a bare file name works when only one file has it');
-  assert.deepEqual(connection(map, f('src/d.ts'), f('src/util/format.ts')), { kind: 'imports', path: [f('src/d.ts'), f('src/util/format.ts')] });
-  assert.deepEqual(connection(map, f('src/util/format.ts'), f('src/b.ts')).kind, 'imported by');
-  assert.deepEqual(connection(map, f('src/a.ts'), f('src/c.ts')), { kind: 'shared', shared: [f('src/util/format.ts')] });
-  assert.equal(connection(map, f('src/e.ts'), f('src/a.ts')).kind, 'none');
 });
-
-test('answers stay under 200 tokens, end with how far to trust them, and say "No data" when they have none', async () => {
-  const dir = tmp();
-  project(dir);
-  const map = await codeMapper()(dir);
-  const hist = async (key) => (key.includes('|') ? '' : 'edited in 3 work episodes on 2 days (Claude Code)');
-  const answers = await Promise.all([
-    answerCodeMap(map, 'demo', {}, hist),
-    answerCodeMap(map, 'demo', { name: 'formatDate' }, hist),
-    answerCodeMap(map, 'demo', { file: 'src/util/format.ts' }, hist),
-    answerCodeMap(map, 'demo', { from: 'src/d.ts', to: 'src/util/format.ts' }, hist),
-  ]);
-  for (const a of answers) {
-    assert.ok(a.length <= 800, `${a.length} chars`);
-    assert.match(a, /Approximate: .*Serena or a language server\.$/);
-  }
-  assert.match(answers[1], /`formatDate` \(`src\/util\/format\.ts`\) is used in 3 files/);
-  assert.match(answers[1], /History of `format\.ts`: edited in 3 work episodes/);
-  assert.match(answers[3], /`src\/d\.ts` imports `src\/util\/format\.ts`/);
-  assert.match(await answerCodeMap(map, 'demo', { name: 'nothingLikeThis' }), /^No data: /);
-  assert.match(await answerCodeMap(map, 'demo', { file: 'src/missing.ts' }), /^No data: /);
-});
-
-test('list: true gives the complete list, 60 paths a page, and marks importers of types only', async () => {
-  const dir = tmp();
-  try {
-    write(path.join(dir, 'src', 'lib', 'api.ts'), 'export type Row = { id: number };\nexport function fetchRows() { return []; }\n');
-    for (let i = 0; i < 5; i++) write(path.join(dir, 'src', 'lib', `helper${i}.ts`), `export const h${i} = ${i};\n`); // six files: lib is an area of its own
-    for (let i = 0; i < 64; i++) write(path.join(dir, 'src', 'screens', `screen${i}.ts`), `import { fetchRows } from '../lib/api';\nexport const s${i} = fetchRows();\n`);
-    write(path.join(dir, 'src', 'forms', 'form.ts'), "import type { Row } from '../lib/api';\nexport const empty: Row[] = [];\n");
-    const map = await codeMapper()(dir);
-    const one = await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true });
-    assert.match(one, /^`fetchRows` \(`src\/lib\/api\.ts`\) is used in 64 files \(page 1 of 2\):\n/);
-    assert.equal(one.split('\n').filter((l) => l.startsWith('- ')).length, 60);
-    assert.match(one, /Page 1 of 2: ask again with page: 2 for the next\./);
-    const two = await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true, page: 2 });
-    assert.equal(two.split('\n').filter((l) => l.startsWith('- ')).length, 4);
-    assert.match(two, /End of the list\./);
-    assert.match(await answerCodeMap(map, 'demo', { name: 'fetchRows', list: true, page: 3 }), /^No data: page 3 is past the end \(2 pages\)/);
-    const file = await answerCodeMap(map, 'demo', { file: 'src/lib/api.ts', list: true, page: 2 });
-    assert.match(file, /- imported by: src\/screens\/screen9\.ts\n/);
-    const area = await answerCodeMap(map, 'demo', { area: 'src/lib', list: true });
-    assert.match(area, /^Area `src\/lib`: 6 code files, used from outside by 65 \(page 2 of 2\):\n|^Area `src\/lib`: 6 code files, used from outside by 65 \(page 1 of 2\):\n/);
-    assert.match(area, /- in the area: src\/lib\/api\.ts\n(- in the area: src\/lib\/helper\d\.ts\n){5}- used from outside by: src\/forms\/form\.ts \(types only\)\n- used from outside by: src\/screens\/screen0\.ts\n/);
-    const plain = await answerCodeMap(map, 'demo', { name: 'fetchRows' });
-    assert.ok(plain.length <= 800, 'without list, the answer stays short');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
 test('names the code dropped: only those git shows in the code before, never planned or present ones', async () => {
   const dir = tmp();
   project(dir);

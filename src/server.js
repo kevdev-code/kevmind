@@ -8,10 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { State, baseName, outcomeOf } from './state.js';
 import { Tailer } from './transcript.js';
 import { listProjects, scanProject, projectRoot, keyOf, slugOf } from './memory.js';
-import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles, preview, measure, THRESHOLDS } from './experience.js';
+import { emptyAggregate, revive, updateFromLogs, refreshGit, logFiles } from './experience.js';
 import { migrateLegacyLog, logWriter, readSince, rewriteLogs, atomicWrite } from './logs.js';
-import { writeConfig, experienceTools, pluginOption, briefingOn } from './config.js';
-import { BRIEF, ARMS, armOf, gatherFacts, briefingText, measureStretch, compare, projectsUnder, sessionsOf } from './briefing.js';
 import { redact } from '../hooks/redact.js'; // shared with hooks/send.js, which masks spooled events
 import { makeShare } from './share.js';
 import { buildBrain, LIMITS as BRAIN_LIMITS } from './brain.js';
@@ -24,9 +22,8 @@ export const DATA_DIR = process.env.KEVMIND_HOME || path.join(os.homedir(), '.ke
 export const SPOOL_FILE = path.join(DATA_DIR, 'spool.jsonl'); // written by hooks/send.js while the server is down
 export const PID_FILE = path.join(DATA_DIR, 'server.pid');
 export const SERVER_LOG = path.join(DATA_DIR, 'server.log');
-export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // read by mcp/server.js
-export const BRIEFINGS_FILE = path.join(DATA_DIR, 'briefings.jsonl'); // every session start the briefing saw, and its measurement
-export const TREE_DIR = path.join(DATA_DIR, 'tree'); // each project's knowledge tree (src/tree.js), read by mcp/server.js
+export const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience.json'); // the experience aggregate, rebuilt from the logs when missing
+export const TREE_DIR = path.join(DATA_DIR, 'tree'); // each project's knowledge tree (src/tree.js)
 export const treeFile = (key) => path.join(TREE_DIR, `${slugOf(key)}.json`);
 const REPLAY_MS = 24 * 60 * 60 * 1000;
 const EXPERIENCE_TICK_MS = 15_000;
@@ -116,8 +113,6 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     return promise;
   };
 
-  const briefing = briefingKeeper(state, memory, experience, trees);
-
   // "View on phone": a second, read-only listener on the home network while it is on (src/share.js).
   const share = makeShare({ port, handle, onChange: () => broadcastLocal({ type: 'share', share: share.status() }) });
   // A JSON POST from this PC's own page (or the CLI, which sends no Origin): another web page can't make one.
@@ -197,51 +192,6 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       );
       return;
     }
-    // The Experience panel's switch: KevMind's own config.json, read by mcp/server.js at the next session start.
-    // JSON only and same origin only, so another web page can't flip it (a cross-site JSON POST needs CORS).
-    if (req.method === 'POST' && url.pathname === '/api/tools') {
-      const origin = req.headers.origin;
-      if (!LOCAL.has(req.socket.remoteAddress) || !/^application\/json\b/.test(req.headers['content-type'] || '') || (origin && origin !== `http://${req.headers.host}`)) return res.writeHead(403).end();
-      let body = '';
-      req.on('data', (c) => { body += c; if (body.length > 1000) req.destroy(); });
-      req.on('end', () => {
-        let on;
-        try { on = JSON.parse(body).on; } catch { /* handled below */ }
-        if (typeof on !== 'boolean') return json(res, { error: 'expected {"on": true|false}' }, 400);
-        writeConfig(DATA_DIR, { experienceTools: on });
-        json(res, experienceTools(DATA_DIR, pluginOption()));
-      });
-      return;
-    }
-    // The session briefing. The hook (hooks/brief.js) asks for it at each session start: the answer is the text
-    // to give Claude, or nothing (off, withheld for the measurement, or too slow). JSON from this PC only.
-    if (req.method === 'POST' && url.pathname === '/api/briefing') {
-      if (shared || !ownJson(req)) return res.writeHead(403).end();
-      readBody(req, 20_000, async (body) => {
-        let p = {};
-        try { p = JSON.parse(body); } catch { /* handled below */ }
-        json(res, await briefing.serve(p).catch(() => ({ text: '' })));
-      });
-      return;
-    }
-    if (req.method === 'POST' && url.pathname === '/api/briefing/switch') {
-      if (shared || !ownJson(req)) return res.writeHead(403).end();
-      readBody(req, 1000, (body) => {
-        let on;
-        try { on = JSON.parse(body).on; } catch { /* handled below */ }
-        if (typeof on !== 'boolean') return json(res, { error: 'expected {"on": true|false}' }, 400);
-        writeConfig(DATA_DIR, { briefing: on });
-        json(res, { on: briefingOn(DATA_DIR) });
-      });
-      return;
-    }
-    // The Memory tab: what Claude received at each start of this project's sessions, and the comparison.
-    if (url.pathname === '/api/briefing') return json(res, briefing.panel(url.searchParams.get('key')));
-    // What a session starting now would receive (nothing is recorded).
-    if (url.pathname === '/api/briefing/preview') {
-      briefing.preview(url.searchParams.get('key')).then((r) => json(res, r), (err) => json(res, { error: String(err?.message || err) }, 500));
-      return;
-    }
     // The knowledge tree, for the Memory tab: its profile and areas (not the commit table). since: the tree the page
     // already has, so an unchanged tree is not sent again at every poll.
     if (url.pathname === '/api/tree') {
@@ -266,14 +216,6 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
       });
       return;
     }
-    if (url.pathname === '/api/experience') {
-      experience.panel(url.searchParams.get('key'), trees.load(url.searchParams.get('key'))).then(
-        (r) => json(res, r),
-        (err) => json(res, { error: String(err?.message || err) }, 500),
-      );
-      return;
-    }
-
     if (url.pathname === '/api/brain') {
       brain(Math.min(Number(url.searchParams.get('after')) || 0, Date.now())).then((g) => json(res, g), (err) => json(res, { error: String(err?.message || err) }, 500));
       return;
@@ -312,7 +254,6 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     clearInterval(tailTimer);
     experience.stop();
     trees.stop();
-    briefing.stop();
     for (const res of clients) res.end();
     log.end();
     try { fs.unlinkSync(PID_FILE); } catch { /* never written */ }
@@ -399,7 +340,6 @@ function memoryApi(state) {
     }
     return m.running || Promise.resolve(m.map);
   };
-  const lastMap = (root) => mappers.get(keyOf(root))?.map || null;
   const codeNames = (root) => async (names) => { const map = await codeMap(root); return map ? staleNames(map, names) : new Map(); };
   const cache = new Map();
   const report = async (key) => {
@@ -416,16 +356,16 @@ function memoryApi(state) {
       reads: { since: usage.since ?? Date.now(), items: usage.reads },
       loaded: latest ? latest.instructions : [],
       projects: projects(), // so a file shared by several projects reports its problems once, where it lives
-      codeNames: experienceTools(DATA_DIR, pluginOption()).on ? codeNames(p.root) : null, // the code map is off with the tools
+      codeNames: codeNames(p.root),
     }).then((r) => ({ ...r, key, source: p.source }));
     cache.set(key, { at: Date.now(), promise });
     promise.catch(() => cache.delete(key));
     return promise;
   };
-  return { projects, report, codeMap, lastMap, tools: () => { refresh(); return usage.tools; } };
+  return { projects, report, codeMap, tools: () => { refresh(); return usage.tools; } };
 }
 
-// Keeps ~/.kevmind/experience.json current for the MCP server: new log lines every 15 s, each project's git
+// Keeps ~/.kevmind/experience.json current: new log lines every 15 s, each project's git
 // history at most every 10 min, written atomically and only when something changed.
 function experienceKeeper() {
   let agg = emptyAggregate();
@@ -448,20 +388,7 @@ function experienceKeeper() {
   };
   tick();
   const timer = setInterval(tick, EXPERIENCE_TICK_MS);
-  // The dashboard panel: what the tools would serve today and how calls have gone, even while the tools are off.
-  // tree: the project's map, when built: a call's area is then one of its folders (else the file's own folder).
-  const panel = async (key, tree = null) => {
-    await tick();
-    const proj = agg.projects[key];
-    const tools = experienceTools(DATA_DIR, pluginOption());
-    if (!proj) return { known: false, tools, thresholds: THRESHOLDS };
-    const now = Date.now();
-    const areas = new Map((tree?.areas || []).flatMap((a) => a.files.map((f) => [f.f, a.name])));
-    const areaOf = (p) => areas.get(p) ?? (p.split('/').slice(0, -1).join('/') || '.');
-    return { known: true, tools, thresholds: THRESHOLDS, preview: preview(proj, now), measure: measure(proj, now, areaOf) };
-  };
-  // now(): the aggregate as it is (up to 15 s behind the logs), for the briefing, which must answer at once.
-  return { panel, aggregate: async () => { await tick(); return agg; }, now: () => agg, stop: () => clearInterval(timer) };
+  return { aggregate: async () => { await tick(); return agg; }, stop: () => clearInterval(timer) };
 }
 
 // Each project's knowledge tree (src/tree.js), in ~/.kevmind/tree/: built in the background the first time a project
@@ -542,77 +469,6 @@ export function clearTrees(nameOrPath) {
     } catch { /* not a tree */ }
   }
   return n;
-}
-
-// The session briefing (src/briefing.js): built when a session starts, recorded in briefings.jsonl whether it was
-// shown or withheld (in equal shares; with the code map on, also shown as v2), and measured once the stretch that
-// followed has settled.
-function briefingKeeper(state, memory, experience, trees) {
-  // ponytail: every record is read at start and kept in memory (about 2 KB a start); rotate the file if it ever grows past a few MB.
-  const records = [];
-  try { for (const l of fs.readFileSync(BRIEFINGS_FILE, 'utf8').split('\n')) if (l) try { records.push(JSON.parse(l)); } catch { /* skip */ } } catch { /* none yet */ }
-  const append = (r) => { records.push(r); fs.mkdirSync(DATA_DIR, { recursive: true }); fs.appendFileSync(BRIEFINGS_FILE, JSON.stringify(r) + '\n'); };
-  const reports = new Map(); // the memory report, when it is at hand (it can take a second to build)
-  const reportOf = (key) => {
-    const p = memory.report(key).then((r) => { reports.set(key, r); return r; }).catch(() => null);
-    return Promise.race([p, new Promise((r) => setTimeout(() => r(reports.get(key) || null), 150))]);
-  };
-  // v2's code map: the one at hand within 400 ms, else the last one built (a cold build goes on for the next start).
-  const mapOf = (root) => Promise.race([memory.codeMap(root), new Promise((r) => setTimeout(() => r(memory.lastMap(root)), 400))]);
-  const toolsOn = () => experienceTools(DATA_DIR, pluginOption()).on;
-  const build = async (root, sid, source, withMap, wait = false) => {
-    const key = keyOf(root);
-    const [report, map] = await Promise.all([reportOf(key), withMap ? (wait ? memory.codeMap(root) : mapOf(root)) : null]);
-    const facts = await gatherFacts({ agg: experience.now(), root, name: path.basename(root), sid, source, live: state.sessions, report, toolsOn: toolsOn(), map, tree: trees.load(key) });
-    return briefingText(facts);
-  };
-  async function serve(p) {
-    const sid = p.session_id, source = p.source || 'startup', root = p.cwd ? projectRoot(p.cwd) : null;
-    if (!briefingOn(DATA_DIR) || !sid || !root || !['startup', 'clear', 'compact'].includes(source)) return { text: '' };
-    // v2 is an arm only while the code map is on (with the experience tools).
-    const t0 = Date.now(), arm = armOf(sid, records.filter((r) => r.type === 'start' && r.sid === sid).length, toolsOn() ? ARMS.v2 : ARMS.v1);
-    const late = Symbol('late');
-    const b = await Promise.race([build(root, sid, source, arm === 'map'), new Promise((r) => setTimeout(() => r(late), BRIEF.budgetMs))]);
-    if (b === late) { append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: 'late', chars: 0, items: [], text: '', ms: Date.now() - t0 }); return { text: '' }; }
-    append({ type: 'start', ts: t0, sid, key: keyOf(root), root, source, arm: b.text ? arm : 'empty', chars: b.text.length, items: b.items, text: b.text, ms: Date.now() - t0 });
-    return { text: b.text && arm !== 'withheld' ? b.text : '' };
-  }
-  // A start's stretch closes at the session's next start, once the session has been quiet for a while, or after
-  // 8 h; then what followed is measured and recorded.
-  function settle() {
-    const now = Date.now(), agg = experience.now();
-    const done = new Set(records.filter((r) => r.type === 'result').map((r) => `${r.sid}|${r.t0}`));
-    for (const r of records) {
-      if (r.type !== 'start' || !ARMS.v2.includes(r.arm) || done.has(`${r.sid}|${r.ts}`)) continue;
-      const next = records.find((x) => x.type === 'start' && x.sid === r.sid && x.ts > r.ts);
-      const projs = projectsUnder(agg, r.root), sessions = sessionsOf(projs), mine = sessions.get(r.sid);
-      const last = Math.max(state.sessions.get(r.sid)?.lastAt || 0, mine?.last || 0);
-      const t1 = next ? next.ts : now - last >= BRIEF.settleMs ? last + 1 : now - r.ts >= BRIEF.maxStretchMs ? r.ts + BRIEF.maxStretchMs : null;
-      if (t1 == null) continue;
-      const before = [...sessions].filter(([id, s]) => id !== r.sid && s.first < r.ts).sort((a, b) => b[1].last - a[1].last);
-      const prevReads = new Set(before[0] ? before[0][1].eps.flatMap((x) => Object.keys(x.ep.r).map((f) => x.pre + x.p.files[+f])) : []);
-      const known = new Set(before.flatMap(([, s]) => s.eps.flatMap((x) => x.ep.runs.filter((q) => !q[2] && q[0] < r.ts).map((q) => `${x.p.fams[q[1]]}|${q[3] >= 0 ? x.p.sigs[q[3]] : ''}`))));
-      const m = measureStretch({ t0: r.ts, t1, eps: mine?.eps || [], prevReads, known, usage: state.sessions.get(r.sid)?.usage || null, items: r.items });
-      append({ type: 'result', sid: r.sid, t0: r.ts, key: r.key, arm: r.arm, chars: r.chars, t1, m });
-    }
-  }
-  const timer = setInterval(() => { try { settle(); } catch (e) { console.error(`  briefing: ${e.message}`); } }, 60_000);
-  timer.unref();
-  return {
-    serve, stop: () => clearInterval(timer),
-    panel(key) {
-      const mine = records.filter((r) => r.key === key);
-      const starts = mine.filter((r) => r.type === 'start').sort((x, y) => y.ts - x.ts).slice(0, 8).map(({ ts, source, arm, chars, text, ms }) => ({ ts, source, arm, chars, text, ms }));
-      return { on: briefingOn(DATA_DIR), mapArm: toolsOn(), starts, compare: compare(mine.filter((r) => r.type === 'result')) };
-    },
-    // What a session starting now would get: v2 while the code map is on (v1's lines come first in it).
-    async preview(key) {
-      const root = memory.projects().find((p) => p.key === key)?.root;
-      if (!root) return { text: '', error: 'unknown project' };
-      const t0 = Date.now(), map = toolsOn(), b = await build(root, 'preview', 'startup', map, true);
-      return { text: b.text, chars: b.text.length, ms: Date.now() - t0, map };
-    },
-  };
 }
 
 // Events of a project, for `kevmind clear --project`: matched by project folder name or path.

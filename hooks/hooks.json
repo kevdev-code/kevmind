@@ -11,16 +11,6 @@
             "async": true
           }
         ]
-      },
-      {
-        "matcher": "startup|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/brief.js\"",
-            "timeout": 3
-          }
-        ]
       }
     ],
     "InstructionsLoaded": [

@@ -88,21 +88,6 @@ const parse = {
 
 export const specifiersOf = (text, ext) => { const lang = LANG_OF.get(ext.toLowerCase()); return lang ? parse[lang](text) : null; };
 
-// The JS/TS specifiers a file imports for their types only: every statement naming it is `import type …`,
-// `export type … from`, or imports nothing but `type X` names; a side-effect import, a dynamic import or require makes
-// it a value import.
-export function typeOnlySpecifiers(text) {
-  const types = new Set(), values = new Set();
-  for (const m of text.matchAll(/^[ \t]*(?:import|export)\b((?:[^'"`;/]|\/(?!\/))*?)\bfrom\s*['"]([^'"\n]+)['"]/gm)) {
-    const clause = m[1].trim(), named = /^\{([^}]*)\}$/.exec(clause);
-    const typeOnly = /^type\s+[\w{*]/.test(clause) || (named && named[1].split(',').map((x) => x.trim()).filter(Boolean).every((x) => /^type\s/.test(x)));
-    (typeOnly ? types : values).add(m[2]);
-  }
-  for (const m of text.matchAll(/^[ \t]*import\s*['"]([^'"\n]+)['"]/gm)) values.add(m[1]);
-  for (const m of text.matchAll(/\b(?:import|require)\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g)) if (!commented(text, m.index)) values.add(m[1]);
-  return new Set([...types].filter((s) => !values.has(s)));
-}
-
 // ---- Where each one lands on disk ----
 
 // One build's view of the disk: folders are listed once, config files read once.
@@ -276,9 +261,8 @@ function csLinks(files) {
 }
 
 // links(files) takes the graph's files, [{ file (absolute), root (its project's folder) }], and returns
-// [[from, to, typeOnly]] of absolute paths: "from imports to" (typeOnly: 1 when a JS/TS file imports only types from
-// it). A target may or may not be a node; the caller keeps the ones that are. What each file imports is remembered
-// until the file changes.
+// [[from, to]] pairs of absolute paths: "from imports to". A target may or may not be a node; the caller keeps the
+// ones that are. What each file imports is remembered until the file changes.
 export function importScanner() {
   const cache = new Map(); // file -> { version, data }
   return async function links(files) {
@@ -297,16 +281,12 @@ export function importScanner() {
       if (!hit || hit.version !== version) {
         let text = null;
         try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
-        hit = { version, data: parse[lang](text), types: lang === 'js' ? typeOnlySpecifiers(text) : null };
+        hit = { version, data: parse[lang](text) };
         cache.set(k, hit);
       }
       live.add(k);
       if (lang === 'cs') { (cs.get(fold(root)) || cs.set(fold(root), []).get(fold(root))).push({ file, data: hit.data }); continue; }
-      if (lang === 'js') { // one specifier at a time, so each link knows whether it brings only types
-        for (const spec of hit.data) for (const to of resolve.js(file, root, [spec], d)) if (to && fold(to) !== k) out.push([file, to, hit.types.has(spec) ? 1 : 0]);
-        continue;
-      }
-      for (const to of resolve[lang](file, root, hit.data, d)) if (to && fold(to) !== k) out.push([file, to, 0]);
+      for (const to of resolve[lang](file, root, hit.data, d)) if (to && fold(to) !== k) out.push([file, to]);
     }
     for (const group of cs.values()) out.push(...csLinks(group));
     for (const k of cache.keys()) if (!live.has(k)) cache.delete(k);

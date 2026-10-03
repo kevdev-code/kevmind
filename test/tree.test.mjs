@@ -1,5 +1,5 @@
 // The knowledge tree (src/tree.js): folder areas, git facts, Claude's record, memory linked to areas, the gap checks,
-// an incremental refresh, the answers built on it, and the server's routes. Fixtures are temporary git repos.
+// an incremental refresh, and the server's routes. Fixtures are temporary git repos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,10 +8,9 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { codeMapper, answerCodeMap } from '../src/codemap.js';
+import { codeMapper } from '../src/codemap.js';
 import { buildTree, profileOf, gapProblems, TREE } from '../src/tree.js';
 import { emptyAggregate, ingest } from '../src/experience.js';
-import { briefingText } from '../src/briefing.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
@@ -114,26 +113,6 @@ test('a refresh reads only the new commits; a different window reads them all ag
     const all = await buildTree({ root, map: await mapper(root), report, agg, prev: next, months: 'all' });
     assert.equal(all.months, 'all');
     assert.equal(all.git.commits.length, next.git.commits.length);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('code_map(area) and the briefing say where each fact comes from', async () => {
-  const { dir, root, report, agg } = fixture();
-  try {
-    const map = await codeMapper()(root);
-    const tree = await buildTree({ root, map, report, agg });
-    const a = await answerCodeMap(map, 'demo-shop', { area: 'src/billing' }, async () => '', tree);
-    assert.ok(a.length <= 800);
-    assert.match(a, /- git \(12 months\): 4 commits, 4 labeled fix, 4 in the last 90 days; last change \d{4}-\d{2}-\d{2}\./);
-    assert.match(a, /- Notes to read: `billing_0\.md`/);
-    assert.match(a, /- Claude sessions: read in 1 work episodes, edited in 1\./);
-    const overview = await answerCodeMap(map, 'demo-shop', {}, async () => '', tree);
-    assert.match(overview, /busy areas no note talks about: src\/orders/);
-    const { text } = briefingText({
-      name: 'demo-shop', now: Date.now(), toolsOn: false, last: null, git: [], failures: [], rereads: [], together: [], notes: [], stale: [],
-      map: { area: { name: 'src/billing', files: 22, core: ['src/billing/invoice1.ts'], dependsOn: ['.'], usedBy: [], others: 0, git: { n90: 4, fixes: 4, months: 12 }, notes: ['billing_0.md'] }, key: [], hubs: [], stale: [] },
-    });
-    assert.match(text, /in the area `src\/billing` \(22 code files; core `src\/billing\/invoice1\.ts`\), which uses \.\. git: 4 commits in the last 90 days; 4 labeled fix in 12 months\. Notes about it: `billing_0\.md`\./);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -8,10 +8,6 @@ let view = 'live';
 let memProjects = [];
 let memKey = null;
 let memReport = null;
-let memExp = null; // the Experience panel's data: what the MCP tools would serve, and how calls went
-let memBrief = null; // the session briefing: its switch, the last starts (what Claude received) and the comparison
-let briefPreview = null, briefToggleError = null;
-let expToggleError = null; // why the last on/off change failed, if it did
 let memError = null;
 let memTimer = null;
 let memTree = null; // the project map (src/tree.js): profile, areas, notes; fetched again only when it changed
@@ -60,17 +56,14 @@ async function loadMemory() {
     renderMemoryView();
     if (!memKey) return;
     const key = memKey;
-    const [res, exp, brief, tree] = await Promise.all([
+    const [res, tree] = await Promise.all([
       fetch(`/api/memory/project?key=${encodeURIComponent(key)}`),
-      fetch(`/api/experience?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
-      fetch(`/api/briefing?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => null),
       fetch(`/api/tree?key=${encodeURIComponent(key)}&since=${memTree?.key === key ? memTree.at : ''}`).then((r) => r.json()).catch(() => null),
     ]);
     const body = await res.json();
     memError = res.ok ? null : body.error || String(res.status);
     if (res.ok && body.key === memKey) memReport = body;
     if (key === memKey) {
-      memExp = exp; memBrief = brief;
       if (tree && !tree.unchanged) memTree = tree.tree ? { ...tree.tree, key } : null;
       if (tree?.building && !treeState) treeState = { key, phase: 'code' };
     }
@@ -84,10 +77,7 @@ function selectMemProject(key) {
   if (key === memKey) return;
   memKey = key;
   memReport = null;
-  memExp = null;
-  memBrief = null;
   memTree = null;
-  briefPreview = null;
   memOpen.clear();
   memPathsOpen.clear();
   renderMemoryView();
@@ -125,8 +115,6 @@ function renderMemoryView() {
   setText($('memName'), p ? p.name : '—');
   setText($('memRoot'), p ? p.root : '');
   setText($('memUpdated'), memError ? T.memError(memError) : r ? T.memUpdated(new Date(r.generatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })) : p ? T.memLoading : '');
-  renderExperience(memExp);
-  renderBriefing(memBrief);
   renderTree();
   if (!r) {
     for (const id of ['memBudget', 'memProblems', 'memInstructions', 'memNotes', 'memSerena']) patchHTML($(id), '');
@@ -287,74 +275,6 @@ function renderTables(r) {
   ));
 }
 
-// What the experience tools would tell Claude about this project today, and whether calls help. Shown whether
-// or not the tools are on, so it's clear when turning them on is worth it.
-function renderExperience(x) {
-  const el = $('memExperience');
-  if (!x) { patchHTML(el, ''); return; }
-  const t = x.tools || { on: false, source: 'default' };
-  // On a shared device (read-only) the state shows, without the switch.
-  const toggle = `<div class="exp-switch">
-      ${document.body.classList.contains('shared') ? `<b>${esc(T.expToggle)}: ${esc(t.on ? T.expOn : T.expOff)}</b>` : `<button type="button" class="switch" role="switch" id="expToggle" aria-checked="${!!t.on}"><span class="knob"></span>${esc(T.expToggle)}</button>`}
-      <span class="muted">${esc(T.expSource[t.source] || '')} · ${esc(T.expNextSession)}</span>
-      ${expToggleError ? `<span class="err">${esc(T.expToggleError(expToggleError))}</span>` : ''}
-    </div>`;
-  if (!x.known) { patchHTML(el, `${toggle}<p class="empty">${esc(T.expUnknown)}</p>`); return; }
-  const { gate, coChange, readFirst, failures, hotspots } = x.preview;
-  const th = x.thresholds;
-  const m = x.measure;
-  const dot = (ok) => `<span class="dot ${ok ? 'working' : 'waiting'}" title="${esc(ok ? T.expMet : T.expNotYet)}"></span><span class="sr">${esc(ok ? T.expMet : T.expNotYet)}: </span>`;
-  const list = (items, fn) => (items.length ? `<ul class="exp-list">${items.map((i) => `<li>${fn(i)}</li>`).join('')}</ul>` : `<p class="none">${esc(T.expNone)}</p>`);
-  const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
-  const why = x.preview.episodePairs ? '' : x.preview.nearest
-    ? T.expNearest(x.preview.nearest.a, x.preview.nearest.b, x.preview.nearest.n, x.preview.nearest.days, th.coEditEpisodes, th.minDays)
-    : T.expNoEpisodes(th.coEditEpisodes, th.minDays);
-  patchHTML(el, `${toggle}
-    <div class="gate">
-      <div>${dot(x.preview.episodePairs > 0)}<span>${esc(T.expEpisodes(gate.episodes, gate.days))}<span class="why">${esc(T.expEpisodeHint)}${why ? ' ' + esc(why) : ''}</span></span></div>
-      <div>${dot(gate.gitOk)}<span>${esc(T.expCommits(gate.commits, th.minGitCommits))}</span></div>
-      <span class="why" style="padding-left:0">${esc(T.expHowTo)}</span>
-    </div>
-    <h3 class="exp-h">${esc(T.expWouldServe)}</h3>
-    <div class="exp-grid">
-      <section><h4>${esc(T.expCoChange)}</h4>${list(coChange, (p) => `<code>${esc(p.a)}</code> + <code>${esc(p.b)}</code><small>${esc([p.s && T.expByEpisodes(p.s.n, p.s.days, p.s.last), p.g && T.expByGit(p.g.n, p.g.of, p.g.last)].filter(Boolean).join(' · '))}</small>`)}</section>
-      <section><h4>${esc(T.expReadFirst)}</h4>${list(readFirst, (p) => `<code>${esc(p.first)}</code> → <code>${esc(p.file)}</code><small>${esc(T.expByEpisodes(p.n, p.days))}</small>`)}</section>
-      <section><h4>${esc(T.expFailures)}</h4>${list(failures, (f) => `<code>${esc(f.fam)}</code> ${esc(f.sig)}<small>${esc(T.expFix(f.episodes, f.days, f.fix.n, f.fix.name))}</small>`)}</section>
-      <section><h4>${esc(T.expHotspots)}</h4>${list(hotspots, (h) => `<code>${esc(h.file)}</code><small>${esc(T.expHot(h.changes, h.fixes))}</small>`)}</section>
-    </div>
-    <h3 class="exp-h">${esc(T.expUse)}</h3>
-    <div class="stats">
-      <div><b>${m.calls}</b><span>${esc(T.expCalls(m.calls))}</span></div>
-      <div><b>${esc(fmtK(m.tokens))}</b><span>${esc(T.expTokens)}</span></div>
-      <div><b>${m.calls ? pct(m.noData / m.calls) : '—'}</b><span>${esc(T.expNoData)}</span></div>
-      <div><b>${pct(m.followRate)}</b><span>${esc(T.expFollow(m.withSuggestions))}</span></div>
-      <div><b>${pct(m.baseline)}</b><span>${esc(T.expBaseline(m.baselineSample))}</span></div>
-    </div>
-    <p class="verdict">${esc(T.expVerdict[m.verdict])}</p>
-    <h3 class="exp-h">${esc(T.expByToolTitle)}</h3>
-    ${m.tools?.length ? `<ul class="exp-list">${m.tools.map((t) => `<li><code>${esc(t.tool)}</code> ${esc(T.expByToolCalls(t.calls, t.noData))}<small>${esc(T.expByToolReads(t))}</small></li>`).join('')}</ul>` : `<p class="none">${esc(T.expByToolNone)}</p>`}
-    <p class="verdict">${esc(T.expByToolNote(m.stretches || 0, Math.round(x.thresholds.areaWindowMs / 60_000), x.thresholds.minStretches))}</p>
-    ${m.last.length ? `<ul class="exp-list">${m.last.map((c) => `<li><code>${esc(c.tool)}</code> ${esc(new Date(c.ts).toLocaleString(lang))} · ≈ ${c.tokens} tok${c.noData ? ` · ${esc(T.expNoDataShort)}` : ''}${
-      c.followed === null ? '' : ` · ${esc(c.followed ? T.expFollowed : T.expIgnored)}`}<small>${esc(c.suggested.join(', '))}</small></li>`).join('')}</ul>` : ''}`);
-}
-
-// The on/off switch writes KevMind's own ~/.kevmind/config.json through the server (not Claude's settings).
-$('memExperience').addEventListener('click', async (e) => {
-  const sw = e.target.closest('#expToggle');
-  if (!sw) return;
-  const on = sw.getAttribute('aria-checked') !== 'true';
-  try {
-    const r = await fetch('/api/tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    if (memExp) memExp.tools = await r.json();
-    expToggleError = null;
-  } catch (err) {
-    expToggleError = err.message;
-  }
-  renderExperience(memExp);
-  $('expToggle')?.focus();
-});
-
 // The project map (src/tree.js): a short profile, then the areas (folders) by recent activity, each with what the
 // code, git, Claude sessions and the notes say about it, every fact under its source. Built by the server; the
 // button rebuilds it now (not on a shared screen).
@@ -417,64 +337,6 @@ window.onTree = (msg) => {
   if (msg.phase === 'done' && msg.key === memKey && view === 'memory' && !document.hidden) loadMemory();
   else if (view === 'memory') renderTree();
 };
-
-// The session briefing: its switch, what a session starting now would receive, the last starts with exactly what
-// Claude received (or, withheld, what it would have), and the comparison with and without it, tokens first.
-const briefOpen = new Set(); // starts whose text is open, by time
-function renderBriefing(b) {
-  const el = $('memBriefing');
-  if (!b) { patchHTML(el, ''); return; }
-  const shared = document.body.classList.contains('shared');
-  const toggle = `<div class="exp-switch">${shared ? `<b>${esc(T.briefToggle)}: ${esc(b.on ? T.expOn : T.expOff)}</b>` : `<button type="button" class="switch" role="switch" id="briefToggle" aria-checked="${!!b.on}"><span class="knob"></span>${esc(T.briefToggle)}</button>`}
-      ${briefToggleError ? `<span class="err">${esc(T.briefToggleError(briefToggleError))}</span>` : ''}</div>
-    <p class="brief-how">${esc(T.briefHow)}</p>`;
-  const preview = `<div class="brief-preview"><h3 class="exp-h">${esc(T.briefPreview)}</h3>${briefPreview === null
-    ? (shared ? '' : `<button type="button" class="btn" id="briefPreviewBtn">${esc(T.briefPreviewBtn)}</button>`)
-    : briefPreview.text ? `${briefPreview.map ? `<small>${esc(T.briefPreviewMap)}</small>` : ''}<pre class="brief-text">${esc(briefPreview.text)}</pre>` : `<p class="none">${esc(T.briefNothing)}</p>`}</div>`;
-  const starts = b.starts.length ? `<ul class="brief-starts">${b.starts.map((s) => {
-    const head = `${esc(new Date(s.ts).toLocaleString(lang, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }))} · ${esc(T.briefSource[s.source] || s.source)} · <span class="arm-${esc(s.arm)}">${esc(T.briefArm[s.arm] || s.arm)}</span>${s.chars ? ` · ${esc(T.briefChars(s.chars))}` : ''}`;
-    if (!s.text) return `<li>${head}</li>`;
-    return `<li><details data-ts="${s.ts}"${briefOpen.has(s.ts) ? ' open' : ''}><summary>${head}</summary><small>${esc(s.arm === 'shown' || s.arm === 'map' ? T.briefReceived : T.briefWouldHave)}</small><pre class="brief-text">${esc(s.text)}</pre></details></li>`;
-  }).join('')}</ul>` : `<p class="none">${esc(T.briefNoStarts)}</p>`;
-  const c = b.compare, num = (v, k) => (v == null ? '—' : k === 'rereadShare' || k === 'followed' ? `${Math.round(v * 100)}%` : k.startsWith('tokens') ? fmtK(Math.round(v)) : String(v));
-  // The shown arm is v2 (with the code map) while the map is on, else v1; an arm that has measured starts keeps its column.
-  const v1 = !b.mapArm || c.shown.n > 0, v2 = c.map && (b.mapArm || c.map.n > 0);
-  const cols = [...(v1 ? [['shown', T.briefCols[1]]] : []), ...(v2 ? [['map', T.briefColMap]] : []), ['withheld', T.briefCols[2]]];
-  const rows = Object.keys(T.briefRows).map((k) => `<tr><td>${esc(T.briefRows[k])}</td>${cols.map(([arm]) => `<td>${esc(num(c[arm][k], k))}</td>`).join('')}</tr>`).join('');
-  const say = (v, s, tk) => (v === 'collecting' ? T.briefVerdict.collecting(s.n, c.withheld.n, c.minPerArm) : T.briefVerdict[v](tk.toEdit, tk.total));
-  const verdicts = [...(v1 ? [say(c.verdict, c.shown, c.tokens)] : []), ...(v2 ? [`${T.briefMapLabel} ${say(c.mapVerdict, c.map, c.mapTokens)}`] : [])];
-  patchHTML(el, `${toggle}${preview}
-    <h3 class="exp-h">${esc(T.briefStarts)}</h3>${starts}
-    <h3 class="exp-h">${esc(T.briefCompare)}</h3>
-    <table class="tbl brief-cmp${cols.length > 2 ? ' v2' : ''}"><thead><tr>${['', ...cols.map(([, h]) => h)].map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
-    ${verdicts.map((v) => `<p class="verdict">${esc(v)}</p>`).join('')}<p class="verdict">${esc(T.briefTokensNote)}</p>`);
-}
-$('memBriefing').addEventListener('toggle', (e) => {
-  const d = e.target.closest?.('details[data-ts]');
-  if (d) { const ts = Number(d.dataset.ts); if (d.open) briefOpen.add(ts); else briefOpen.delete(ts); }
-}, true);
-// The switch writes KevMind's own config.json through the server; the preview asks what a start now would receive.
-$('memBriefing').addEventListener('click', async (e) => {
-  if (e.target.closest('#briefPreviewBtn')) {
-    const key = memKey;
-    try { const r = await (await fetch(`/api/briefing/preview?key=${encodeURIComponent(key)}`)).json(); if (key === memKey) briefPreview = r; } catch { briefPreview = { text: '' }; }
-    renderBriefing(memBrief);
-    return;
-  }
-  const sw = e.target.closest('#briefToggle');
-  if (!sw) return;
-  const on = sw.getAttribute('aria-checked') !== 'true';
-  try {
-    const r = await fetch('/api/briefing/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    if (memBrief) memBrief.on = (await r.json()).on;
-    briefToggleError = null;
-  } catch (err) {
-    briefToggleError = err.message;
-  }
-  renderBriefing(memBrief);
-  $('briefToggle')?.focus();
-});
 
 // A table whose rows expand to show metadata, headings, links and cited files (never the note's body).
 // Rows are focusable and open with Enter or Space as well as a click.

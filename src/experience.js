@@ -1,7 +1,7 @@
 // KevMind's "work experience": what Claude Code did in a project (from KevMind's own event log) and what the
-// project's git history shows, aggregated so the MCP tools answer in milliseconds. History only: no code parsing,
-// no symbols, no indexing. Read-only: test/experience-readonly.test.mjs fails if this module could write anything
-// or run git with anything but `log`. The dashboard server is what persists the aggregate (experience.json).
+// project's git history shows, aggregated for the memory suggestions, the project map and the Brain. History only:
+// no code parsing, no symbols, no indexing. Read-only: test/experience-readonly.test.mjs fails if this module could
+// write anything or run git with anything but `log`. The dashboard server is what persists the aggregate (experience.json).
 //
 // The unit of session evidence is the work episode, not the session, because one long session can hold days of
 // work: a user prompt turn that ends with at least one edit, or, in a session without prompts, a block of activity
@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { projectRoot, keyOf, tokensOf } from './memory.js';
+import { projectRoot, keyOf } from './memory.js';
 
 // Every threshold in one place. An insight below its threshold is never served.
 export const THRESHOLDS = {
@@ -32,12 +32,6 @@ export const THRESHOLDS = {
   gitMaxFilesPerCommit: 30, // bigger commits are refactors or imports, not co-change evidence
   gitCoChangeCommits: 3,
   gitCoChangeShare: 0.5,
-  hotspotFixCommits: 3,    // mention "often fixed" from this many fix-labeled commits
-  followWindowMs: 30 * 60_000, // a suggested file touched this soon after a call counts as followed
-  areaWindowMs: 15 * 60_000, // reads in an area are counted this long after a call (or after entering it), within the prompt turn
-  minStretches: 3,           // comparable stretches without a call needed before a call is compared
-  maxTokens: 400,          // per tool answer, estimated as characters / 4
-  maxItems: 3,             // per kind of insight, per file
 };
 
 const DAY = 86_400_000;
@@ -50,19 +44,16 @@ const SYSTEM_PROMPT_RE = /^\s*<(task-notification|bash-notification|bash-stdout|
 // Lockfiles, generated and binary files: they change with everything, or are outputs, so they say nothing as partners.
 const LOCK_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Cargo\.lock|poetry\.lock|Gemfile\.lock|go\.sum)$|\.min\.(js|css)$|\.map$|(^|\/)(dist|build|out|coverage|generated|__generated__|graphify-out)\/|\.(pdf|png|jpe?g|gif|webp|ico|svgz|zip|gz|tgz|7z|rar|woff2?|ttf|otf|eot|mp[34]|mov|exe|dll|so|dylib|class|jar|pyc|wasm|bin)$/i;
 // A shell syntax mistake in the command itself (a heredoc or a quote left open, a stray token, a mistyped command) is
-// not a failure of the project: never a known failure, and not counted as one by the briefing's measurement.
+// not a failure of the project: never a known failure.
 const SHELL_ERROR_RE = /unexpected EOF while looking for matching|syntax error near unexpected token|syntax error: unexpected end of file|unterminated quoted string|unmatched ['"`]|bad substitution|command not found/i;
 export const isShellError = (sig) => SHELL_ERROR_RE.test(String(sig || ''));
 const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|revert|arregl\w*|correg\w*|corrig\w*)\b/i;
 const GIT_READ = new Set(['log']);
-export const MCP_TOOL_RE = /^mcp__(?:plugin_kevmind_experience|kevmind(?:-experience)?)__(\w+)$/; // plugin and manual installs
-export const NO_DATA = 'No data:';
 
 // The machine's local calendar day, for display and for counting distinct days: an evening that crosses midnight
 // UTC is still one day of work. Timestamps are stored as they are.
 const pad2 = (n) => String(n).padStart(2, '0');
 const day = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const slash = (p) => p.split(path.sep).join('/');
 
 // ---- the event logs ------------------------------------------------------------------------------------------
@@ -79,8 +70,8 @@ export function logFiles(dataDir) {
 // session = { first, last, prompted, eps: [episode] }
 // episode = { start, last, r: {file: first read ts}, e: {file: first edit ts}, ed: [[ts, file]],
 //   rc: {file: reads}, ec: {file: edits}, ag: {file: [agent types]}, runs: [[ts, fam, ok, sig]],
-//   calls: [[ts, tool, tokens, noData, [files], ms]], of?: start of the session-project episode it mirrors }
-// An episode without edits is kept (for reads, calls and measurement) but never counted as evidence.
+//   of?: start of the session-project episode it mirrors }
+// An episode without edits is kept (for its reads) but never counted as evidence.
 
 export const emptyAggregate = () => ({ version: 4, at: 0, logs: {}, projects: {} });
 
@@ -148,15 +139,8 @@ export function errorSignature(error) {
   return `exit ${code}: ${norm}`;
 }
 
-// MCP tool results arrive as text blocks; KevMind's answers list files in backticks.
-function responseText(r) {
-  if (typeof r === 'string') return r;
-  const blocks = Array.isArray(r) ? r : Array.isArray(r?.content) ? r.content : [];
-  return blocks.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('\n');
-}
-
-const newEpisode = (ts) => ({ start: ts, last: ts, r: {}, e: {}, ed: [], rc: {}, ec: {}, ag: {}, runs: [], calls: [] });
-const hasActivity = (ep) => ep.ed.length || ep.runs.length || ep.calls.length || Object.keys(ep.r).length;
+const newEpisode = (ts) => ({ start: ts, last: ts, r: {}, e: {}, ed: [], rc: {}, ec: {}, ag: {}, runs: [] });
+const hasActivity = (ep) => ep.ed.length || ep.runs.length || Object.keys(ep.r).length;
 
 // The episode an event belongs to. A real user prompt opens a new one; in a session that never had a prompt,
 // more than 30 minutes of silence does. Compactions and system-injected prompts never do.
@@ -221,23 +205,6 @@ export function ingest(agg, e, ts) {
     const sigId = ok ? -1 : intern(proj, 'sigs', '_sig', errorSignature(e.error));
     if (ep.runs.length < 2000) ep.runs.push([ts, famId, ok ? 1 : 0, sigId]);
     return;
-  }
-  const m = MCP_TOOL_RE.exec(tool);
-  if (m && (ev === 'PostToolUse' || ev === 'PostToolUseFailure')) {
-    // Answers cite files relative to the session's project; a call is recorded in every repo whose files it cites.
-    const text = responseText(e.tool_response);
-    const cited = [...new Set([...text.matchAll(/`([^`\n]+)`/g)].map((x) => x[1]).filter((p) => /[\w-]\.\w+$|\//.test(p)))].slice(0, 20);
-    const byRepo = new Map([[proj.root, []]]);
-    for (const c of cited) {
-      const abs = path.resolve(proj.root, c);
-      const repo = relPath(proj.root, abs) ? repoFor(proj.root, abs) : proj.root;
-      (byRepo.get(repo) || byRepo.set(repo, []).get(repo)).push(repo === proj.root ? c : relPath(repo, abs));
-    }
-    for (const [repo, files] of byRepo) {
-      if (repo === proj.root && !files.length && byRepo.size > 1) continue;
-      const [p, x] = repo === proj.root ? [proj, ep] : mirror(agg, repo, e.session_id, ep, ts);
-      x.calls.push([ts, m[1], tokensOf(text), text.startsWith(NO_DATA) ? 1 : 0, files.map((c) => fileId(p, c)), e.duration_ms || 0]);
-    }
   }
 }
 
@@ -481,271 +448,25 @@ export function failures(proj, now = Date.now(), prefix = '') {
   return out.sort((a, b) => b.episodes - a.episodes);
 }
 
-export function history(proj, f, now = Date.now()) {
-  const ctx = context(proj, now);
-  let reads = 0, edits = 0, first = 0, last = 0;
-  const editDays = new Set();
-  let editEpisodes = 0;
-  const agents = {};
-  for (const x of ctx.all) {
-    if (!(f in x.ep.r) && !(f in x.ep.e)) continue;
-    reads += x.ep.rc[f] || 0;
-    edits += x.ep.ec[f] || 0;
-    first = first ? Math.min(first, x.ep.start) : x.ep.start;
-    last = Math.max(last, x.ep.last);
-    if (f in x.ep.e) { editEpisodes++; editDays.add(x.day); }
-    for (const a of x.ep.ag[f] || []) agents[a] = (agents[a] || 0) + 1;
-  }
-  const commits = ctx.commitsOf.get(f) || [];
-  return {
-    editEpisodes, editDays: editDays.size, reads, edits, first, last, agents,
-    git: { changes: commits.length, fixes: commits.filter((c) => c[3]).length, last: commits[0]?.[1] || 0, first: commits.at(-1)?.[1] || 0 },
-  };
+// ---- a project and the repos nested in it ------------------------------------------------------------------
+// The aggregate's projects for a session's project: its root and any git repo nested in it (frontend/, backend/),
+// each with the prefix that turns its paths into the root's.
+export function projectsUnder(agg, root) {
+  return Object.values(agg.projects)
+    .filter((p) => keyOf(p.root) === keyOf(root) || relPath(root, p.root))
+    .map((p) => ({ p: index(p), pre: keyOf(p.root) === keyOf(root) ? '' : `${relPath(root, p.root)}/` }));
 }
-
-// ---- answers (what the MCP tools return) ---------------------------------------------------------------------
-
-const epEv = (s) => `episodes: ${s.n} on ${plural(s.days, 'day')}, last ${day(s.last)}`;
-// Both sources on one line, episodes first, with the latest date of either.
-const ev = (x) => [x.s && `episodes: ${x.s.n} on ${plural(x.s.days, 'day')}`, x.g && `git: ${x.g.n} of ${x.g.of} commits`,
-  `last ${day(Math.max(x.s?.last || 0, x.g?.last || 0))}`].filter(Boolean).join('; ');
-const stronger = (a, b) => (!a ? b : !b ? a : b.n / b.of > a.n / a.of ? b : a);
-
-function capped(header, lines, footer, tokens = T.maxTokens) {
-  const budget = tokens * 4; // characters, the same estimate used everywhere
-  let out = header + '\n';
-  let omitted = 0;
-  for (const l of lines) {
-    if ((out + l + '\n' + footer).length > budget - 60) { omitted++; continue; }
-    out += l + '\n';
-  }
-  if (omitted) out += `(${omitted} more line${omitted > 1 ? 's' : ''} left out to stay under ${tokens} tokens)\n`;
-  return (out + footer).slice(0, budget);
-}
-
-function scope(proj, now) {
-  const g = gate(proj, now);
-  return `Evidence: ${plural(g.episodes, 'work episode')} on ${plural(g.days, 'day')} (last ${T.windowDays} days); ` +
-    `${plural(g.commits, 'git commit')}${g.gitOk ? '' : ` (git counts from ${T.minGitCommits})`}. History only: for code structure, code_map (approximate) or Serena.`;
-}
-
-const fileOf = (proj, p) => proj._fi.get(relPath(proj.root, p) || slash(String(p || '')).replace(/^\.\//, ''));
-
-// o.prefix: where the repo sits inside the session's project ("frontend/"), so cited paths open from there;
-// o.tokens: this answer's share of the cap when one call spans several repos.
-export function answerFileContext(proj, name, paths, now = Date.now(), o = {}) {
-  if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
-  index(proj);
-  const pre = o.prefix || '';
-  const lines = [];
-  const asked = []; // [label, file id or undefined, outside?]
-  for (const p of paths.slice(0, 10)) {
-    if (p && !relPath(proj.root, p)) { asked.push([p, undefined, true]); continue; }
-    const f = fileOf(proj, p);
-    if (!asked.some((a) => a[1] !== undefined && a[1] === f)) asked.push([pre + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]), f, false]);
-  }
-  const ids = new Set(asked.map((a) => a[1]).filter((f) => f !== undefined));
-  const parts = new Map([...ids].map((f) => [f, partners(proj, f, now)]));
-  // Two asked files that change together: said once, with the stronger direction's evidence from each source.
-  const pairs = new Map();
-  for (const [f, list] of parts) {
-    for (const x of list) {
-      if (!ids.has(x.f)) continue;
-      const k = [Math.min(f, x.f), Math.max(f, x.f)].join('|');
-      const pr = pairs.get(k) || { a: Math.min(f, x.f), b: Math.max(f, x.f), s: null, g: null };
-      pr.s = stronger(pr.s, x.s);
-      pr.g = stronger(pr.g, x.g);
-      pairs.set(k, pr);
+// Sessions of the project across those repos: id -> { first, last, eps: [{ ep, p, pre }] }.
+export function sessionsOf(projs) {
+  const out = new Map();
+  for (const { p, pre } of projs) {
+    for (const [sid, s] of Object.entries(p.sessions)) {
+      const x = out.get(sid) || { first: s.first, last: s.last, eps: [] };
+      x.first = Math.min(x.first, s.first);
+      x.last = Math.max(x.last, s.last);
+      for (const ep of s.eps) x.eps.push({ ep, p, pre });
+      out.set(sid, x);
     }
   }
-  for (const pr of pairs.values()) lines.push(`- \`${pre}${proj.files[pr.a]}\` and \`${pre}${proj.files[pr.b]}\` usually change together (${ev(pr)})`);
-  let any = pairs.size > 0;
-  for (const [label, f, outside] of asked) {
-    if (outside) { lines.push(`- \`${label}\`: outside ${name}; KevMind only answers for repos inside the session's folder.`); continue; }
-    if (f === undefined) { lines.push(`- \`${label}\`: no data (never read or edited in recorded sessions, not in git history).`); continue; }
-    const others = parts.get(f).filter((x) => !ids.has(x.f)).slice(0, T.maxItems);
-    const reads = readFirst(proj, f, now).slice(0, T.maxItems);
-    const h = history(proj, f, now);
-    const hot = h.git.fixes >= T.hotspotFixCommits ? `often fixed: ${h.git.fixes} of ${h.git.changes} commits touching it are fixes (git)` : '';
-    if (!others.length && !reads.length && !hot) {
-      if (parts.get(f).length) continue; // its only pattern is the pair above
-      lines.push(`- \`${label}\`: no pattern above the thresholds (edited in ${plural(h.editEpisodes, 'episode')} on ${plural(h.editDays, 'day')}, ${plural(h.git.changes, 'commit')}).`);
-      continue;
-    }
-    any = true;
-    lines.push(`- \`${label}\`:`);
-    for (const x of others) lines.push(`  - changes with \`${pre}${proj.files[x.f]}\` (${ev(x)})`);
-    for (const x of reads) lines.push(`  - usually read first: \`${pre}${proj.files[x.f]}\` (${epEv(x)})`);
-    if (hot) lines.push(`  - ${hot}`);
-  }
-  const header = any ? `KevMind history for ${name}:` : `${NO_DATA} no pattern above the thresholds for these files in ${name}.`;
-  return capped(header, lines, scope(proj, now), o.tokens);
-}
-
-export function answerFileHistory(proj, name, p, now = Date.now(), o = {}) {
-  if (!proj) return `${NO_DATA} KevMind has no history for ${name} yet: no recorded sessions and no git history.`;
-  index(proj);
-  if (p && !relPath(proj.root, p)) return `${NO_DATA} \`${p}\` is outside ${name}; KevMind only answers for repos inside the session's folder.`;
-  const f = fileOf(proj, p);
-  const label = (o.prefix || '') + (f === undefined ? relPath(proj.root, p) || p : proj.files[f]);
-  if (f === undefined) return `${NO_DATA} \`${label}\` was never read or edited in recorded ${name} sessions and is not in its git history.\n${scope(proj, now)}`;
-  const h = history(proj, f, now);
-  if (!h.reads && !h.edits && !h.git.changes) return `${NO_DATA} \`${label}\` has no recorded activity in the window.\n${scope(proj, now)}`;
-  const lines = [];
-  if (h.reads || h.edits) {
-    const agents = Object.entries(h.agents).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a} ${n}`).join(', ');
-    lines.push(`- Claude Code: edited in ${plural(h.editEpisodes, 'work episode')} on ${plural(h.editDays, 'day')} (${day(h.first)} to ${day(h.last)}), ${h.reads} reads, ${h.edits} edits.`);
-    lines.push(`- Agent types (episodes): ${agents}.`);
-  } else lines.push('- Claude Code: no recorded activity.');
-  if (h.git.changes) lines.push(`- git: changed in ${h.git.changes} commits (${day(h.git.first)} to ${day(h.git.last)}), ${h.git.fixes} labeled as fixes.`);
-  else lines.push('- git: no commits in the window.');
-  return capped(`KevMind history of \`${label}\` in ${name}:`, lines, scope(proj, now));
-}
-
-export function answerKnownFailures(proj, name, command = '', now = Date.now()) {
-  if (!proj) return `${NO_DATA} KevMind has no recorded sessions for ${name} yet.`;
-  index(proj);
-  const fam = command ? commandFamily(command) || command : '';
-  const list = failures(proj, now, fam);
-  if (!list.length) {
-    return `${NO_DATA} no failure${fam ? ` of \`${fam}\`` : ''} in ${name} repeated in ${T.failureEpisodes} work episodes on ${T.minDays} days with the same fix.\n${scope(proj, now)}`;
-  }
-  const lines = list.map((x) => `- \`${x.fam}\` failed with "${x.sig}" (episodes: ${x.episodes} on ${plural(x.days, 'day')}, ${x.occurrences} times, last ${day(x.last)}); ` +
-    `${x.fix.n} times the next success came after ${x.fix.kind === 'file' ? `editing \`${x.fix.name}\`` : `running \`${x.fix.name}\``}.`);
-  return capped(`KevMind: known failures in ${name}:`, lines, scope(proj, now));
-}
-
-// ---- dashboard: what would qualify today, and whether the tools help -----------------------------------------
-
-export function preview(proj, now = Date.now()) {
-  index(proj);
-  const ctx = context(proj, now);
-  const pairs = new Map();
-  const reads = [];
-  const files = new Set([...ctx.editedIn.keys(), ...ctx.commitsOf.keys()]);
-  // The strongest co-edit pair from episodes, qualifying or not, to say what is missing.
-  let nearest = null;
-  for (const f of ctx.editedIn.keys()) {
-    const count = new Map();
-    for (const x of ctx.editedIn.get(f)) {
-      for (const k of Object.keys(x.ep.e)) {
-        if (+k === f) continue;
-        const c = count.get(+k) || { n: 0, days: new Set() };
-        c.n++;
-        c.days.add(x.day);
-        count.set(+k, c);
-      }
-    }
-    for (const [g, c] of count) {
-      const score = Math.min(c.n / T.coEditEpisodes, 1) + Math.min(c.days.size / T.minDays, 1);
-      if (!nearest || score > nearest.score || (score === nearest.score && c.n > nearest.n)) nearest = { a: proj.files[f], b: proj.files[g], n: c.n, days: c.days.size, of: ctx.editedIn.get(f).length, score };
-    }
-  }
-  for (const f of files) {
-    for (const x of partners(proj, f, now)) {
-      const k = [Math.min(f, x.f), Math.max(f, x.f)].join('|');
-      // Raw counts: the dashboard words them in its own language. ev(x) is how the tools word them for Claude.
-      if (!pairs.has(k)) pairs.set(k, { a: proj.files[f], b: proj.files[x.f], s: x.s ? { ...x.s, last: day(x.s.last) } : null, g: x.g ? { ...x.g, last: day(x.g.last) } : null, session: !!x.s, n: x.s?.n || x.g?.n || 0 });
-    }
-    for (const x of readFirst(proj, f, now)) reads.push({ file: proj.files[f], first: proj.files[x.f], n: x.n, days: x.days });
-  }
-  const hotspots = [...ctx.commitsOf].map(([f, cs]) => ({ file: proj.files[f], changes: cs.length, fixes: cs.filter((c) => c[3]).length }))
-    .sort((a, b) => b.fixes - a.fixes || b.changes - a.changes).slice(0, 5);
-  const coChange = [...pairs.values()].sort((a, b) => b.session - a.session || b.n - a.n);
-  return {
-    gate: ctx.gate,
-    episodePairs: coChange.filter((p) => p.session).length,
-    nearest: coChange.some((p) => p.session) ? null : nearest && { a: nearest.a, b: nearest.b, n: nearest.n, days: nearest.days, of: nearest.of },
-    coChange: coChange.slice(0, 10),
-    readFirst: reads.slice(0, 5),
-    failures: failures(proj, now).slice(0, 5).map((x) => ({ ...x, last: day(x.last) })),
-    hotspots,
-  };
-}
-
-// Calls seen through the hooks, and how often a suggested file was then read or edited, against a baseline:
-// how often a qualifying partner gets touched after an edit in episodes with no call. Correlation, not proof.
-// Per tool, also the files read in the area a call was about (the areas of the files its answer cites; areaOf: a
-// project path to its area, the project map's folders when built, else the file's folder) in the rest of its prompt
-// turn, at most T.areaWindowMs, against comparable stretches without a call: the same window after a prompt turn with
-// no call first reads a file in that area. A call is compared once T.minStretches such stretches exist (for its areas,
-// else for the project).
-export function measure(proj, now = Date.now(), areaOf = (p) => p.split('/').slice(0, -1).join('/') || '.') {
-  index(proj);
-  const ctx = context(proj, now);
-  const calls = [];
-  let opportunities = 0;
-  let hits = 0;
-  const partnerCache = new Map();
-  const partnersOf = (f) => partnerCache.get(f) || partnerCache.set(f, partners(proj, f, now).map((x) => x.f)).get(f);
-  const touches = new Map(); // session -> file -> every first-touch time across its episodes
-  const touchesOf = (s) => {
-    if (!touches.has(s)) {
-      const m = new Map();
-      for (const ep of s.eps) for (const src of [ep.r, ep.e]) for (const [k, t] of Object.entries(src)) (m.get(+k) || m.set(+k, []).get(+k)).push(t);
-      touches.set(s, m);
-    }
-    return touches.get(s);
-  };
-  const followed = (s, f, t0) => {
-    const ts = touchesOf(s).get(f) || [];
-    return !ts.some((t) => t <= t0) && ts.some((t) => t > t0 && t - t0 <= T.followWindowMs);
-  };
-  for (const { ep, s } of ctx.all) {
-    for (const [ts, tool, tokens, noData, files, ms] of ep.calls) {
-      calls.push({ ts, tool, tokens, noData: !!noData, ms, suggested: files.map((f) => proj.files[f]), followed: files.length ? files.some((f) => followed(s, f, ts)) : null });
-    }
-    if (ep.calls.length || !isEpisode(ep)) continue;
-    for (const [k, t0] of Object.entries(ep.e)) {
-      const ps = partnersOf(+k);
-      if (!ps.length) continue;
-      opportunities++;
-      if (ps.some((g) => { const t = Math.min(ep.r[g] ?? Infinity, ep.e[g] ?? Infinity); return t > t0 && t - t0 <= T.followWindowMs; })) hits++;
-    }
-  }
-  // Reads in the area after a call, against stretches without one.
-  const areaOfId = new Map(), area = (f) => areaOfId.get(f) ?? areaOfId.set(f, areaOf(proj.files[f])).get(f);
-  const readIn = (ep, areas, from, incl) => Object.entries(ep.r).filter(([f, t]) => (incl ? t >= from : t > from) && t <= Math.min(from + T.areaWindowMs, ep.last) && areas.has(area(+f))).length;
-  const stretches = new Map(); // area -> counts after first entering it, in prompt turns with no call
-  for (const { ep } of ctx.all) {
-    if (ep.calls.length) continue;
-    const first = new Map();
-    for (const [f, t] of Object.entries(ep.r)) { const a = area(+f); if (!first.has(a) || t < first.get(a)) first.set(a, t); }
-    for (const [a, t1] of first) (stretches.get(a) || stretches.set(a, []).get(a)).push(readIn(ep, new Set([a]), t1, true));
-  }
-  const median = (xs) => { const v = [...xs].sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
-  const everyStretch = [...stretches.values()].flat();
-  const byTool = new Map();
-  for (const { ep } of ctx.all) {
-    for (const [ts, tool, , noData, files] of ep.calls) {
-      const t = byTool.get(tool) || byTool.set(tool, { tool, calls: 0, noData: 0, after: [], base: [], fewer: 0, compared: 0 }).get(tool);
-      t.calls++; if (noData) t.noData++;
-      if (!files.length) continue;
-      const areas = new Set(files.map(area));
-      const own = [...areas].flatMap((a) => stretches.get(a) || []);
-      const base = own.length >= T.minStretches ? median(own) : everyStretch.length >= T.minStretches ? median(everyStretch) : null;
-      const after = readIn(ep, areas, ts, false);
-      t.after.push(after);
-      if (base === null) continue;
-      t.base.push(base); t.compared++;
-      if (after < base) t.fewer++;
-    }
-  }
-  const tools = [...byTool.values()].sort((a, b) => b.calls - a.calls).map(({ after, base, ...t }) => ({ ...t, withArea: after.length, readsAfter: median(after), readsWithout: median(base) }));
-  calls.sort((a, b) => b.ts - a.ts);
-  const withSuggestions = calls.filter((c) => c.followed !== null);
-  const followedN = withSuggestions.filter((c) => c.followed).length;
-  const rate = withSuggestions.length ? followedN / withSuggestions.length : null;
-  const baseline = opportunities ? hits / opportunities : null;
-  return {
-    calls: calls.length,
-    tokens: calls.reduce((n, c) => n + c.tokens, 0),
-    noData: calls.filter((c) => c.noData).length,
-    avgMs: calls.length ? Math.round(calls.reduce((n, c) => n + (c.ms || 0), 0) / calls.length) : 0,
-    followRate: rate, followed: followedN, withSuggestions: withSuggestions.length,
-    baseline, baselineSample: opportunities,
-    verdict: calls.length < 50 ? 'collecting' : rate !== null && baseline !== null && rate <= baseline ? 'turn_off' : 'helping',
-    tools, stretches: everyStretch.length,
-    last: calls.slice(0, 20),
-  };
+  return out;
 }

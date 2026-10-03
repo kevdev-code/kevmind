@@ -291,33 +291,11 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .paths li { overflow-wrap: anywhere; border: 0; padding: 0; margin: 0; display: block; background: none; }
 .paths .moved { color: var(--text-2); }
 
-.switch { border: 0; background: none; padding: 0; color: var(--text); display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; font-size: var(--fs-sm); text-align: left; }
-.switch .knob { width: 30px; height: 18px; border-radius: var(--r-pill); background: var(--border-strong); position: relative; flex: none; transition: background var(--dur-1) var(--ease-out); }
-.switch .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform var(--dur-1) var(--ease-out); }
-.switch[aria-checked="true"] .knob { background: var(--accent-fill); }
-.switch[aria-checked="true"] .knob::after { transform: translateX(12px); }
 .exp-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
 .exp-switch .err { color: var(--error); font-size: var(--fs-xs); }
-.gate { display: flex; flex-direction: column; gap: 6px; margin-top: var(--sp-3); font-size: var(--fs-sm); max-width: 75ch; }
-.gate > div { display: flex; align-items: baseline; gap: var(--sp-2); }
-.gate .dot { transform: translateY(-1px); }
-.gate .why { color: var(--text-3); font-size: var(--fs-xs); padding-left: 16px; display: block; }
-.exp-h { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-sm); font-weight: 600; }
-.exp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3) var(--sp-5); }
-.exp-grid h4 { margin: 0 0 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
 .exp-list { font-size: var(--fs-xs); display: flex; flex-direction: column; gap: 6px; }
 .exp-list li { overflow-wrap: anywhere; }
 .exp-list small { display: block; color: var(--text-3); }
-.exp-grid .none { margin: 0; color: var(--text-3); font-size: var(--fs-xs); }
-.verdict { color: var(--text-3); font-size: var(--fs-xs); max-width: 75ch; margin: var(--sp-3) 0 0; }
-/* The session briefing: the exact text Claude received, and the comparison with and without it. */
-.brief-how { color: var(--text-3); font-size: var(--fs-xs); max-width: 75ch; margin: var(--sp-2) 0 0; }
-.brief-text { font-family: var(--mono); font-weight: 350; font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--raised); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); margin: 6px 0 0; max-height: 360px; overflow-y: auto; }
-.brief-starts { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); }
-.brief-starts summary { cursor: pointer; }
-.brief-starts .arm-shown, .brief-starts .arm-map { color: var(--text); font-weight: 600; }
-.brief-starts small { color: var(--text-3); }
-.brief-preview { margin-top: var(--sp-2); }
 /* The project map: a short profile, then one row per area (a folder) that opens on its facts, each under its source. */
 .tree-profile { margin: var(--sp-3) 0 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-2); max-width: 90ch; }
 .tree-areas { margin-top: var(--sp-4); display: flex; flex-direction: column; font-size: var(--fs-sm); }
@@ -327,9 +305,6 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .tree-areas details > p { margin: 6px 0 0 var(--sp-4); font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; }
 .tree-areas .src { font-weight: 600; color: var(--text); margin-right: 4px; }
 .tree-files { margin: var(--sp-2) 0 var(--sp-3) var(--sp-4); }
-table.brief-cmp { max-width: 640px; }
-.brief-cmp th:first-child, .brief-cmp td:first-child { width: 60%; white-space: normal; }
-@media (max-width: 520px) { .brief-cmp.v2 th:first-child, .brief-cmp.v2 td:first-child { width: 40%; } } /* a fourth column needs the room */
 
 .mem-table { overflow-x: auto; }
 .mem-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }

@@ -12,22 +12,5 @@
     "observability",
     "agents",
     "dashboard"
-  ],
-  "userConfig": {
-    "experience_tools": {
-      "type": "boolean",
-      "title": "Experience tools for Claude",
-      "description": "Let Claude ask KevMind what this project's history shows (files that change together, recurring failures and their fixes), from past sessions and git. Local and read-only. Off by default.",
-      "default": false
-    }
-  },
-  "mcpServers": {
-    "experience": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.js"],
-      "env": {
-        "KEVMIND_EXPERIENCE": "${user_config.experience_tools}"
-      }
-    }
-  }
+  ]
 }

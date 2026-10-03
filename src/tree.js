@@ -8,8 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileIndex, areaLinks, keyFiles } from './codemap.js';
-import { failures } from './experience.js';
-import { projectsUnder } from './briefing.js';
+import { failures, projectsUnder } from './experience.js';
 
 export const TREE = {
   months: 12,            // git history read by default ('all' on demand)
