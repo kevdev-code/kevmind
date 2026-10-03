@@ -3,7 +3,9 @@
 //   node prototype/briefing-bench/run.mjs check                      hidden tests fail at each parent, pass at the fix (no tokens)
 //   node prototype/briefing-bench/run.mjs briefing --task 1          the briefing a session at the parent would get (no tokens)
 //   node prototype/briefing-bench/run.mjs run --task 1 --arm with --n 1 --model <id>     one headless run (spends tokens)
-//   node prototype/briefing-bench/run.mjs report                     the comparison, from the recorded runs
+//   node prototype/briefing-bench/run.mjs series --tasks 1,2,3 --n 3 --tag stage1   one run at a time, arms alternating (spends tokens)
+//   node prototype/briefing-bench/run.mjs report [--tag stage1]      every run, per task and overall, from the recorded runs
+// The binary is `claude` on PATH (or --claude); it is checked against the pinned model's minimum version before any run.
 //
 // Each run: a fresh git worktree at the fix's parent, `claude -p` with the user's settings, plugins and MCP servers left
 // out, a one-file bench plugin that hands Claude the task's briefing ("with") or nothing ("without"), then the fix
@@ -22,19 +24,23 @@ const PLUGIN = path.join(HERE, 'plugin');
 const TMP = path.join(os.tmpdir(), 'kevmind-bench');
 const TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm test:*)', 'Bash(node --test:*)', 'Bash(git diff:*)', 'Bash(git status:*)', 'Bash(git log:*)'];
 const RUN_TIMEOUT_MS = 25 * 60_000;
-// The Claude Code binary: --claude, else the newest one the desktop app installed (what the owner works with; the
-// standalone CLI on PATH may be older than the model needs), else `claude` on PATH.
-function claudeBin() {
-  if (arg('claude')) return arg('claude');
-  const base = path.join(process.env.APPDATA || '', 'Claude', 'claude-code');
-  const ver = (v) => v.split('.').map(Number);
-  const newer = (a, b) => { const x = ver(a), y = ver(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
-  try {
-    for (const v of fs.readdirSync(base).filter((d) => /^\d+\.\d+\.\d+$/.test(d)).sort(newer).reverse()) {
-      for (const h of fs.readdirSync(path.join(base, v))) { const exe = path.join(base, v, h, 'claude.exe'); if (fs.existsSync(exe)) return exe; }
-    }
-  } catch { /* no desktop app */ }
-  return 'claude';
+const MODEL = 'claude-opus-5-5[1m]'; // the owner's usual model (settings: opus[1m])
+// The Claude Code binary: --claude, else `claude` on PATH.
+const claudeBin = () => arg('claude') || 'claude';
+// The oldest Claude Code that can run each model, from the CLI's own error ("version 2.1.280 or newer is required").
+// ponytail: one entry per model the benchmark has pinned; a model not listed is only caught by the run itself.
+const MIN_VERSION = { 'claude-opus-5-5': '2.1.280' };
+const SUPPORT_RE = /does not support this model/i;
+// Whether this binary can run the model, before any token is spent: its version against the model's minimum.
+function checkBinary(bin, model) {
+  const out = spawnSync(bin, ['--version'], { encoding: 'utf8', windowsHide: true });
+  const version = (/(\d+\.\d+\.\d+) \(Claude Code\)/.exec(out.stdout || '') || [])[1];
+  if (!version) throw new Error(`"${bin}" is not a Claude Code binary (or not on PATH): ${out.error?.message || out.stderr || 'no version'}`);
+  const need = MIN_VERSION[model.replace(/\[.*\]$/, '')];
+  const older = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+  if (need && older(version, need)) throw new Error(`Claude Code ${version} at "${bin}" can't run ${model}: it needs ${need} or newer. Run "claude update", or pass --claude <path to a newer binary>.`);
+  if (!need) console.warn(`  warning: no known minimum Claude Code version for ${model}; a run that says it doesn't support the model stops the series.`);
+  return `${version} (Claude Code)`;
 }
 
 const git = (args, cwd = REPO) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20 }).trim();
@@ -106,7 +112,7 @@ async function briefing(task) {
 }
 
 // ---- run: one headless Claude Code run ----------------------------------------------------------------------------
-async function run(task, arm, n, model) {
+async function run(task, arm, n, model, series = null) {
   const ctxFile = path.join(OUT, 'briefings', `${task.id}.txt`);
   if (arm === 'with' && !fs.existsSync(ctxFile)) throw new Error(`no briefing for task ${task.id}: run "briefing --task ${task.id}" first`);
   const day = new Date().toLocaleDateString('en-CA'), dir = path.join(OUT, 'results', day);
@@ -118,7 +124,7 @@ async function run(task, arm, n, model) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--model', model,
     '--setting-sources', 'project,local', '--plugin-dir', PLUGIN, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     '--no-session-persistence', '--permission-mode', 'dontAsk', '--max-turns', '60', '--allowedTools', ...TOOLS];
-  const bin = claudeBin(), version = spawnSync(bin, ['--version'], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+  const bin = claudeBin(), version = checkBinary(bin, model);
   const t0 = Date.now();
   try {
     const out = fs.createWriteStream(streamFile);
@@ -135,8 +141,9 @@ async function run(task, arm, n, model) {
     const diff = git(['diff', '--shortstat'], wt.dir);
     const untracked = git(['status', '--porcelain'], wt.dir).split('\n').filter((l) => l.startsWith('??')).length;
     const v = verify(wt.dir, task);
-    const rec = { task: task.id, arm, n, model, version, at: t0, wallMs: Date.now() - t0, exit: code, ...m, diff, untracked, ...v, stream: path.relative(REPO, streamFile) };
+    const rec = { task: task.id, arm, n, model, version, series, at: t0, wallMs: Date.now() - t0, exit: code, ...m, diff, untracked, ...v, stream: path.relative(REPO, streamFile) };
     fs.appendFileSync(path.join(dir, 'runs.jsonl'), JSON.stringify(rec) + '\n');
+    if (m.unsupported) throw new Error(`${bin} (${version}) can't run ${model}: ${m.unsupported}`); // stops a series
     return rec;
   } finally { wt.remove(); }
 }
@@ -162,6 +169,7 @@ function measure(stream, cwd) {
     hookContext: lines.some((o) => o.type === 'system' && /hook/.test(o.subtype || '') && /additionalContext/.test(JSON.stringify(o))),
     // An API error before any work (wrong CLI version, outage) is the harness failing, not the run: the report skips it.
     infraError: result.terminal_reason === 'api_error' && !(result.usage?.output_tokens), terminalReason: result.terminal_reason || null,
+    unsupported: SUPPORT_RE.test(String(result.result || '')) ? String(result.result).slice(0, 200) : null,
     subtype: result.subtype || null, isError: !!result.is_error, turns: result.num_turns ?? null, durationMs: result.duration_ms ?? null, apiMs: result.duration_api_ms ?? null,
     tokens: { ...tok, total: tok.input + tok.output + tok.cacheRead + tok.cacheWrite, measured: tok.input + tok.output + tok.cacheRead },
     modelUsage: result.modelUsage || null,
@@ -169,23 +177,66 @@ function measure(stream, cwd) {
   };
 }
 
-// ---- report: per task, the median of each arm ---------------------------------------------------------------------
-function report() {
-  const runs = fs.readdirSync(path.join(OUT, 'results')).flatMap((d) => { const f = path.join(OUT, 'results', d, 'runs.jsonl'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []; });
+// ---- series: tasks one at a time, n runs per arm, the arms alternating (with, without, without, with, …) ----------
+async function series(ids, n, model, tag) {
+  checkBinary(claudeBin(), model); // before the first token
+  for (const id of ids) {
+    const task = taskOf(id);
+    for (let k = 1; k <= n; k++) {
+      for (const arm of k % 2 ? ['with', 'without'] : ['without', 'with']) {
+        const t0 = Date.now();
+        const r = await run(task, arm, k, model, tag);
+        console.log(`task ${id} ${arm} #${k}: ${(r.tokens.total / 1e6).toFixed(2)} M tokens, ${((Date.now() - t0) / 60_000).toFixed(1)} min, ${r.hidden && r.suite ? 'success' : 'FAILED'}`);
+      }
+    }
+  }
+}
+
+// ---- report: every run, then per task (median of each arm) and overall ---------------------------------------------
+// The verdict rule, decided before the runs: "saves" only if every task's median tokens are at least 10% lower with
+// the briefing and successes with ≥ without; "costs" if every task is at least 10% higher; otherwise "unclear".
+function report(tag) {
+  const runs = fs.readdirSync(path.join(OUT, 'results')).flatMap((d) => { const f = path.join(OUT, 'results', d, 'runs.jsonl'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []; })
+    .filter((r) => (tag ? r.series === tag : true) && !r.infraError && r.tokens.total > 0);
   const med = (xs) => { const v = xs.filter((x) => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
   const M = (n) => (n == null ? '—' : n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n));
-  const rows = ['| Task | Arm | Runs | Success | Tokens (total) | Cache reads | Output | Wall time | Turns | Tool calls | Files read | Re-reads |', '|---|---|---|---|---|---|---|---|---|---|---|---|'];
-  for (const t of TASKS) for (const arm of ['with', 'without']) {
-    const rs = runs.filter((r) => r.task === t.id && r.arm === arm && !r.infraError && r.tokens.total > 0);
-    if (!rs.length) continue;
-    rows.push(`| ${t.id} | ${arm} | ${rs.length} | ${rs.filter((r) => r.hidden && r.suite).length} | ${M(med(rs.map((r) => r.tokens.total)))} | ${M(med(rs.map((r) => r.tokens.cacheRead)))} | ${M(med(rs.map((r) => r.tokens.output)))} | ${(med(rs.map((r) => r.wallMs)) / 60_000).toFixed(1)} min | ${med(rs.map((r) => r.turns))} | ${med(rs.map((r) => r.toolCalls))} | ${med(rs.map((r) => r.filesRead))} | ${med(rs.map((r) => r.rereads))} |`);
+  const min = (ms) => `${(ms / 60_000).toFixed(1)} min`;
+  const pct = (a, b) => (a == null || !b ? '—' : `${a >= b ? '+' : ''}${Math.round(((a - b) / b) * 100)}%`);
+  const ok = (r) => r.hidden && r.suite;
+  const out = [`# Briefing benchmark${tag ? ` (${tag})` : ''}`, '', `Model: ${[...new Set(runs.map((r) => r.model))].join(', ')}. Claude Code: ${[...new Set(runs.map((r) => r.version))].join(', ')}. Runs: ${runs.length}.`, '', '## Every run', '',
+    '| Task | Arm | # | Success | Tokens | Cache reads | Cache writes | Output | Wall time | Turns | Tool calls | Files read | Re-reads | Diff |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+  for (const r of [...runs].sort((a, b) => a.task - b.task || a.at - b.at)) {
+    out.push(`| ${r.task} | ${r.arm} | ${r.n} | ${ok(r) ? 'yes' : `no (hidden ${r.hidden ? 'pass' : 'fail'}, suite ${r.suite ? 'pass' : `${r.suiteFail} fail`})`} | ${M(r.tokens.total)} | ${M(r.tokens.cacheRead)} | ${M(r.tokens.cacheWrite)} | ${M(r.tokens.output)} | ${min(r.wallMs)} | ${r.turns} | ${r.toolCalls} | ${r.filesRead} | ${r.rereads} | ${r.diff || '—'} |`);
   }
-  console.log(rows.join('\n'));
+  out.push('', '## Per task (medians)', '', '| Task | Success with | Success without | Tokens with | Tokens without | Change | Wall with | Wall without | Change | Tool calls with / without | Files read with / without |', '|---|---|---|---|---|---|---|---|---|---|---|');
+  const per = [];
+  for (const t of TASKS) {
+    const w = runs.filter((r) => r.task === t.id && r.arm === 'with'), wo = runs.filter((r) => r.task === t.id && r.arm === 'without');
+    if (!w.length || !wo.length) continue;
+    const x = { task: t.id, okW: w.filter(ok).length, okWo: wo.filter(ok).length, nW: w.length, nWo: wo.length, tW: med(w.map((r) => r.tokens.total)), tWo: med(wo.map((r) => r.tokens.total)), sW: med(w.map((r) => r.wallMs)), sWo: med(wo.map((r) => r.wallMs)) };
+    per.push(x);
+    out.push(`| ${t.id} | ${x.okW}/${x.nW} | ${x.okWo}/${x.nWo} | ${M(x.tW)} | ${M(x.tWo)} | ${pct(x.tW, x.tWo)} | ${min(x.sW)} | ${min(x.sWo)} | ${pct(x.sW, x.sWo)} | ${med(w.map((r) => r.toolCalls))} / ${med(wo.map((r) => r.toolCalls))} | ${med(w.map((r) => r.filesRead))} / ${med(wo.map((r) => r.filesRead))} |`);
+  }
+  const lower = per.filter((x) => x.tW <= x.tWo * 0.9).length, higher = per.filter((x) => x.tW >= x.tWo * 1.1).length;
+  const okW = per.reduce((n, x) => n + x.okW, 0), okWo = per.reduce((n, x) => n + x.okWo, 0);
+  const verdict = per.length && lower === per.length && okW >= okWo ? 'saves tokens without hurting success' : per.length && higher === per.length ? 'costs tokens' : 'unclear';
+  const ratios = per.map((x) => x.tW / x.tWo);
+  out.push('', '## Overall', '',
+    `- Tasks with at least 10% fewer tokens with the briefing: ${lower} of ${per.length}; at least 10% more: ${higher} of ${per.length}.`,
+    `- Median of the per-task token ratios (with / without): ${ratios.length ? med(ratios).toFixed(2) : '—'}; wall time: ${per.length ? med(per.map((x) => x.sW / x.sWo)).toFixed(2) : '—'}.`,
+    `- Successes: ${okW} of ${per.reduce((n, x) => n + x.nW, 0)} with, ${okWo} of ${per.reduce((n, x) => n + x.nWo, 0)} without.`,
+    `- Tokens spent by these runs: ${M(runs.reduce((n, r) => n + r.tokens.total, 0))}.`,
+    `- Verdict (rule fixed in advance: every task at least 10% lower and no fewer successes): **${verdict}**.`);
+  const text = out.join('\n');
+  fs.writeFileSync(path.join(OUT, `report${tag ? `-${tag}` : ''}.md`), text + '\n');
+  console.log(text);
 }
 
 const cmd = process.argv[2];
 if (cmd === 'check') check();
 else if (cmd === 'briefing') console.log(await briefing(taskOf(arg('task', 1))));
 else if (cmd === 'run') console.log(JSON.stringify(await run(taskOf(arg('task', 1)), arg('arm', 'with'), Number(arg('n', 1)), arg('model', 'claude-opus-5-5[1m]')), null, 1));
-else if (cmd === 'report') report();
-else console.log('usage: run.mjs check | briefing --task N | run --task N --arm with|without --n K --model ID | report');
+else if (cmd === 'claude-check') console.log(`ok: ${claudeBin()} is Claude Code ${checkBinary(claudeBin(), arg('model', MODEL))}, which can run ${arg('model', MODEL)}`);
+else if (cmd === 'series') await series(String(arg('tasks', '1,2,3')).split(','), Number(arg('n', 3)), arg('model', MODEL), arg('tag', null));
+else if (cmd === 'report') report(arg('tag', null));
+else console.log('usage: run.mjs check | briefing --task N | run --task N --arm with|without --n K [--model ID] | series --tasks 1,2,3 --n 3 --tag NAME | report [--tag NAME]');
