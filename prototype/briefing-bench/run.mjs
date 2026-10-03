@@ -78,7 +78,7 @@ function check() {
 // is the line naming the tools, which are off in both arms.
 async function briefing(task) {
   const src = (f) => import(pathToFileURL(path.join(REPO, 'src', f)).href);
-  const [{ revive, refreshGit }, { gatherFacts, briefingText }, { scanProject }, { codeMapper }] = await Promise.all(['experience.js', 'briefing.js', 'memory.js', 'codemap.js'].map(src));
+  const [{ revive, refreshGit }, { gatherFacts, briefingText }, { scanProject }, { codeMapper }, { buildTree }] = await Promise.all(['experience.js', 'briefing.js', 'memory.js', 'codemap.js', 'tree.js'].map(src));
   const cutoff = Number(git(['log', '-1', '--format=%ct', `${task.fix}^`])) * 1000;
   const wt = worktree(`${task.fix}^`, `brief-${task.id}`);
   try {
@@ -96,7 +96,8 @@ async function briefing(task) {
     await refreshGit(proj, cutoff);
     const report = await scanProject(wt.dir, { now: cutoff });
     const map = await codeMapper()(wt.dir);
-    const facts = await gatherFacts({ agg, root: wt.dir, name: 'KevMind', sid: 'bench', source: 'startup', now: cutoff, report, toolsOn: false, map });
+    const tree = await buildTree({ root: wt.dir, map, report, agg, now: cutoff }); // the project map as it was then
+    const facts = await gatherFacts({ agg, root: wt.dir, name: 'KevMind', sid: 'bench', source: 'startup', now: cutoff, report, toolsOn: false, map, tree });
     const { text } = briefingText(facts);
     fs.mkdirSync(path.join(OUT, 'briefings'), { recursive: true });
     fs.writeFileSync(path.join(OUT, 'briefings', `${task.id}.txt`), text);
