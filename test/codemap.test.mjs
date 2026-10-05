@@ -1,4 +1,4 @@
-// The code map (src/codemap.js): exported names, imports through barrels and aliases, and names the docs
+// The code map (src/codemap.js): exported names, the file list, and names the docs
 // still mention after the code dropped them. Also the Memory tab's checks built on it (stale names, missing scripts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,8 +24,6 @@ test('exported names: declarations, lists, defaults, barrels, CommonJS and Dart'
     'function local() {}',
   ].join('\n'), '.ts');
   assert.deepEqual(ts.names.sort(), ['MAX_ROWS', 'UserCard', 'UserId', 'UserShape', 'a', 'loadUser', 'renamed']);
-  assert.equal(ts.barrel, false);
-  assert.equal(exportsOf("export * from './format';\nexport { thing } from './thing';", '.ts').barrel, true);
   assert.deepEqual(exportsOf("export * as helpers from './helpers';", '.js').names, ['helpers']);
   assert.deepEqual(exportsOf('module.exports = { send, redact: mask };\nexports.extra = 1;', '.js').names.sort(), ['extra', 'redact', 'send']);
   const dart = exportsOf('class OrderCard extends StatelessWidget {}\nclass _Private {}\nString formatPrice(int c) {\n  return "";\n}\nfinal defaultTax = 0.16;', '.dart');
@@ -33,8 +31,7 @@ test('exported names: declarations, lists, defaults, barrels, CommonJS and Dart'
   assert.deepEqual(exportsOf('def thing(): pass', '.py').names, [], 'names are read for JavaScript, TypeScript and Dart only');
 });
 
-// a.ts imports format.ts directly, b.ts through the barrel, d.ts through a tsconfig alias; c.ts imports format.ts but
-// never mentions formatDate; e.ts mentions formatDate without importing it.
+// A small TypeScript project: format.ts exports two names, a barrel re-exports it, e.ts only mentions one of them.
 function project(dir) {
   write(path.join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }));
   write(path.join(dir, 'src', 'util', 'format.ts'), 'export function formatDate(d: Date) { return String(d); }\nexport const unusedThing = 1;\n');
@@ -46,15 +43,14 @@ function project(dir) {
   write(path.join(dir, 'src', 'e.ts'), '// formatDate is mentioned here but never imported\nexport const e = 1;\n');
 }
 
-test('imports resolve directly, through a barrel and through an alias; a bare name finds its file', async () => {
+test('the map lists code files with their names, without a code graph; a bare name finds its file', async () => {
   const dir = tmp();
   project(dir);
   const map = await codeMapper()(dir);
   const f = (p) => fileIndex(map, p);
-  const importers = (p) => [...map.importers[f(p)]].map((i) => map.files[i]).sort();
-  assert.deepEqual(importers('src/util/format.ts'), ['src/a.ts', 'src/c.ts', 'src/d.ts', 'src/index.ts']);
-  assert.deepEqual(importers('src/index.ts'), ['src/b.ts']);
-  assert.ok(map.info[f('src/index.ts')].barrel);
+  assert.deepEqual(map.info[f('src/util/format.ts')].names.sort(), ['formatDate', 'unusedThing']);
+  assert.ok(map.info[f('src/e.ts')].idents.has('formatDate'), 'identifiers, for the stale-name check');
+  assert.equal(map.imports, undefined, 'no imports');
   assert.equal(f('a.ts'), f('src/a.ts'), 'a bare file name works when only one file has it');
 });
 test('names the code dropped: only those git shows in the code before, never planned or present ones', async () => {

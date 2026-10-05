@@ -370,15 +370,13 @@ function renderTree() {
   const areas = t.areas.map((a, k) => ({ a, k })).sort((x, y) => y.a.git.n90 - x.a.git.n90 || y.a.git.commits - x.a.git.commits || x.a.name.localeCompare(y.a.name));
   const rows = areas.map(({ a }) => {
     const notes = a.notes.map((j) => t.docs[j]);
-    const files = [...a.files].sort((x, y) => (y.git?.n90 || 0) - (x.git?.n90 || 0) || (y.git?.n || 0) - (x.git?.n || 0) || y.by - x.by).slice(0, TREE_FILES);
+    const files = [...a.files].sort((x, y) => (y.git?.n90 || 0) - (x.git?.n90 || 0) || (y.git?.n || 0) - (x.git?.n || 0) || x.f.localeCompare(y.f)).slice(0, TREE_FILES);
     const fileRow = (f) => `<li><code>${esc(f.f.split('/').pop())}</code><small>${esc([
       f.git && `${T.treeSrc.git}: ${T.treeFileGit(f.git.n, f.git.fix, f.git.last ? day(f.git.last) : '')}`,
       f.claude && `${T.treeSrc.claude}: ${T.treeFileClaude(f.claude.read, f.claude.edit)}`,
-      `${T.treeSrc.code}: ${T.treeFileCode(f.by, f.names.slice(0, 4), f.names.length - 4)}`,
     ].filter(Boolean).join(' · '))}</small></li>`;
     const open = treeOpen.has(a.name);
     return `<li><details data-area="${esc(a.name)}"${open ? ' open' : ''}><summary><code>${esc(a.name)}</code> <span class="muted">${esc(T.treeAreaMeta(a.files.length, a.git.n90, a.git.fixes, notes.length, a.git.dormant))}</span></summary>
-      <p>${src('code')} ${esc(T.treeAreaCode(a.top.map((f) => f.split('/').pop()), a.uses.map(([n]) => n), a.usedBy.map(([n]) => n)))}</p>
       <p>${src('git')} ${esc(T.treeAreaGit(a.git.commits, a.git.fixes, a.git.last ? day(a.git.last) : null, t.months))}</p>
       ${a.claude.read || a.claude.edit || a.claude.failures.length ? `<p>${src('claude')} ${esc(T.treeAreaClaude(a.claude.read, a.claude.edit, a.claude.failures.map((x) => x.fam)))}</p>` : ''}
       <p>${src('notes')} ${notes.length ? notes.map((d) => `<code title="${esc(d.id)}">${esc(d.label || d.id)}</code>`).join(', ') : esc(T.treeNoNotes)}</p>

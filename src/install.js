@@ -72,7 +72,6 @@ export function install({ force = false } = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.copyFileSync(HOOK_SRC, HOOK_DST);
   fs.copyFileSync(REDACT_SRC, REDACT_DST);
-  fs.rmSync(path.join(DATA_DIR, 'brief.mjs'), { force: true }); // the session briefing's hook, removed in 0.6.0
   fs.writeFileSync(BIN_POINTER, path.resolve(BIN));
   const settings = strip(readSettings());
   settings.hooks ||= {};

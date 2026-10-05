@@ -60,9 +60,10 @@ test('areas are folders; facts come with their source: code, git, Claude session
     const area = (n) => tree.areas.find((a) => a.name === n);
     assert.deepEqual(tree.areas.map((a) => a.name).sort(), ['.', 'src/billing', 'src/orders'], 'src/ splits; lib/ is too small and stays with the top level');
     assert.deepEqual(area('.').files.map((f) => f.f).sort(), ['lib/dates.ts', 'lib/money.ts']);
-    // code
-    assert.equal(area('src/billing').files.find((f) => f.f === 'src/billing/invoice1.ts').names[0], 'invoiceTotal1');
-    assert.deepEqual([area('src/billing').uses, area('src/billing').shared], [[], ['lib/money.ts']], 'money.ts is imported by every order and invoice: shared infrastructure, not a link between areas');
+    // code: files only; no code-graph facts (imports, core files, links between areas)
+    assert.deepEqual(Object.keys(area('src/billing').files.find((f) => f.f === 'src/billing/invoice1.ts')).sort(), ['claude', 'f', 'git']);
+    assert.deepEqual(Object.keys(area('src/billing')).sort(), ['claude', 'files', 'git', 'name', 'notes']);
+    assert.deepEqual(tree.code, { files: 46 });
     // git: 6 order commits; billing 3 fixes and a revert (which counts as a fix too), the first commit too big to count
     assert.deepEqual([area('src/orders').git.commits, area('src/orders').git.n90, area('src/orders').git.fixes], [6, 6, 0]);
     assert.deepEqual([area('src/billing').git.commits, area('src/billing').git.fixes], [4, 4]);

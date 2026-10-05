@@ -188,21 +188,19 @@ function orientation(sessions) {
   }
   return { per, total };
 }
-function orientSuggestions(sessions, docs, to, tree, commits) {
+// The line says only what git knows (the file it usually changes with); what the file holds is Claude's to write, so
+// without that fact the card offers a prompt instead of text. KevMind doesn't describe code structure.
+function orientSuggestions(sessions, docs, to, commits) {
   const { per, total } = orientation(sessions);
-  const info = new Map((tree?.areas || []).flatMap((a) => a.files.map((x) => [x.f, x])));
   const out = [];
   for (const [f, c] of per) {
     if (c.n < SUGGEST.readSessions || c.n / total < SUGGEST.readShare || c.days.size < SUGGEST.readDays) continue;
     if (INSTRUCTIONS_RE.test(f) || forms(to(f), f).some((x) => mentions(docs, x))) continue;
-    const names = info.get(f)?.names || [], partner = partnerOf(commits, f);
-    const line = (k) => `- ${code(f)}: ${[names.length ? `exports ${names.slice(0, k).join(', ')}${names.length > k ? ', …' : ''}` : '', partner ? `changes with ${code(partner)}` : ''].filter(Boolean).join('; ')}.`;
-    let k = Math.min(names.length, 6);
-    while (k > 1 && line(k).length > SUGGEST.maxChars) k--;
-    const text = names.length || partner ? line(k) : null;
+    const partner = partnerOf(commits, f);
+    const text = partner ? `- ${code(f)} usually changes with ${code(partner)}.` : null;
     out.push({
       id: idOf('orient', f), kind: 'orient', rank: RANK.orient, weight: c.n,
-      edit: text && line(k).length <= SUGGEST.maxChars
+      edit: text && text.length <= SUGGEST.maxChars
         ? addEdit(to(f), text, f.includes('/') ? `${f.split('/').slice(0, -1).join('/')}/` : null, { stem: `file-${slug(base(f))}`, title: base(f), hook: `what ${base(f)} holds` })
         : { op: 'prompt', file: to(f).display, tokens: 0 },
       why: { code: 'orient', file: f, n: c.n, of: total, days: c.days.size },
@@ -314,7 +312,7 @@ export function buildSuggestions({ root, report, tree = null, agg = null, now = 
   const list = [
     ...fixes(report, root),
     ...failureSuggestions(projs, docs, to, now),
-    ...orientSuggestions(sessionsOf(projs), docs, to, tree, commits),
+    ...orientSuggestions(sessionsOf(projs), docs, to, commits),
     ...areaSuggestions(tree, to, commits),
     ...trims(report, tree),
   ];

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { importScanner, specifiersOf, LANGUAGES } from '../src/imports.js';
+import { importScanner, LANGUAGES } from '../src/imports.js';
 import { buildBrain } from '../src/brain.js';
 import { emptyAggregate, ingest } from '../src/experience.js';
 import { keyOf } from '../src/memory.js';
@@ -223,9 +223,7 @@ test('CSS and HTML: @import, Sass partials, script and link tags, paths from the
   ]);
 });
 
-test('what is written is read as written, and languages without import reading are left alone', () => {
-  assert.deepEqual(specifiersOf("import a from './a'\nexport { b } from \"../b\"\nawait import('./c')\n", '.TS'), ['./a', '../b', './c']);
-  assert.equal(specifiersOf('package main\nimport "fmt"\n', '.go'), null);
+test('the languages whose imports are read', () => {
   assert.deepEqual(Object.values(LANGUAGES).map((l) => l.name), ['JavaScript / TypeScript', 'Dart', 'Python', 'PHP', 'C#', 'CSS / Sass / Less', 'HTML']);
 });
 

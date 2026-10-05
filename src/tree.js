@@ -1,13 +1,13 @@
 // The knowledge tree: a project's baseline, so KevMind is useful before it has recorded any session. Project → areas
-// (folders, from the code map) → files → exported names, and every fact carries its source: `code` (import and export
-// statements), `git` (the history, 12 months by default) or `claude` (KevMind's record of Claude Code sessions). The
+// (folders, from the code map) → files, and every fact carries its source: `code` (the code files), `git` (the
+// history, 12 months by default) or `claude` (KevMind's record of Claude Code sessions). The
 // user's memory (auto-memory notes, CLAUDE.md sections, Serena notes) is linked to the areas it talks about; KevMind
 // organizes it and never writes or edits a note. No model, no tokens. This module only reads: git only `log`, through
 // one guarded helper (test/tree.test.mjs); the dashboard server writes the result to ~/.kevmind/tree/.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { fileIndex, areaLinks, keyFiles } from './codemap.js';
+import { fileIndex } from './codemap.js';
 import { failures, projectsUnder } from './experience.js';
 
 export const TREE = {
@@ -176,25 +176,21 @@ export async function buildTree({ root, map, report = null, agg = null, prev = n
   const areas = map.areas.map((a, k) => {
     const files = a.files.map((i) => {
       const f = map.files[i], g = git.get(f), r = reads.get(f)?.size || 0, e = edits.get(f)?.size || 0;
-      return { f, names: map.info[i].names, by: map.importers[i].size, ...(g ? { git: g } : {}), ...(r || e ? { claude: { read: r, edit: e } } : {}) };
+      return { f, ...(g ? { git: g } : {}), ...(r || e ? { claude: { read: r, edit: e } } : {}) };
     });
     const set = new Set(files.map((x) => x.f));
     const touching = commits.filter((c) => c.files.length <= TREE.maxFilesPerCommit && c.files.some((f) => set.has(f)));
     const last = touching[0]?.ts || 0;
     const epsRead = new Set(), epsEdit = new Set();
     for (const x of files) { for (const e of reads.get(x.f) || []) epsRead.add(e); for (const e of edits.get(x.f) || []) epsEdit.add(e); }
-    const links = areaLinks(map, k);
     return {
-      name: a.name, top: a.top.map((i) => map.files[i]), files,
-      uses: links.dependsOn.map(([o, n]) => [map.areas[o].name, n]), usedBy: links.usedBy.map(([o, n]) => [map.areas[o].name, n]),
-      shared: links.shared.map(([j]) => map.files[j]),
+      name: a.name, files,
       git: { commits: touching.length, fixes: touching.filter((c) => c.fix).length, n90: touching.filter((c) => now - c.ts < TREE.hotDays * DAY).length, last, dormant: !last || now - last > TREE.dormantDays * DAY },
       claude: { read: epsRead.size, edit: epsEdit.size, failures: fails.filter((x) => x.fix && set.has(x.fix)).map(({ fam, sig, episodes, days }) => ({ fam, sig, episodes, days })) },
       notes: docs.map((d, j) => (d.areas.includes(k) ? j : -1)).filter((j) => j >= 0),
     };
   });
 
-  const { key, hubs } = keyFiles(map, 5);
   const busy = (a) => a.git.n90 >= TREE.busy || a.git.fixes >= TREE.fragile;
   // Files that cite something in the area (sections of one CLAUDE.md are one file; naming the folder is not enough).
   const sources = (a) => new Set(a.notes.filter((j) => docs[j].cited.includes(areas.indexOf(a))).map((j) => docs[j].file)).size;
@@ -202,7 +198,7 @@ export async function buildTree({ root, map, report = null, agg = null, prev = n
   const tree = {
     v: 1, root, name: path.basename(root), at: now, months,
     repos, git: encode(commits),
-    code: { files: map.files.length, names: map.info.reduce((n, x) => n + x.names.length, 0), imports: map.importers.reduce((n, s) => n + s.size, 0), key: key.map((i) => map.files[i]), shared: hubs.map((i) => map.files[i]) },
+    code: { files: map.files.length },
     areas, docs,
     reverted: commits.filter((c) => c.revert).map((c) => [c.hash.slice(0, 12), c.subject.slice(0, 80), c.ts]),
     claude: { sessions, since: firstSession },

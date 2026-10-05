@@ -86,8 +86,6 @@ const parse = {
   },
 };
 
-export const specifiersOf = (text, ext) => { const lang = LANG_OF.get(ext.toLowerCase()); return lang ? parse[lang](text) : null; };
-
 // ---- Where each one lands on disk ----
 
 // One build's view of the disk: folders are listed once, config files read once.

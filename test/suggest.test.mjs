@@ -125,7 +125,7 @@ test('a failure that keeps coming back: one short line where the command is ment
   assert.match(r.edit.old, /npm run build/);
 });
 
-test('files read every session without being edited: a line from the exports and a co-change partner, and a waiting verdict', () => {
+test('files read every session without being edited: a line with what git knows (no code structure), else a prompt, and a waiting verdict', () => {
   const root = tmp();
   write(path.join(root, 'CLAUDE.md'), '# Project\n\n- `src/` holds the app.\n');
   const agg = emptyAggregate();
@@ -134,13 +134,15 @@ test('files read every session without being edited: a line from the exports and
   for (let i = 0; i < 6; i++) turn(agg, root, `s${i}`, now - (10 - Math.floor(i * 0.7)) * DAY + i * 60_000, { reads: ['src/state.ts', 'src/x.ts'], edits: ['src/x.ts'] });
   turn(agg, root, 'edit', now - 2 * DAY, { reads: ['src/state.ts'], edits: ['src/state.ts'] });
   const commits = [0, 1, 2].map((i) => [`c${i}`, now - i * DAY, 0, '', [0, 1]]);
-  const tree = { months: 12, areas: [{ name: 'src', files: [{ f: 'src/state.ts', names: ['createState', 'applyEvent', 'summary'] }], git: {}, claude: {} }], gaps: { quiet: [] }, docs: [], git: { files: ['src/state.ts', 'src/app.ts'], commits } };
+  const tree = { months: 12, areas: [{ name: 'src', files: [{ f: 'src/state.ts' }], git: {}, claude: {} }], gaps: { quiet: [] }, docs: [], git: { files: ['src/state.ts', 'src/app.ts'], commits } };
   const [s] = buildSuggestions({ root, report: reportOf(root), tree, agg, now }).filter((x) => x.kind === 'orient');
   assert.equal(s.why.file, 'src/state.ts');
   assert.deepEqual([s.why.n, s.why.of], [6, 7]);
-  assert.equal(s.edit.text, '- `src/state.ts`: exports createState, applyEvent, summary; changes with `src/app.ts`.');
+  assert.equal(s.edit.text, '- `src/state.ts` usually changes with `src/app.ts`.');
   assert.equal(s.edit.after, 3, 'next to the line about its folder');
   assert.ok(!buildSuggestions({ root, report: reportOf(root), tree, agg, now }).some((x) => x.why.file === 'src/x.ts'), 'a file edited in the same session is not orientation');
+  const [bare] = buildSuggestions({ root, report: reportOf(root), tree: { ...tree, git: { files: [], commits: [] } }, agg, now }).filter((x) => x.kind === 'orient');
+  assert.equal(bare.edit.op, 'prompt', 'nothing from git to say: Claude writes the line, after review');
   const o = outcome({ ...s, appliedAt: now - DAY }, sessionsOf(projectsUnder(agg, root)), now);
   assert.equal(o.status, 'waiting');
   assert.deepEqual([o.have, o.need, o.needDays], [0, SUGGEST.verdictSessions, SUGGEST.verdictDays]);
