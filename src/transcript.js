@@ -93,8 +93,10 @@ export class Tailer {
     let o;
     try { o = JSON.parse(raw); } catch { return; }
     const ts = Date.parse(o.timestamp) || Date.now();
+    if (f.actor !== 'main') this.state.seen(this.s.agents[f.actor], ts); // a line of its own: the subagent is alive
     if (o.type === 'assistant') this.assistant(f, o, ts);
     else if (o.type === 'user') this.user(f, o, ts);
+    else if (o.type === 'attachment') this.attachment(o, ts);
     else if (f.actor === 'main' && (o.type === 'custom-title' || o.type === 'last-prompt')) this.title(o);
   }
 
@@ -146,14 +148,24 @@ export class Tailer {
     this.push({ ts, kind: 'thinks', actor: f.actor, detail: '', tokens: c.thinkingTokens });
   }
 
+  // A background agent's end: a task notification naming it, as a user line (older Claude Code) or as a queued
+  // attachment (newer).
+  notified(text, ts) {
+    const id = /<task-id>([^<]+)<\/task-id>/.exec(text)?.[1];
+    const status = /<status>([^<]+)<\/status>/.exec(text)?.[1] || 'completed';
+    if (id) { this.state.endAgent(this.s, id.trim(), ts, status === 'completed' ? 'done' : 'error'); this.changed = true; }
+  }
+
+  attachment(o, ts) {
+    const a = o.attachment;
+    if (a?.origin?.kind === 'task-notification' && typeof a.prompt === 'string') this.notified(a.prompt, ts);
+  }
+
   // Prompts are reported by the hooks already; user lines matter here only for agent lifecycle.
   user(f, o, ts) {
     const c = o.message?.content;
     if (typeof c === 'string') {
-      if (o.origin?.kind !== 'task-notification') return;
-      const id = /<task-id>([^<]+)<\/task-id>/.exec(c)?.[1];
-      const status = /<status>([^<]+)<\/status>/.exec(c)?.[1] || 'completed';
-      if (id) { this.state.endAgent(this.s, id.trim(), ts, status === 'completed' ? 'done' : 'error'); this.changed = true; }
+      if (o.origin?.kind === 'task-notification') this.notified(c, ts);
       return;
     }
     const r = o.toolUseResult;

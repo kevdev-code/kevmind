@@ -11,6 +11,11 @@ const HIT_EVENTS = 3; // ...of the newest searches only, so the session's summar
 export const MAX_ALERTS = 50; // per session, newest kept: a long session with many conflicts must not grow memory
 const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
 const STALE_MS = 5 * 60 * 1000;
+// A subagent that reports nothing for this long has gone quiet and is ended at its last sign of life (a lost
+// SubagentStop or task notification, a session closed under it)...
+const AGENT_QUIET_MS = 10 * 60 * 1000;
+// ...or for this long while one of its tool calls is still open: a long build or test run says nothing until it ends.
+const AGENT_BUSY_MS = 2 * 60 * 60 * 1000;
 // Claude Code injects its own messages through UserPromptSubmit wrapped in one of these tags.
 const SYSTEM_TAGS = ['task-notification', 'bash-notification', 'bash-stdout', 'bash-stderr', 'system-reminder', 'command-message', 'local-command-stdout'];
 const SYSTEM_RE = new RegExp(`^<(${SYSTEM_TAGS.join('|')})[\\s>]`, 'i');
@@ -72,7 +77,7 @@ export class State {
     a = s.agents[`agent-${seq}`] = {
       id: `agent-${seq}`, seq, realId: null, toolUseId: toolUseId || null, parent: parent || 'main',
       type: type || 'subagent', description: String(description || '').slice(0, 120), launch: null,
-      startedAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
+      startedAt: ts, lastAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
     };
     a.label = labelOf(a);
     this.push(s, { ts, kind: 'agent_start', actor: a.parent, target: a.id, detail: a.description });
@@ -121,19 +126,40 @@ export class State {
     const seq = ++s.agentSeq;
     const a = s.agents[aid] = {
       id: aid, seq, realId: aid, toolUseId: null, parent: 'main', type: p.agent_type || 'subagent', description: '', launch: null,
-      startedAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
+      startedAt: ts, lastAt: ts, endedAt: null, status: 'running', actions: 0, tokens: zeroTokens(),
     };
     a.label = labelOf(a);
     return a;
   }
 
+  // status 'quiet': it stopped reporting (expireAgents). A real end that arrives later still says how it ended.
   endAgent(s, agentId, ts, status = 'done') {
     const a = s.agents[agentId];
     if (!a || a.id === 'main') return;
-    if (a.endedAt && status !== 'error') return; // already ended; only a failure can still change the outcome
-    if (!a.endedAt) this.push(s, { ts, kind: 'agent_done', actor: a.id, detail: '' });
+    if (a.endedAt && status !== 'error' && a.status !== 'quiet') return; // already ended; only a failure can still change the outcome
+    if (!a.endedAt) this.push(s, { ts, kind: 'agent_done', actor: a.id, detail: status === 'quiet' ? 'quiet' : '' });
     a.status = status;
     a.endedAt = ts;
+  }
+
+  // A sign of life from a subagent: a hook event or a line of its own transcript.
+  seen(a, ts) {
+    if (a && a.id !== 'main' && ts > (a.lastAt || 0)) a.lastAt = ts;
+  }
+
+  // Ends the subagents that stopped reporting, at their last sign of life: AGENT_QUIET_MS with nothing in progress,
+  // AGENT_BUSY_MS while one of their tool calls is open, at once when the session has ended. Returns true when one did.
+  expireAgents(s, now = Date.now()) {
+    let changed = false;
+    for (const a of new Set(Object.values(s.agents))) {
+      if (a.id === 'main' || a.endedAt) continue;
+      const last = Math.max(a.lastAt || 0, a.startedAt || 0);
+      const busy = Object.values(s.pending).some((p) => p.actor === a.id);
+      if (s.status !== 'ended' && now - last <= (busy ? AGENT_BUSY_MS : AGENT_QUIET_MS)) continue;
+      this.endAgent(s, a.id, last, 'quiet');
+      changed = true;
+    }
+    return changed;
   }
 
   byToolUse(s, toolUseId) {
@@ -202,6 +228,7 @@ export class State {
         actor.actions++;
         actor.endedAt = null; // an action after an end means the end was wrong (or the agent resumed)
         actor.status = actor.id === 'main' ? 'working' : 'running';
+        this.seen(actor, ts);
         s.status = 'working';
         const tool = p.tool_name || '?';
         const key = p.tool_use_id || `${tool}:${ts}:${Math.random()}`;
@@ -231,6 +258,7 @@ export class State {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const actor = this.actor(s, p, ts);
+        this.seen(actor, ts);
         const key = p.tool_use_id && s.pending[p.tool_use_id]
           ? p.tool_use_id
           : Object.keys(s.pending).find((k) => s.pending[k].tool === p.tool_name && s.pending[k].actor === actor.id);
@@ -278,7 +306,7 @@ export class State {
       }
 
       case 'SubagentStart':
-        if (p.agent_id) this.actor(s, p, ts).status = 'running';
+        if (p.agent_id) { const a = this.actor(s, p, ts); a.status = 'running'; this.seen(a, ts); }
         break;
 
       case 'SubagentStop':

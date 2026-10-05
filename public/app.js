@@ -495,7 +495,7 @@ function feedRow(e, s, byId) {
   const who = (id) => (id === 'user' ? T.you : id === 'system' ? T.system : id === 'main' ? 'Claude' : byId[id]?.type || byId[id]?.label || id);
   const full = (id) => byId[id]?.label || '';
   const fn = T.text[e.kind];
-  const text = e.kind === 'agent_start' ? fn(who(e.target), e.detail) : e.kind === 'agent_done' ? fn(who(e.actor)) : fn ? fn(e.detail, e.actor, e.tool, e) : e.detail;
+  const text = e.kind === 'agent_start' ? fn(who(e.target), e.detail) : e.kind === 'agent_done' ? fn(who(e.actor), e.detail) : fn ? fn(e.detail, e.actor, e.tool, e) : e.detail;
   const label = e.tool && !['read', 'edit', 'error', 'mcp'].includes(e.kind) ? toolName(e.tool) : T.kind[e.kind] || e.kind;
   const body = PATHY.has(e.kind) && !fn ? `<code>${esc(text)}</code>` : esc(text);
   const li = document.createElement('li');

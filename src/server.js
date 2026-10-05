@@ -96,6 +96,14 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
   }
   tailTranscripts();
   const tailTimer = setInterval(tailTranscripts, 1000);
+  // Subagents that stopped reporting end (state.expireAgents), in Live and in the Brain. A session whose transcript is
+  // still loading waits: its agents' last signs of life aren't all read yet.
+  const expireTimer = setInterval(() => {
+    const now = Date.now();
+    for (const s of state.sessions.values()) {
+      if (!s.loading && state.expireAgents(s, now) && clients.size) broadcast({ type: 'session', session: state.summary(s), sessions: state.list() });
+    }
+  }, 15_000);
   const memory = memoryApi(state);
   const experience = experienceKeeper();
   const trees = treeKeeper(memory, experience, broadcast);
@@ -272,6 +280,7 @@ export function startServer({ port = 4777, host = '127.0.0.1', dev = process.env
     share.stop();
     for (const w of watchers) w.close();
     clearInterval(tailTimer);
+    clearInterval(expireTimer);
     experience.stop();
     trees.stop();
     for (const res of clients) res.end();

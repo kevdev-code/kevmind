@@ -184,7 +184,7 @@ window.I18N = {
     ago: (s) => (s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`),
     fileStats: (r, e) => `${r} read · ${e} edit`,
     status: { working: 'working', idle: 'idle', waiting: 'needs your OK', ended: 'closed' },
-    agentStatus: { running: 'working', working: 'working', idle: 'idle', done: 'done', error: 'failed' },
+    agentStatus: { running: 'working', working: 'working', idle: 'idle', done: 'done', error: 'failed', quiet: 'went quiet' },
     kind: {
       read: 'read', edit: 'edit', command: 'command', web: 'web', mcp: 'mcp', tool: 'tool',
       agent_start: 'agent', agent_done: 'done', error: 'error', prompt: 'prompt', system: 'system', waiting: 'waiting',
@@ -193,7 +193,7 @@ window.I18N = {
     },
     text: {
       agent_start: (target, d) => `launched ${target}${d ? ': ' + d : ''}`,
-      agent_done: (who) => `${who} finished`,
+      agent_done: (who, d) => (d === 'quiet' ? `${who} went quiet` : `${who} finished`),
       thinks: (d, _, __, e) => d || I18N.en.silentThought(e?.tokens ?? 0),
       error: (_, __, tool) => `${toolName(tool)} failed`,
       waiting: (d) => d || 'Waiting for your answer',
@@ -213,7 +213,7 @@ window.I18N = {
     needsOk: 'Needs your OK',
     askTitle: 'Claude needs your OK',
     mainSession: 'main session',
-    agentWord: { running: 'running', working: 'running', idle: 'idle', done: 'done', error: 'failed' },
+    agentWord: { running: 'running', working: 'running', idle: 'idle', done: 'done', error: 'failed', quiet: 'went quiet' },
     actionsN: (n) => `${n} action${n === 1 ? '' : 's'}`,
     memTally: { problem: (n) => (n === 1 ? 'problem' : 'problems'), warning: (n) => (n === 1 ? 'warning' : 'warnings'), suggestion: (n) => (n === 1 ? 'suggestion' : 'suggestions') },
     memAllClear: 'All clear: no problems, warnings or suggestions.',
@@ -475,7 +475,7 @@ window.I18N = {
     ago: (s) => (s < 60 ? 'hace un momento' : s < 3600 ? `hace ${Math.round(s / 60)} min` : `hace ${Math.round(s / 3600)} h`),
     fileStats: (r, e) => `${r} lee · ${e} edita`,
     status: { working: 'trabajando', idle: 'en espera', waiting: 'espera tu OK', ended: 'cerrada' },
-    agentStatus: { running: 'trabajando', working: 'trabajando', idle: 'en espera', done: 'terminó', error: 'con error' },
+    agentStatus: { running: 'trabajando', working: 'trabajando', idle: 'en espera', done: 'terminó', error: 'con error', quiet: 'sin señales' },
     kind: {
       read: 'lee', edit: 'edita', command: 'comando', web: 'web', mcp: 'mcp', tool: 'herramienta',
       agent_start: 'agente', agent_done: 'listo', error: 'error', prompt: 'mensaje', system: 'sistema', waiting: 'espera',
@@ -484,7 +484,7 @@ window.I18N = {
     },
     text: {
       agent_start: (target, d) => `lanzó ${target}${d ? ': ' + d : ''}`,
-      agent_done: (who) => `${who} terminó`,
+      agent_done: (who, d) => (d === 'quiet' ? `${who} dejó de dar señales` : `${who} terminó`),
       thinks: (d, _, __, e) => d || I18N.es.silentThought(e?.tokens ?? 0),
       error: (_, __, tool) => `${toolName(tool)} falló`,
       waiting: (d) => d || 'Esperando tu respuesta',
@@ -504,7 +504,7 @@ window.I18N = {
     needsOk: 'Necesita tu OK',
     askTitle: 'Claude necesita tu OK',
     mainSession: 'sesión principal',
-    agentWord: { running: 'en curso', working: 'en curso', idle: 'inactivo', done: 'listo', error: 'falló' },
+    agentWord: { running: 'en curso', working: 'en curso', idle: 'inactivo', done: 'listo', error: 'falló', quiet: 'sin señales' },
     actionsN: (n) => `${n} ${n === 1 ? 'acción' : 'acciones'}`,
     memTally: { problem: (n) => (n === 1 ? 'problema' : 'problemas'), warning: (n) => (n === 1 ? 'advertencia' : 'advertencias'), suggestion: (n) => (n === 1 ? 'sugerencia' : 'sugerencias') },
     memAllClear: 'Todo en orden: sin problemas, advertencias ni sugerencias.',
