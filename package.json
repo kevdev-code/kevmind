@@ -1,6 +1,6 @@
 {
   "name": "kevmind",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Watch Claude Code work live and think in a 3D brain, and keep its memory (CLAUDE.md, notes) healthy. Local-only, zero dependencies.",
   "type": "module",
   "bin": {

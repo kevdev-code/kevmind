@@ -62,3 +62,10 @@ test('counters: one of something is said in the singular, in both languages', ()
   }
   assert.deepEqual([en.activeAgents(2), es.activeAgents(1), es.actions(1), es.messages(0)], ['active agents', 'agente activo', 'acción', 'mensajes']);
 });
+
+test('the controls the Brain view builds are styled (the Animations switch lost its knob once when its CSS was removed)', () => {
+  const css = fs.readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
+  const view = fs.readFileSync(new URL('../public/brain/view.js', import.meta.url), 'utf8');
+  assert.match(view, /class="switch" role="switch"/);
+  for (const rule of ['.switch {', '.switch .knob {', '.switch[aria-checked="true"] .knob {']) assert.ok(css.includes(rule), rule);
+});

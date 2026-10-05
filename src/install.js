@@ -15,6 +15,8 @@ const REDACT_SRC = path.join(HOOK_DIR, 'redact.js');
 const REDACT_DST = path.join(DATA_DIR, 'redact.js');
 // The copied hook has no bin/ next to it; this file tells it where the CLI is, so it can auto-start the server.
 const BIN_POINTER = path.join(DATA_DIR, 'kevmind-bin');
+// The session briefing's hook that `kevmind install` set up before 0.6.0, when the briefing was removed.
+const OLD_BRIEF = path.join(DATA_DIR, 'brief.mjs');
 const BIN = path.join(HOOK_DIR, '..', 'bin', 'kevmind.js');
 const TAG = 'kevmind';
 
@@ -84,11 +86,24 @@ export function install({ force = false } = {}) {
     (settings.hooks[ev] ||= []).push(group);
   }
   writeSettings(settings);
-  return { settings: SETTINGS, hook: HOOK_DST };
+  // Settings no longer run it (strip removed every KevMind hook): its copy can go too.
+  const briefing = fs.existsSync(OLD_BRIEF);
+  fs.rmSync(OLD_BRIEF, { force: true });
+  return { settings: SETTINGS, hook: HOOK_DST, briefing };
 }
 
 export function uninstall() {
   if (!fs.existsSync(SETTINGS)) return { settings: SETTINGS, changed: false };
   writeSettings(strip(readSettings()));
+  fs.rmSync(OLD_BRIEF, { force: true });
   return { settings: SETTINGS, changed: true };
+}
+
+// Hooks from a `kevmind install` before 0.6.0 that still run the session briefing: they answer nothing now (the hook
+// gets a 404 and exits 0 at once), and `kevmind install` replaces them. Never throws.
+export function staleBriefingHook() {
+  try {
+    const s = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
+    return Object.values(s.hooks || {}).flat().some((g) => (g.hooks || []).some((h) => String(h.command || '').includes('brief.mjs')));
+  } catch { return false; }
 }

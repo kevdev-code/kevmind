@@ -86,7 +86,8 @@ switch (cmd) {
     const { install } = await import('../src/install.js');
     try {
       const r = install({ force: flags.has('--force') });
-      console.log(`\n  ✓ Hooks installed in ${r.settings}\n  (backup at settings.json.kevmind-backup)\n\n  Now run "kevmind" and start a new Claude Code session.\n`);
+      const briefing = r.briefing ? '\n  ✓ Removed the session briefing hook from 0.5 (the briefing was removed in 0.6.0).' : '';
+      console.log(`\n  ✓ Hooks installed in ${r.settings}\n  (backup at settings.json.kevmind-backup)${briefing}\n\n  Now run "kevmind" and start a new Claude Code session.\n`);
     } catch (e) { fail(e.message); }
     break;
   }
@@ -183,6 +184,9 @@ function launchOf(info) {
 }
 
 async function start({ dev, background }) {
+  // Hooks from a `kevmind install` before 0.6.0 still run the removed session briefing (harmless, but stale).
+  const { staleBriefingHook } = await import('../src/install.js');
+  if (staleBriefingHook()) console.log('\n  Your hooks still run the session briefing from KevMind 0.5, which was removed in 0.6.0.\n  Run "npx kevmind install" once to update them.');
   if (!background) {
     startServer({ port, dev }).on('listening', () => {
       console.log(`\n  KevMind running at http://localhost:${port}\n  (Ctrl+C to quit)\n`);

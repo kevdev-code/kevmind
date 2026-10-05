@@ -12,7 +12,7 @@ Watch Claude Code work live and think in a brain, and keep its memory healthy. E
 
 **English** · [Español](README.es.md)
 
-> Status: **0.6** (unreleased). Live, the Memory tab with its memory suggestions, the Brain tab and View on your phone work. KevMind is not a code graph: for code structure, use CodeGraph, Serena or a language server. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+> Status: **0.6**. Live, the Memory tab with its memory suggestions, the Brain tab and View on your phone work. KevMind is not a code graph: for code structure, use CodeGraph, Serena or a language server. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## What it shows
 

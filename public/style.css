@@ -313,6 +313,11 @@ button.link { background: none; border: 0; padding: 0; font-size: var(--fs-sm); 
 .paths li { overflow-wrap: anywhere; border: 0; padding: 0; margin: 0; display: block; background: none; }
 .paths .moved { color: var(--text-2); }
 
+.switch { border: 0; background: none; padding: 0; color: var(--text); display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; font-size: var(--fs-sm); text-align: left; }
+.switch .knob { width: 30px; height: 18px; border-radius: var(--r-pill); background: var(--border-strong); position: relative; flex: none; transition: background var(--dur-1) var(--ease-out); }
+.switch .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform var(--dur-1) var(--ease-out); }
+.switch[aria-checked="true"] .knob { background: var(--accent-fill); }
+.switch[aria-checked="true"] .knob::after { transform: translateX(12px); }
 .exp-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
 .exp-switch .err { color: var(--error); font-size: var(--fs-xs); }
 .exp-list { font-size: var(--fs-xs); display: flex; flex-direction: column; gap: 6px; }

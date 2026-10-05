@@ -12,7 +12,7 @@ Mira en vivo cómo trabaja Claude Code y cómo piensa en un cerebro, y mantén s
 
 [English](README.md) · **Español**
 
-> Estado: **0.6** (sin publicar). En vivo, la pestaña Memoria con sus sugerencias de memoria, la pestaña Cerebro y Ver en tu teléfono funcionan. KevMind no es un grafo de código: para la estructura del código, usa CodeGraph, Serena o un servidor de lenguaje. Qué cambió en cada versión: [CHANGELOG.md](CHANGELOG.md) (en inglés).
+> Estado: **0.6**. En vivo, la pestaña Memoria con sus sugerencias de memoria, la pestaña Cerebro y Ver en tu teléfono funcionan. KevMind no es un grafo de código: para la estructura del código, usa CodeGraph, Serena o un servidor de lenguaje. Qué cambió en cada versión: [CHANGELOG.md](CHANGELOG.md) (en inglés).
 
 ## Qué muestra
 

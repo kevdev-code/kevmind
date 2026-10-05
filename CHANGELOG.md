@@ -2,9 +2,9 @@
 
 What changed in each version of KevMind. Dates are local. Versions before 0.5.0 are reconstructed from the commit history.
 
-## Unreleased
+## 0.6.0 (2026-10-05)
 
-Version 0.6.0, not published yet. KevMind is now three things: watch Claude work live (Live), think in a brain (Brain), and keep its memory healthy (Memory). It helps by improving what Claude already reads (`CLAUDE.md`, the memory index and notes) instead of adding tools or context of its own, and it is not a code graph: code structure is left to CodeGraph, Serena or a language server. The MCP tools and the session briefing are removed: benchmarks and real use showed Claude doesn't call extra tools and the briefing saved no tokens consistently ([docs/BENCHMARK.md](docs/BENCHMARK.md)).
+KevMind is now three things: watch Claude work live (Live), think in a brain (Brain), and keep its memory healthy (Memory). It helps by improving what Claude already reads (`CLAUDE.md`, the memory index and notes) instead of adding tools or context of its own, and it is not a code graph: code structure is left to CodeGraph, Serena or a language server. The MCP tools and the session briefing are removed: benchmarks and real use showed Claude doesn't call extra tools and the briefing saved no tokens consistently ([docs/BENCHMARK.md](docs/BENCHMARK.md)).
 
 ### Added
 
@@ -16,7 +16,7 @@ Version 0.6.0, not published yet. KevMind is now three things: watch Claude work
 ### Removed
 
 - **The experience tools for Claude** (`file_context`, `file_history`, `known_failures`, `code_map`), their MCP server, the `kevmind tools` command, the plugin's `experience_tools` option and the Experience panel. In a controlled benchmark Claude never called them on its own, not even with a one-line hint; in two days of real use they were called 4 times in 39 sessions.
-- **The session briefing** (`hooks/brief.js`), the `kevmind briefing` command and its panel. A controlled benchmark (5 tasks on 2 projects, 3 runs per arm) found no consistent token saving. If you installed the hooks with `kevmind install`, run it again to drop the briefing's hook; the plugin drops it by itself.
+- **The session briefing** (`hooks/brief.js`), the `kevmind briefing` command and its panel. A controlled benchmark (5 tasks on 2 projects, 3 runs per arm) found no consistent token saving. Updating the plugin drops its hook and the MCP server by themselves. If you installed the hooks with `kevmind install`, run it once more: it removes the briefing's hook from your settings and its copy in `~/.kevmind`, and until you do, `kevmind start` reminds you (the old hook is harmless meanwhile: it gets no answer and exits at once).
 - `~/.kevmind/config.json` and `briefings.jsonl` are no longer read; you can delete them.
 - The benchmark runner (`prototype/briefing-bench/`). Git history keeps it; [docs/BENCHMARK.md](docs/BENCHMARK.md) records how both were measured.
 - **Code-graph features.** The code map no longer scans imports, ranks key files, finds shared infrastructure or links areas, and the Memory tab's project map no longer shows core files, the areas an area uses or is used by, or importer counts. The suggestion for a file Claude reads every session no longer lists its exports: it says what git knows (the file it changes with), else it offers a prompt. The code map stays as an internal engine for the project map and the stale-name check; it rebuilds faster (about 111 ms warm on a 957-file app, from 255 ms).

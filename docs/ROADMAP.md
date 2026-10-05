@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-05. Version **0.6.0** (unreleased). KevMind is three things: watch Claude work live (Live), think in a brain (Brain), and keep its memory healthy (Memory, with the memory suggestions). The MCP tools, the session briefing and every code-graph feature are removed; code structure is left to CodeGraph, Serena or a language server. 0.5.1 brought every live session at once in the Brain; 0.5.0 the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
+Status as of 2026-10-05. Version **0.6.0**. KevMind is three things: watch Claude work live (Live), think in a brain (Brain), and keep its memory healthy (Memory, with the memory suggestions). The MCP tools, the session briefing and every code-graph feature are removed; code structure is left to CodeGraph, Serena or a language server. 0.5.1 brought every live session at once in the Brain; 0.5.0 the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -107,6 +107,6 @@ Known limits:
 
 ## Next
 
-- Use it for a while, then release 0.6.0.
+- Use 0.6.0 for a while and see what the memory suggestions' outcomes say.
 - The Brain's areas from the project map.
 - Replay a past session step by step (the Brain tab would be a good stage for it).
