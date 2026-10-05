@@ -1,6 +1,10 @@
 # KevMind
 
-Watch Claude Code work in real time: what it's doing, which agents it runs in parallel, which files it touches and where it fails. Everything runs on your machine; nothing leaves it.
+Watch Claude Code work live and think in a brain, and keep its memory healthy. Everything runs on your machine; nothing leaves it.
+
+- **Live:** what Claude is doing, which agents it runs in parallel, which files it touches and where it fails.
+- **Memory:** what Claude reads at every start (`CLAUDE.md`, its auto memory, Serena's notes), checked against the code, with short suggested edits you apply and KevMind measures.
+- **Brain:** all of it as a living 3D brain, with Claude and its subagents traveling through your project as they work.
 
 ![KevMind dashboard demo](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/kevmind-demo.gif)
 
@@ -8,12 +12,12 @@ Watch Claude Code work in real time: what it's doing, which agents it runs in pa
 
 **English** · [Español](README.es.md)
 
-> Status: **0.6** (unreleased). The live dashboard, the Memory tab with its memory suggestions, the project map, the Brain tab and View on your phone work. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+> Status: **0.6** (unreleased). Live, the Memory tab with its memory suggestions, the Brain tab and View on your phone work. KevMind is not a code graph: for code structure, use CodeGraph, Serena or a language server. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## What it shows
 
 - **Sessions** from the last 24 h, grouped by project (most recent first, the current one open), each named by its title or first prompt, with start time and duration; closed sessions older than 2 h fold under "Show closed". Status: working, idle, needs your OK. When a session needs your OK, the browser tab says so even when you are looking at another one: the title starts with "⏸ Needs your OK" and the icon gets an amber dot. No sounds, no notifications.
-- **Parallel agents**: a timeline of Claude and every subagent it launches, with each one's action count.
+- **Parallel agents**: a timeline of Claude and every subagent it launches, with each one's action count. A subagent that stops reporting is shown as gone quiet: after 10 minutes with nothing in progress, after 2 hours while a tool call (a long build or test run) is still open, or when its session closes.
 - **Live activity**: every read, edit, command, search and MCP call as it happens.
 - **Most-touched files**: how often each file was read and edited.
 - **Tools**: uses, errors and average duration.
@@ -127,9 +131,9 @@ Suggestions from code, git and your notes work from day one; those from sessions
 
 KevMind shouldn't need weeks of sessions to know a project. The first time a project has a Claude Code session, the dashboard builds its map in the background (about a second for a thousand files); `npx kevmind init [path]` or the **Rebuild** button in the Memory tab builds it now.
 
-- **Areas are folders.** A folder with more than 40 code files is split into its subfolders. For each area: its core files and which areas it uses (from imports), commits in the last 90 days and in the last 12 months, how many were labeled fix, reverts, when it last changed (git), what Claude read and edited there and which known failures were fixed there (KevMind's record), and the notes that talk about it.
+- **Areas are folders.** A folder with more than 40 code files is split into its subfolders. For each area: its files, commits in the last 90 days and in the last 12 months, how many were labeled fix, reverts, when it last changed (git), what Claude read and edited there and which known failures were fixed there (KevMind's record), and the notes that talk about it.
 - **Your memory, organized.** Auto-memory notes, Serena notes and each `CLAUDE.md` section are linked to the areas they cite or name. KevMind never writes or edits a note. Busy areas no note talks about become [memory suggestions](#memory-suggestions); areas many notes cite are flagged with a prompt to copy.
-- **Every fact says where it comes from**: code, git, Claude sessions or notes. The memory suggestions are built on it.
+- **Every fact says where it comes from**: code files, git, Claude sessions or notes. The memory suggestions are built on it. It reads no imports and draws no code graph: it only needs to know which files exist, the names they export (to link notes to them and to spot names the code dropped) and their history.
 - **History window:** 12 months by default; `npx kevmind init --all` (or `--months=N`) reads more.
 - The map lives in `~/.kevmind/tree/` (25 KB for a 70-file project, about 0.5 MB for one with 950 files and 1,000 commits). Nothing is written to the project.
 
@@ -219,7 +223,9 @@ UI strings live in [`public/i18n.js`](public/i18n.js). Copy the `en` block, tran
 - [x] Brain tab: every live session at once.
 - [x] Project map: areas, git history and the notes about each area, from day one.
 - [x] Memory suggestions: copyable edits to `CLAUDE.md` and notes, measured after you apply them.
+- [ ] The Brain's areas from the project map.
 - [ ] Replay a past session step by step.
+- Out of scope: code graphs (CodeGraph, Serena or a language server cover them).
 - Tried and removed: MCP tools for Claude and a session briefing (see [docs/BENCHMARK.md](docs/BENCHMARK.md)).
 
 Current status, decisions and known limitations: [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -1,6 +1,10 @@
 # KevMind
 
-Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralelo, qué archivos toca y dónde falla. Todo corre en tu computadora; nada sale de ella.
+Mira en vivo cómo trabaja Claude Code y cómo piensa en un cerebro, y mantén sana su memoria. Todo corre en tu computadora; nada sale de ella.
+
+- **En vivo:** qué hace Claude, qué agentes lanza en paralelo, qué archivos toca y dónde falla.
+- **Memoria:** lo que Claude lee al empezar cada sesión (`CLAUDE.md`, su memoria automática, las notas de Serena), contrastado con el código, con cambios cortos sugeridos que tú aplicas y KevMind mide.
+- **Cerebro:** todo eso como un cerebro 3D vivo, con Claude y sus subagentes recorriendo tu proyecto mientras trabajan.
 
 ![Demo del panel de KevMind](https://raw.githubusercontent.com/kevdev-code/kevmind/main/docs/media/kevmind-demo.gif)
 
@@ -8,12 +12,12 @@ Mira en vivo cómo trabaja Claude Code: qué hace, qué agentes lanza en paralel
 
 [English](README.md) · **Español**
 
-> Estado: **0.6** (sin publicar). El panel en vivo, la pestaña Memoria con sus sugerencias de memoria, el mapa del proyecto, la pestaña Cerebro y Ver en tu teléfono funcionan. Qué cambió en cada versión: [CHANGELOG.md](CHANGELOG.md) (en inglés).
+> Estado: **0.6** (sin publicar). En vivo, la pestaña Memoria con sus sugerencias de memoria, la pestaña Cerebro y Ver en tu teléfono funcionan. KevMind no es un grafo de código: para la estructura del código, usa CodeGraph, Serena o un servidor de lenguaje. Qué cambió en cada versión: [CHANGELOG.md](CHANGELOG.md) (en inglés).
 
 ## Qué muestra
 
 - **Sesiones** de las últimas 24 h, agrupadas por proyecto (el más reciente primero, el actual abierto), cada una con su título o su primer mensaje, hora de inicio y duración; las cerradas hace más de 2 h se pliegan en "Mostrar cerradas". Estado: trabajando, en espera, espera tu OK. Cuando una sesión espera tu OK, la pestaña del navegador lo dice aunque estés en otra: el título empieza con "⏸ Necesita tu OK" y el ícono lleva un punto ámbar. Sin sonidos ni notificaciones.
-- **Agentes en paralelo**: línea de tiempo de Claude y cada subagente que lanza, con cuántas acciones hizo cada uno.
+- **Agentes en paralelo**: línea de tiempo de Claude y cada subagente que lanza, con cuántas acciones hizo cada uno. Un subagente que deja de dar señales se muestra así: tras 10 minutos sin nada en curso, tras 2 horas si tiene una herramienta abierta (una compilación o unas pruebas largas), o cuando se cierra su sesión.
 - **Actividad en vivo**: cada lectura, edición, comando, búsqueda y llamada MCP al instante.
 - **Archivos más tocados**: cuántas veces se leyó y editó cada uno.
 - **Herramientas**: usos, errores y tiempo promedio.
@@ -126,9 +130,9 @@ Las sugerencias que salen del código, de git y de tus notas funcionan desde el 
 
 KevMind no debería necesitar semanas de sesiones para conocer un proyecto. La primera vez que un proyecto tiene una sesión de Claude Code, el panel hace su mapa en segundo plano (alrededor de un segundo para mil archivos); `npx kevmind init [ruta]` o el botón **Rehacer** de la pestaña Memoria lo hacen en el momento.
 
-- **Las áreas son carpetas.** Una carpeta con más de 40 archivos de código se divide en sus subcarpetas. Para cada área: sus archivos centrales y qué áreas usa (de los imports), commits de los últimos 90 días y de los últimos 12 meses, cuántos se marcaron como arreglo, reverts, cuándo cambió por última vez (git), qué leyó y editó Claude ahí y qué fallos conocidos se arreglaron ahí (el registro de KevMind), y las notas que hablan de ella.
+- **Las áreas son carpetas.** Una carpeta con más de 40 archivos de código se divide en sus subcarpetas. Para cada área: sus archivos, commits de los últimos 90 días y de los últimos 12 meses, cuántos se marcaron como arreglo, reverts, cuándo cambió por última vez (git), qué leyó y editó Claude ahí y qué fallos conocidos se arreglaron ahí (el registro de KevMind), y las notas que hablan de ella.
 - **Tu memoria, ordenada.** Las notas de la memoria automática, las de Serena y cada sección de `CLAUDE.md` se enlazan con las áreas que citan o nombran. KevMind nunca escribe ni edita una nota. Las áreas con mucha actividad de las que no habla ninguna nota se vuelven [sugerencias de memoria](#sugerencias-de-memoria); las áreas que citan muchas notas se señalan con un prompt para copiar.
-- **Cada dato dice de dónde viene**: código, git, sesiones de Claude o notas. Las sugerencias de memoria se construyen sobre él.
+- **Cada dato dice de dónde viene**: archivos de código, git, sesiones de Claude o notas. Las sugerencias de memoria se construyen sobre él. No lee imports ni dibuja un grafo de código: solo necesita saber qué archivos hay, los nombres que exportan (para enlazar notas con ellos y detectar nombres que el código ya no tiene) y su historia.
 - **Ventana de historia:** 12 meses por defecto; `npx kevmind init --all` (o `--months=N`) lee más.
 - El mapa vive en `~/.kevmind/tree/` (25 KB para un proyecto de 70 archivos, alrededor de 0,5 MB para uno de 950 archivos y 1.000 commits). No se escribe nada en el proyecto.
 

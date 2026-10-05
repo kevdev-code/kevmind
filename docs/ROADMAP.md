@@ -1,6 +1,6 @@
 # KevMind roadmap
 
-Status as of 2026-10-02. Version **0.6.0** (unreleased): memory suggestions and the project map, and the MCP tools and the session briefing removed. 0.5.1 brought every live session at once in the Brain; 0.5.0 the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
+Status as of 2026-10-05. Version **0.6.0** (unreleased). KevMind is three things: watch Claude work live (Live), think in a brain (Brain), and keep its memory healthy (Memory, with the memory suggestions). The MCP tools, the session briefing and every code-graph feature are removed; code structure is left to CodeGraph, Serena or a language server. 0.5.1 brought every live session at once in the Brain; 0.5.0 the Brain tab, View on your phone and import links. What each version changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## What each phase delivered
 
@@ -19,7 +19,7 @@ Status as of 2026-10-02. Version **0.6.0** (unreleased): memory suggestions and 
 ## Key decisions and why
 
 - **Improve what Claude already reads; add nothing of its own.** Claude always reads `CLAUDE.md` and the memory index; it doesn't call extra tools, and a briefing saved no tokens consistently ([BENCHMARK.md](BENCHMARK.md)). So KevMind proposes edits to those files and measures them, and the user applies them. The MCP tools and the briefing were removed in 0.6.0.
-- **History, plus an approximate code map; coexist with Serena.** KevMind reports what happened (sessions, git) and reads import and export statements and the names in them, with a per-file cache, read-only, never type-checking or editing. Exact references and definitions stay with Serena or a language server; reimplementing them would conflict.
+- **Not a code graph.** KevMind reports what happened (sessions, git) and keeps memory healthy. Its code map is an internal engine (the code files, their exported names and identifiers, folder areas) for the project map and the stale-name check; it reads no imports and ranks nothing. Code structure stays with CodeGraph, Serena or a language server; reimplementing it would conflict and cost context. The Brain reads import statements only to draw links between files that are already cells.
 - **Work episodes, not sessions.** Many users work in 1–3 long sessions; an episode (a prompt turn ending with an edit) is the unit that repeats.
 - **At least 2 distinct local days per insight.** Patterns that only repeat inside one conversation are not knowledge. Days are local, not UTC, so an evening isn't counted twice.
 - **Read-only Memory tab.** It reports, suggests and hands out text and prompts; Claude Code (with the user) makes the changes.
@@ -60,11 +60,11 @@ Known limits:
 
 ## Project map (0.6.0)
 
-`src/tree.js`, built by the dashboard for every project with sessions the first time it appears, refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files → exported names, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; the memory suggestions are built on it.
+`src/tree.js`, built by the dashboard for every project with sessions the first time it appears, refreshed incrementally, and on demand (`kevmind init`, the Memory tab's button). Project → areas (folders) → files, each fact with its source; memory notes and `CLAUDE.md` sections linked to the areas they cite or name; the memory suggestions are built on it.
 
 Decisions (2026-10-02): areas by folder rather than import clusters (on the largest test app the busiest import cluster mixed four unrelated features that all imported one form, and notes linked to 45 of 51 folder areas against 28 of 51 clusters); 12 months of git by default, `--all` on demand; area summaries written by a model are left out.
 
-The code behind it (`src/codemap.js`): exported names by regex (JavaScript, TypeScript, Dart), imports resolved by `src/imports.js`, key files by PageRank over imports. A real app of 957 code files in two nested repos builds in about 415 ms cold and 255 ms warm (3,475 import links); KevMind itself in 68 / 34 ms.
+The code behind it (`src/codemap.js`): the code files, their exported names and identifiers by regex (JavaScript, TypeScript, Dart), folder areas. Since 0.6.0 it reads no imports and ranks nothing: a real app of 957 code files in three repos builds in about 455 ms cold and 111 ms warm (255 ms warm when it still scanned imports); KevMind itself in 44 / 27 ms. Its tree takes 542 ms and 429 KB on that app.
 
 Measured on the test machine (map warm means the code map's per-file cache is filled):
 
@@ -78,6 +78,10 @@ Known limits:
 - Folder words link a note to an area by name ("billing"); a word the project uses everywhere ("shop" in a shop app) is ignored, but a common word below that (in under a fifth of the notes) can still link loosely. The "many notes" check counts only notes that cite a file or exported name in the area.
 - The experience aggregate keeps its own `git log` for "changes together" (365 days or 2,000 commits); the map reads its own window.
 - Areas in the Brain view come in a later step.
+
+## Live: subagents that go quiet (0.6.0)
+
+Claude Code now records a background agent's end as a queued `attachment` line in the transcript, which KevMind didn't read: six background subagents of one session stayed "running" with 0 actions for days. The tailer reads it now, and a subagent that stops reporting ends at its last sign of life: after 10 minutes with nothing in progress, after 2 hours while a tool call is still open (a long build or test run says nothing until it ends), at once when its session closes. Live and the Brain follow the same state.
 
 ## Phase 5: memory suggestions (0.6.0)
 
@@ -97,6 +101,7 @@ Known limits:
 
 - **The session briefing** (0.5.1): a factual note at session start, half the starts withheld to compare. A controlled benchmark (5 tasks on 2 projects, 3 runs per arm, Opus 5.5) found no consistent token saving on isolated fixes.
 - **The MCP tools** (0.3–0.5.1): `file_context`, `file_history`, `known_failures` and `code_map` (with a complete-list mode). In a probe on a 950-file app Claude never called them, not even with a one-line hint, and found the answer with Grep alone; in real use they were called 4 times in 39 sessions.
+- **Code-graph features** (0.5.1): the code map's import scan, key files (PageRank), shared infrastructure, links between areas, and the Memory tab's lines showing them; the suggestion text that listed a file's exports. CodeGraph covers code graphs.
 
 [BENCHMARK.md](BENCHMARK.md) records both. The code is in the git history (the last commit with them is `05d4d88`).
 

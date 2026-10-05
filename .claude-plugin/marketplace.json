@@ -1,6 +1,6 @@
 {
   "name": "kevmind",
-  "description": "KevMind: watch Claude Code work in real time, on your machine.",
+  "description": "KevMind: watch Claude Code work live, think in a brain, and keep its memory healthy, on your machine.",
   "owner": {
     "name": "Kevin"
   },
@@ -8,7 +8,7 @@
     {
       "name": "kevmind",
       "source": ".",
-      "description": "Live dashboard of Claude Code sessions: parallel agents, tool calls, files, errors, what Claude says and thinks, and token usage. Local-only, zero dependencies."
+      "description": "Live dashboard of Claude Code sessions (parallel agents, tool calls, files, errors, what Claude says and thinks, tokens), a 3D brain of your projects, and memory health with suggested edits to CLAUDE.md. Local-only, zero dependencies."
     }
   ]
 }

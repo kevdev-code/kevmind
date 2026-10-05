@@ -1,7 +1,7 @@
 {
   "name": "kevmind",
   "version": "0.5.1",
-  "description": "Watch Claude Code work in real time: parallel agents, tool calls, files and errors. Local-only, zero dependencies.",
+  "description": "Watch Claude Code work live and think in a 3D brain, and keep its memory (CLAUDE.md, notes) healthy. Local-only, zero dependencies.",
   "author": {
     "name": "Kevin"
   },
